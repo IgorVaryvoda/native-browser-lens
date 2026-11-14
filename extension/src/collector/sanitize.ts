@@ -1,7 +1,7 @@
 // Evidence leaves the page only after this pass. Credentials in URLs, headers, bodies, storage and
 // console text are replaced; nothing is uploaded until a person reviews it, but the local notebook
 // should not hold secrets either.
-const SENSITIVE = /authorization|cookie|password|passwd|secret|token|api.?key|session.?id|credential|csrf|xsrf/i;
+export const SENSITIVE = /authorization|cookie|password|passwd|secret|token|api.?key|session.?id|credential|csrf|xsrf/i;
 /** Query keys that carry credentials in signed or OAuth URLs, beyond the general list. */
 const SENSITIVE_QUERY = /^(code|state|sig|signature|key|auth|jwt|otp)$|^x-(amz|goog)-/i;
 export const REDACTED = '[REDACTED]';
@@ -25,8 +25,12 @@ export function sanitizeUrl(input: string): string {
 }
 
 export function sanitizeText(text: string): string {
+  return redactContent(text.slice(0, MAX_TEXT));
+}
+
+/** The content rules without the length cap, for text that must stay whole (DOM recordings). */
+export function redactContent(text: string): string {
   return text
-    .slice(0, MAX_TEXT)
     .replace(/\b(Bearer|Basic)\s+[A-Za-z0-9._~+/-]+=*/gi, `$1 ${REDACTED}`)
     .replace(
       /((?:authorization|cookie|password|passwd|secret|[\w-]*token|api[_-]?key|session[_-]?id|csrf|xsrf)\s*["']?\s*[:=]\s*["']?)[^\s"'&,;}]+/gi,

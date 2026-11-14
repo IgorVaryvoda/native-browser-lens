@@ -43,7 +43,12 @@ const fixture = createServer((request, response) => {
     return response.end(JSON.stringify({ error: 'price is NaN', token: 'fixture-secret-123' }));
   }
   response.writeHead(200, { 'content-type': 'text/html' });
-  response.end(`<!doctype html><title>Checkout</title><h1>Checkout</h1>
+  response.end(`<!doctype html><title>Checkout</title>
+    <meta name="csrf-token" content="meta-csrf-555">
+    <h1>Checkout</h1>
+    <input type="hidden" name="csrf" value="hidden-csrf-777">
+    <a href="/next?access_token=link-token-888">Next</a>
+    <div contenteditable>draft-secret-999</div>
     <label>Card number <input name="card"></label>
     <button onclick="console.error('total is NaN'); fetch('/api/price')">Pay</button>`);
 });
@@ -114,7 +119,9 @@ try {
   if (!text.includes('total is NaN') || !text.includes('price is NaN')) throw new Error('the defect is missing');
   if (text.includes('fixture-secret-123')) throw new Error('the secret reached the notebook');
   const everything = allBlobs(join(env.LENS_HOME, 'blobs'));
-  if (everything.includes('4111111111111111')) throw new Error('a typed card number reached the notebook');
+  for (const secret of ['4111111111111111', 'meta-csrf-555', 'hidden-csrf-777', 'link-token-888', 'draft-secret-999']) {
+    if (everything.includes(secret)) throw new Error(`${secret} reached the notebook`);
+  }
   if (!evidence.events.some((e) => e.kind === 'response' && e.data.status === 500)) throw new Error('no 500 response');
 
   // Annotate: a rectangle, a mask drawn twice with an undo between, then save.
