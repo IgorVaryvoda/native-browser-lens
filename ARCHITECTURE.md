@@ -79,8 +79,9 @@ live in the data folder.
    collector state across service-worker restarts.
 4. **Integrations** (started): review and export (done), VibeQ filing through a durable outbox
    (done: frozen attempt, member binding, reconciliation, missing-only uploads, receipt checks;
-   the token lives in the OS secret store or LENS_VIBEQ_TOKEN). Still open: Codex
-   investigation and fixes, the MCP server, dictation.
+   the token lives in the OS secret store or LENS_VIBEQ_TOKEN), and the MCP server over reviews
+   (done: read-only tools for reviews, rendered screenshots and evidence). Still open: Codex
+   investigation and fixes, dictation.
 5. Release: CI matrix with signing, Chrome Web Store and AMO listings, package channels, installers.
 6. Removal of the earlier lines and branches.
 

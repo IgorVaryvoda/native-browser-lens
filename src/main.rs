@@ -1,9 +1,11 @@
 mod blobs;
+mod client;
 mod daemon;
 mod export;
 mod filing;
 mod framing;
 mod ipc;
+mod mcp;
 mod paths;
 mod protocol;
 mod register;
@@ -20,6 +22,7 @@ use std::process::ExitCode;
 const USAGE: &str = "Usage: lens <command>
 
   status       Show the data folder and whether the daemon runs
+  mcp          Serve reviewed defects to coding agents over MCP (stdio)
   register     Register Lens with every installed browser (per user)
   unregister   Remove those registrations
   stop         Stop the daemon (a browser connection starts it again)
@@ -39,6 +42,7 @@ fn main() -> ExitCode {
         }
         Some("unregister") => with_paths(|p| print_report(register::unregister(p)?)),
         Some("status") => with_paths(status),
+        Some("mcp") => with_paths(mcp::run),
         Some("stop") => with_paths(stop),
         Some("version" | "--version" | "-V") => {
             println!("lens {}", env!("CARGO_PKG_VERSION"));

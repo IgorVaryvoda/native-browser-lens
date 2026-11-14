@@ -61,6 +61,11 @@ pub enum Request {
     /// Freezes what may leave the notebook: chosen captures, rendered with their marks and masks,
     /// at the observation's current revision. The person must confirm they checked the screenshots.
     CreateReview(ReviewRequest),
+    ListReviews,
+    GetReview {
+        #[ts(type = "number")]
+        review: i64,
+    },
     /// Writes a review to a new folder in Downloads.
     ExportReview {
         #[ts(type = "number")]
@@ -121,6 +126,7 @@ pub enum Reply {
     Captures(Vec<Capture>),
     Blob(BlobChunk),
     Review(Review),
+    Reviews(Vec<ReviewSummary>),
     Exported(Exported),
     VibeQ(VibeQSettings),
     Members(Vec<crate::vibeq::Member>),
@@ -160,6 +166,21 @@ pub struct Review {
     pub title: String,
     pub notes: String,
     pub items: Vec<ReviewItem>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ReviewSummary {
+    #[ts(type = "number")]
+    pub id: i64,
+    #[ts(type = "number")]
+    pub observation: i64,
+    pub revision: u32,
+    #[ts(type = "number")]
+    pub created_at: i64,
+    pub title: String,
+    pub captures: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]

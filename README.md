@@ -20,3 +20,20 @@ LENS_E2E=1 pnpm build && pnpm test:e2e   # real Chromium, extension, shim, daemo
 
 Load `extension/.output/chrome-mv3` with **Load unpacked** in `chrome://extensions` and click the
 Lens button. `lens status` shows the data folder and the daemon; `lens stop` stops the daemon.
+
+## Agents (MCP)
+
+`lens mcp` serves reviewed defects over stdio: `list_reviews`, `get_review` and
+`read_review_file` (the rendered screenshots, redacted evidence and opted-in recordings). It reads
+only what a person reviewed and changes nothing.
+
+```sh
+claude mcp add lens -- lens mcp
+codex mcp add lens -- lens mcp
+```
+
+## VibeQ
+
+Add the VibeQ address and your personal token in Lens Settings. The token stays in the system
+secret store; `LENS_VIBEQ_TOKEN` overrides it for CI and automation. Filing a review again after
+an error is always safe: Lens reconciles with VibeQ first and never creates a second task.

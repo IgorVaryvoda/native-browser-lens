@@ -9,6 +9,7 @@ import type { Observation } from "./Observation";
 import type { ObservationSummary } from "./ObservationSummary";
 import type { Project } from "./Project";
 import type { Review } from "./Review";
+import type { ReviewSummary } from "./ReviewSummary";
 import type { VibeQSettings } from "./VibeQSettings";
 
-export type Reply = { "type": "hello", "data": Hello } | { "type": "observation", "data": Observation } | { "type": "observations", "data": Array<ObservationSummary> } | { "type": "project", "data": Project } | { "type": "projects", "data": Array<Project> } | { "type": "deleted" } | { "type": "capture", "data": Capture } | { "type": "captures", "data": Array<Capture> } | { "type": "blob", "data": BlobChunk } | { "type": "review", "data": Review } | { "type": "exported", "data": Exported } | { "type": "vibeQ", "data": VibeQSettings } | { "type": "members", "data": Array<Member> } | { "type": "filing", "data": Filing } | { "type": "stopping" };
+export type Reply = { "type": "hello", "data": Hello } | { "type": "observation", "data": Observation } | { "type": "observations", "data": Array<ObservationSummary> } | { "type": "project", "data": Project } | { "type": "projects", "data": Array<Project> } | { "type": "deleted" } | { "type": "capture", "data": Capture } | { "type": "captures", "data": Array<Capture> } | { "type": "blob", "data": BlobChunk } | { "type": "review", "data": Review } | { "type": "reviews", "data": Array<ReviewSummary> } | { "type": "exported", "data": Exported } | { "type": "vibeQ", "data": VibeQSettings } | { "type": "members", "data": Array<Member> } | { "type": "filing", "data": Filing } | { "type": "stopping" };

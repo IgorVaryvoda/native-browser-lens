@@ -8,7 +8,8 @@
 // Windows reads hosts from HKCU, so there the test registers for the current user and unregisters
 // at the end; run it on CI or a disposable account.
 import { chromium } from 'playwright-core';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
+import { createInterface } from 'node:readline';
 import { createServer } from 'node:http';
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -254,7 +255,42 @@ try {
     throw new Error(`unexpected submission: ${JSON.stringify(submitted.body).slice(0, 400)}`);
   }
 
-  console.log(`e2e: ok (${evidence.events.length} events, screenshot ${imageWidth}px wide, 2 marks, replay, notes kept, reviewed, exported and filed once despite a lost reply)`);
+  // MCP: an agent sees the reviewed defect and its rendered screenshot, nothing else.
+  const mcp = spawn(bin, ['mcp'], { env, stdio: ['pipe', 'pipe', 'inherit'] });
+  const lines = createInterface({ input: mcp.stdout });
+  const pending = new Map();
+  lines.on('line', (line) => {
+    const message = JSON.parse(line);
+    pending.get(message.id)?.(message);
+  });
+  let nextId = 1;
+  const rpc = (method, params) =>
+    new Promise((resolve, reject) => {
+      const id = nextId++;
+      const timer = setTimeout(() => reject(new Error(`MCP ${method} timed out`)), 15_000);
+      pending.set(id, (message) => (clearTimeout(timer), message.error ? reject(new Error(JSON.stringify(message.error))) : resolve(message.result)));
+      mcp.stdin.write(JSON.stringify({ jsonrpc: '2.0', id, method, params }) + '\n');
+    });
+  try {
+    await rpc('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'e2e', version: '1' } });
+    mcp.stdin.write(JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }) + '\n');
+    const tools = (await rpc('tools/list', {})).tools.map((t) => t.name).sort().join(',');
+    if (tools !== 'get_review,list_reviews,read_review_file') throw new Error(`MCP tools: ${tools}`);
+    const listed = JSON.parse((await rpc('tools/call', { name: 'list_reviews', arguments: {} })).content[0].text);
+    const latest = listed[0];
+    const detail = JSON.parse((await rpc('tools/call', { name: 'get_review', arguments: { review: latest.id } })).content[0].text);
+    if (detail.notes !== notes || !detail.captures[0].findings.some((f) => f.startsWith('HTTP 500'))) {
+      throw new Error(`MCP review: ${JSON.stringify(detail).slice(0, 300)}`);
+    }
+    const image = (await rpc('tools/call', { name: 'read_review_file', arguments: { review: latest.id, file: 'capture-1.png' } })).content[0];
+    if (image.type !== 'image' || image.mimeType !== 'image/png' || !image.data.startsWith('iVBORw0KGgo')) {
+      throw new Error(`MCP image: ${JSON.stringify(image).slice(0, 200)}`);
+    }
+  } finally {
+    mcp.kill();
+  }
+
+  console.log(`e2e: ok (${evidence.events.length} events, screenshot ${imageWidth}px wide, 2 marks, replay, notes kept, reviewed, exported and filed once despite a lost reply, served over MCP)`);
 } finally {
   // Cleanup must not hide the failure above, and must not hang the job.
   await Promise.race([context.close(), new Promise((done) => setTimeout(done, 20_000))]).catch(() => {});

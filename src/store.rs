@@ -1,6 +1,7 @@
 use crate::filing::Attempt;
 use crate::protocol::{
-    BlobRef, Capture, CaptureMode, Observation, ObservationSummary, Project, Review, Shape,
+    BlobRef, Capture, CaptureMode, Observation, ObservationSummary, Project, Review, ReviewSummary,
+    Shape,
 };
 use rusqlite::{Connection, params};
 use std::path::Path;
@@ -269,6 +270,27 @@ impl Store {
             Some(body) => serde_json::from_str(&body).ok(),
             None => None,
         })
+    }
+
+    pub fn list_reviews(&self) -> rusqlite::Result<Vec<ReviewSummary>> {
+        let mut statement = self
+            .db
+            .prepare("SELECT body FROM reviews ORDER BY id DESC")?;
+        let bodies = statement.query_map([], |row| row.get::<_, String>(0))?;
+        let mut reviews = Vec::new();
+        for body in bodies {
+            if let Ok(review) = serde_json::from_str::<Review>(&body?) {
+                reviews.push(ReviewSummary {
+                    id: review.id,
+                    observation: review.observation,
+                    revision: review.revision,
+                    created_at: review.created_at,
+                    title: review.title,
+                    captures: review.items.len() as u32,
+                });
+            }
+        }
+        Ok(reviews)
     }
 
     pub fn setting(&self, key: &str) -> rusqlite::Result<Option<String>> {

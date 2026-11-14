@@ -379,6 +379,13 @@ impl Daemon {
                         .map_err(storage)?,
                 )
             }
+            Request::ListReviews => Reply::Reviews(store.list_reviews().map_err(storage)?),
+            Request::GetReview { review } => Reply::Review(
+                store
+                    .get_review(review)
+                    .map_err(storage)?
+                    .ok_or_else(|| not_found("no such review"))?,
+            ),
             Request::ExportReview { review } => {
                 let review = store
                     .get_review(review)
