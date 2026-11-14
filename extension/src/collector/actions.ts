@@ -4,11 +4,9 @@ import type { Action } from '@/protocol/Action';
 import type { ActionKind } from '@/protocol/ActionKind';
 import type { Locator } from '@/protocol/Locator';
 import type { PageElement } from '@/protocol/PageElement';
-import { SENSITIVE, redactContent, sanitizeUrl } from './sanitize';
+import { PRIVATE_WORDS, SENSITIVE, redactContent, sanitizeUrl } from './sanitize';
 
 const TEST_IDS = ['data-testid', 'data-test-id', 'data-test', 'data-cy', 'data-qa'];
-const PRIVATE_WORDS =
-  /card|cc-?num|cvv|cvc|csc|iban|ssn|social.?security|passport|\bpin\b|account.?num|routing|one.?time|otp|2fa|mfa/i;
 const PRIVATE_AUTOCOMPLETE = /^(cc-|one-time-code|current-password|new-password)/;
 const MAX_NAME = 80;
 /** Most candidates Lens compares to number a locator among equal ones. */

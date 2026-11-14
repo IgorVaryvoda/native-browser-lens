@@ -501,16 +501,38 @@ impl Rect {
     }
 }
 
-/// The evidence as a review shares it: without the element list, and with typed values masked
-/// unless the person chose to share them.
+/// The evidence as a review shares it: without the element list. Unless the person chose to share
+/// what they typed and the site's data, typed values are masked, request bodies are dropped, and
+/// only the bodies of failed responses stay, as before Lens kept API answers.
 pub fn for_review(mut evidence: Evidence, typed_values: bool) -> Evidence {
     evidence.elements.clear();
-    if !typed_values {
-        for action in &mut evidence.actions {
-            if matches!(action.kind, ActionKind::Fill | ActionKind::Select) && !action.masked {
-                action.value = None;
-                action.masked = true;
-            }
+    if typed_values {
+        return evidence;
+    }
+    for action in &mut evidence.actions {
+        if matches!(action.kind, ActionKind::Fill | ActionKind::Select) && !action.masked {
+            action.value = None;
+            action.masked = true;
+        }
+    }
+    let failed: std::collections::HashSet<String> = evidence
+        .events
+        .iter()
+        .filter(|e| e.kind == "response" && e.data["status"].as_u64().unwrap_or(0) >= 400)
+        .filter_map(|e| e.data["requestId"].as_str().map(String::from))
+        .collect();
+    evidence.events.retain(|e| {
+        e.kind != "responseBody"
+            || e.data["requestId"]
+                .as_str()
+                .is_some_and(|id| failed.contains(id))
+    });
+    for event in &mut evidence.events {
+        if event.kind == "request"
+            && let Some(data) = event.data.as_object_mut()
+        {
+            data.remove("postData");
+            data.remove("postDataType");
         }
     }
     evidence
@@ -842,5 +864,33 @@ mod tests {
         assert!(timeline(&hidden).contains("type a private value into textbox \"Coupon\""));
         let shared = for_review(checkout(), true);
         assert_eq!(shared.actions[0].value.as_deref(), Some("SAVE10"));
+        assert!(har(&shared)["log"]["entries"][0]["request"]["postData"].is_object());
+    }
+
+    #[test]
+    fn reviews_without_typed_values_keep_only_failure_bodies() {
+        let mut evidence = checkout();
+        evidence.events.push(event(
+            1800,
+            "request",
+            json!({ "requestId": "8", "method": "GET", "resourceType": "Fetch" }),
+        ));
+        evidence.events.push(event(
+            1810,
+            "response",
+            json!({ "requestId": "8", "status": 200 }),
+        ));
+        evidence.events.push(event(
+            1811,
+            "responseBody",
+            json!({ "requestId": "8", "format": "json", "body": { "email": "a@b.test" } }),
+        ));
+        let hidden = for_review(evidence, false);
+        let text = serde_json::to_string(&hidden.events).unwrap();
+        assert!(
+            !text.contains("a@b.test") && !text.contains("SAVE10"),
+            "{text}"
+        );
+        assert!(text.contains("price is NaN"), "the failure body stays");
     }
 }

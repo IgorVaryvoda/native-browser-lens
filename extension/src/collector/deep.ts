@@ -1,5 +1,5 @@
 import type { EvidenceBuffer } from './buffer';
-import { bodyEvidence } from './sanitize';
+import { bodyEvidence, requestBody } from './sanitize';
 
 type Params = Record<string, any>;
 
@@ -77,8 +77,8 @@ export class DeepCollector {
           method: p.request.method,
           resourceType: p.type,
           initiator: p.initiator?.type,
-          // What the page sent, for a test that replays the request. Redacted like every string.
-          postData: typeof p.request.postData === 'string' ? p.request.postData : undefined,
+          // What the page sent to its own origin, for a test that replays the request.
+          postData: requestBody(p.request.postData, contentType(p.request.headers) ?? '', p.request.url, this.pageUrl(tabId) ?? ''),
           postDataType: contentType(p.request.headers),
         });
         break;

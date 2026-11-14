@@ -311,9 +311,10 @@ export function Review({ observation: id }: { observation: number }) {
             <label className="check">
               <input type="checkbox" checked={typedValues} onChange={(e) => setTypedValues(e.target.checked)} />
               <span>
-                Include what I typed in the steps
+                Include what I typed and the site’s API data
                 <span className="small muted" style={{ display: 'block' }}>
-                  So an agent can repeat them. Passwords, card numbers and fields with private names are always masked.
+                  So an agent can repeat the steps and replay the server. Without it, only failed answers leave. Passwords,
+                  card numbers and private fields are always masked.
                 </span>
               </span>
             </label>

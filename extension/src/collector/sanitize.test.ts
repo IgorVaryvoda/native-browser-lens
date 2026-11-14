@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { bodyEvidence, REDACTED, sanitize, sanitizeText, sanitizeUrl } from './sanitize';
+import { bodyEvidence, REDACTED, requestBody, sanitize, sanitizeText, sanitizeUrl } from './sanitize';
 
 const jwt = 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.c2lnbmF0dXJl';
 
@@ -46,5 +46,40 @@ describe('bodyEvidence', () => {
   it('leaves out other origins and binary bodies', () => {
     expect(bodyEvidence('{}', 'application/json', 'https://cdn.test/x', 'https://a.test/')).toHaveProperty('omission');
     expect(bodyEvidence('xx', 'image/png', 'https://a.test/x', 'https://a.test/')).toHaveProperty('omission');
+  });
+});
+
+describe('private values', () => {
+  it('redacts card numbers in text and numbers, but not timestamps', () => {
+    expect(sanitizeText('paid with 4111 1111 1111 1111 today')).toBe(`paid with ${REDACTED} today`);
+    expect(sanitize({ n: 4111111111111111 })).toEqual({ n: REDACTED });
+    expect(sanitizeText('at 1763120400123')).toBe('at 1763120400123');
+  });
+
+  it('redacts payment and identity fields by name', () => {
+    expect(sanitize({ cardNumber: 'x', cvc: '123', iban: 'y', coupon: 'SAVE10' })).toEqual({
+      cardNumber: REDACTED,
+      cvc: REDACTED,
+      iban: REDACTED,
+      coupon: 'SAVE10',
+    });
+  });
+});
+
+describe('requestBody', () => {
+  const page = 'https://a.test/checkout';
+  it('keeps same-origin JSON and form bodies without private fields', () => {
+    expect(requestBody('{"coupon":"SAVE10","card":"4111111111111111"}', 'application/json', 'https://a.test/api', page)).toBe(
+      `{"coupon":"SAVE10","card":"${REDACTED}"}`,
+    );
+    expect(requestBody('coupon=SAVE10&cvv=123', 'application/x-www-form-urlencoded', 'https://a.test/api', page)).toBe(
+      `coupon=SAVE10&cvv=${encodeURIComponent(REDACTED)}`,
+    );
+  });
+
+  it('leaves out other origins, binary bodies and large bodies', () => {
+    expect(requestBody('{}', 'application/json', 'https://pay.test/api', page)).toBeUndefined();
+    expect(requestBody('xx', 'application/octet-stream', 'https://a.test/api', page)).toBeUndefined();
+    expect(requestBody('x'.repeat(20_000), 'text/plain', 'https://a.test/api', page)).toBeUndefined();
   });
 });
