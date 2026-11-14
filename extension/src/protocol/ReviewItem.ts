@@ -42,6 +42,10 @@ shots: Array<Shot>,
  */
 cut: number, 
 /**
+ * Shots left out so the whole filing fits VibeQ's file limit.
+ */
+shotsDropped: number, 
+/**
  * When the capture was saved, in Unix milliseconds.
  */
 capturedAt: number, startedAt: number, };

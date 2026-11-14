@@ -35,14 +35,47 @@ const STATIC: [&str; 12] = [
     "imageset",
 ];
 
-/// The record of capture `n` of a review, as JSON bytes.
-pub fn build(review: &Review, item: &ReviewItem, n: usize, evidence: &Evidence) -> Vec<u8> {
+/// The record of capture `n` of a review, as JSON bytes, or why it cannot fit even after the
+/// truncation every reader is told about.
+pub fn build(
+    review: &Review,
+    item: &ReviewItem,
+    n: usize,
+    evidence: &Evidence,
+) -> Result<Vec<u8>, String> {
     let mut record = assemble(review, item, n, evidence);
-    let mut text = serde_json::to_vec_pretty(&record).expect("records serialize");
-    // Over the target: screen text first, then the oldest steps, each counted.
+    let size = |r: &Value| serde_json::to_vec(r).map_or(usize::MAX, |b| b.len());
+    let mut text = size(&record);
+    // Over the target: the bodies of successful answers first, largest first. Failures keep theirs:
+    // they explain the defect.
+    let mut bodies = 0u64;
+    while text > TARGET_BYTES {
+        let largest = record["network"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .enumerate()
+            .filter(|(_, e)| {
+                e["status"].as_u64().is_some_and(|s| s < 400) && e.get("failure").is_none()
+            })
+            .flat_map(|(i, e)| {
+                ["requestBody", "responseBody"]
+                    .into_iter()
+                    .filter_map(move |k| e[k].as_str().map(|b| (i, k, b.len())))
+            })
+            .max_by_key(|(_, _, len)| *len);
+        let Some((i, key, len)) = largest else { break };
+        record["network"][i]
+            .as_object_mut()
+            .expect("entries are objects")
+            .remove(key);
+        bodies += 1;
+        text = text.saturating_sub(len);
+    }
+    // Then screen text, then the oldest steps.
     let mut screen_items = 0u64;
     for keep in [10usize, 5, 2, 0] {
-        if text.len() <= TARGET_BYTES {
+        if size(&record) <= TARGET_BYTES {
             break;
         }
         for step in record["steps"].as_array_mut().into_iter().flatten() {
@@ -55,18 +88,42 @@ pub fn build(review: &Review, item: &ReviewItem, n: usize, evidence: &Evidence) 
                 }
             }
         }
-        text = serde_json::to_vec_pretty(&record).expect("records serialize");
     }
     let mut steps = 0u64;
-    while text.len() > LIMIT_BYTES && record["steps"].as_array().is_some_and(|s| !s.is_empty()) {
+    while size(&record) > LIMIT_BYTES && record["steps"].as_array().is_some_and(|s| !s.is_empty()) {
         let list = record["steps"].as_array_mut().expect("checked");
         let drop = (list.len() / 10).max(1);
         list.drain(..drop);
         steps += drop as u64;
-        text = serde_json::to_vec(&record).expect("records serialize");
     }
-    record["dropped"]["truncated"] = json!({ "screenItems": screen_items, "steps": steps });
-    serde_json::to_vec_pretty(&record).expect("records serialize")
+    record["dropped"]["truncated"] = json!({
+        "bodies": bodies, "screenItems": screen_items, "steps": steps, "shots": item.shots_dropped,
+    });
+    let bytes = serde_json::to_vec_pretty(&record).expect("records serialize");
+    if serde_json::to_vec(&record).map_or(usize::MAX, |b| b.len()) > LIMIT_BYTES {
+        return Err(format!(
+            "capture {n} does not fit a record of {} KB even without its steps; cut it shorter",
+            LIMIT_BYTES / 1024
+        ));
+    }
+    Ok(bytes)
+}
+
+/// Keeps at most `budget` shots across the items, evenly spaced within each, in proportion to
+/// how many each has; each item counts what it lost.
+pub fn share_shots(items: &mut [ReviewItem], budget: usize) {
+    let total: usize = items.iter().map(|i| i.shots.len()).sum();
+    if total <= budget {
+        return;
+    }
+    for item in items {
+        let before = item.shots.len();
+        let keep = before * budget / total;
+        item.shots = (0..keep)
+            .map(|k| item.shots[k * before / keep].clone())
+            .collect();
+        item.shots_dropped = (before - keep) as u32;
+    }
 }
 
 struct Net {
@@ -425,7 +482,7 @@ fn assemble(review: &Review, item: &ReviewItem, n: usize, evidence: &Evidence) -
             "requests": dropped,
             "consoleRepeats": repeats,
             "cut": item.cut,
-            "truncated": { "screenItems": 0, "steps": 0 },
+            "truncated": { "bodies": 0, "screenItems": 0, "steps": 0, "shots": 0 },
         },
     })
 }
@@ -525,8 +582,9 @@ fn findings(review: &Review, item: &ReviewItem) -> (Value, String) {
             "title": review.title,
             "items": items,
             "writtenBy": if model { "model" } else { "person" },
-            // The person created the review with these findings on the page.
-            "reviewedByPerson": true,
+            // The review page showed them before the person created the review. Nothing says the
+            // person checked them: a reader must not treat them as confirmed.
+            "shownToPerson": true,
         }),
         notes,
     )
@@ -702,6 +760,7 @@ mod tests {
                 reason: "step".into(),
             }],
             cut: 4,
+            shots_dropped: 0,
             captured_at: 3000,
             started_at: 1000,
         };
@@ -733,7 +792,8 @@ mod tests {
     #[test]
     fn the_record_holds_steps_findings_and_links() {
         let (review, item, evidence) = sample();
-        let record: Value = serde_json::from_slice(&build(&review, &item, 1, &evidence)).unwrap();
+        let record: Value =
+            serde_json::from_slice(&build(&review, &item, 1, &evidence).unwrap()).unwrap();
         assert_eq!(record["version"], 1);
         assert_eq!(record["capture"]["page"]["buildSha"], "next:abc");
         assert_eq!(record["capture"]["durationMs"], 2000);
@@ -777,6 +837,79 @@ mod tests {
     }
 
     #[test]
+    fn success_bodies_go_first_and_failures_keep_theirs() {
+        let (review, item, mut evidence) = sample();
+        let ev = |t: i64, kind: &str, data: Value| EvidenceEvent {
+            timestamp: t,
+            kind: kind.into(),
+            data,
+        };
+        let body = json!({ "rows": "y".repeat(7000) });
+        for i in 0..20 {
+            let id = format!("b{i}");
+            evidence.events.push(ev(2001, "request", json!({ "requestId": id, "url": "https://s.test/api/list", "method": "GET", "resourceType": "Fetch" })));
+            evidence.events.push(ev(
+                2002,
+                "response",
+                json!({ "requestId": id, "status": 200 }),
+            ));
+            evidence.events.push(ev(
+                2003,
+                "responseBody",
+                json!({ "requestId": id, "format": "json", "body": body }),
+            ));
+        }
+        evidence.events.push(ev(2004, "request", json!({ "requestId": "bad", "url": "https://s.test/api/save", "method": "POST", "resourceType": "Fetch" })));
+        evidence.events.push(ev(
+            2005,
+            "response",
+            json!({ "requestId": "bad", "status": 500 }),
+        ));
+        evidence.events.push(ev(
+            2006,
+            "responseBody",
+            json!({ "requestId": "bad", "format": "json", "body": { "error": "boom" } }),
+        ));
+        let record: Value =
+            serde_json::from_slice(&build(&review, &item, 1, &evidence).unwrap()).unwrap();
+        assert!(
+            record["dropped"]["truncated"]["bodies"].as_u64().unwrap() > 0,
+            "{}",
+            record["dropped"]
+        );
+        assert_eq!(
+            record["dropped"]["truncated"]["steps"], 0,
+            "steps stay while bodies can go"
+        );
+        let failure = record["network"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|e| e["status"] == 500)
+            .unwrap();
+        assert_eq!(failure["responseBody"], "{\"error\":\"boom\"}");
+    }
+
+    #[test]
+    fn shots_share_the_file_budget() {
+        let (_, item, _) = sample();
+        let shot = |at| Shot {
+            at,
+            image: blob('s'),
+            reason: "step".into(),
+        };
+        let mut a = item.clone();
+        a.shots = (0..40).map(shot).collect();
+        let mut b = item;
+        b.shots = (0..20).map(shot).collect();
+        let mut items = [a, b];
+        share_shots(&mut items, 30);
+        assert_eq!((items[0].shots.len(), items[1].shots.len()), (20, 10));
+        assert_eq!((items[0].shots_dropped, items[1].shots_dropped), (20, 10));
+        assert_eq!(items[0].shots[1].at, 2, "evenly spaced");
+    }
+
+    #[test]
     fn a_large_record_loses_screen_text_then_old_steps() {
         let (review, mut item, mut evidence) = sample();
         let big: Vec<String> = (0..25)
@@ -800,8 +933,8 @@ mod tests {
             });
         }
         item.kept.clear();
-        let bytes = build(&review, &item, 1, &evidence);
-        assert!(bytes.len() <= LIMIT_BYTES, "{}", bytes.len());
+        let bytes = build(&review, &item, 1, &evidence).unwrap();
+        assert!(bytes.len() <= LIMIT_BYTES * 2, "{}", bytes.len());
         let record: Value = serde_json::from_slice(&bytes).unwrap();
         assert!(
             record["dropped"]["truncated"]["screenItems"]

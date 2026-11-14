@@ -153,7 +153,8 @@ pub fn reproduction(
     vec![
         (
             format!("capture-{n}.lens.json"),
-            crate::record::build(review, item, n, evidence),
+            // Review creation checked the size; a record that cannot fit is left out, not cut.
+            crate::record::build(review, item, n, evidence).unwrap_or_default(),
         ),
         (
             format!("capture-{n}-timeline.txt"),

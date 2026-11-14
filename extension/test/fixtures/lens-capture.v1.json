@@ -75,7 +75,9 @@
     "cut": 0,
     "requests": {},
     "truncated": {
+      "bodies": 0,
       "screenItems": 0,
+      "shots": 0,
       "steps": 0
     }
   },
@@ -87,7 +89,7 @@
         "text": "The total shows NaN after Pay"
       }
     ],
-    "reviewedByPerson": true,
+    "shownToPerson": true,
     "title": "Checkout: total shows NaN after Pay",
     "writtenBy": "model"
   },

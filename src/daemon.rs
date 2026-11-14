@@ -534,36 +534,36 @@ impl Daemon {
                         screen,
                         shots,
                         cut,
+                        shots_dropped: 0,
                         captured_at: capture.created_at,
                         started_at: capture.started_at,
                     });
                 }
-                Reply::Review(
-                    store
-                        .create_review(Review {
-                            id: 0,
-                            observation: observation.id,
-                            revision: observation.revision,
-                            created_at: now_ms(),
-                            title: observation.title,
-                            notes: observation.notes,
-                            items,
-                            // Transcribed notes only: one still waiting is not something the person has read.
-                            voice: store
-                                .list_voice_notes(observation.id)
-                                .map_err(storage)?
-                                .into_iter()
-                                .filter(|v| v.state == VoiceState::Done)
-                                .map(|v| ReviewVoice {
-                                    started_at: v.started_at,
-                                    duration_ms: v.duration_ms,
-                                    language: v.language,
-                                    segments: v.segments,
-                                })
-                                .collect(),
+                let mut review = Review {
+                    id: 0,
+                    observation: observation.id,
+                    revision: observation.revision,
+                    created_at: now_ms(),
+                    title: observation.title,
+                    notes: observation.notes,
+                    items,
+                    // Transcribed notes only: one still waiting is not something the person has read.
+                    voice: store
+                        .list_voice_notes(observation.id)
+                        .map_err(storage)?
+                        .into_iter()
+                        .filter(|v| v.state == VoiceState::Done)
+                        .map(|v| ReviewVoice {
+                            started_at: v.started_at,
+                            duration_ms: v.duration_ms,
+                            language: v.language,
+                            segments: v.segments,
                         })
-                        .map_err(storage)?,
-                )
+                        .collect(),
+                };
+                // Checked now, so a filing never fails after the person's work.
+                self.fit_for_filing(&mut review)?;
+                Reply::Review(store.create_review(review).map_err(storage)?)
             }
             Request::Announce(client) => {
                 if client.profile.is_empty() || client.profile.len() > 64 {
@@ -901,6 +901,34 @@ impl Daemon {
             return Err(remote(e));
         }
         restart_soon(&self.paths, &executable);
+        Ok(())
+    }
+
+    /// Makes a review fit what VibeQ takes: at most MAX_ATTACHMENTS files, so the shots share
+    /// what the records, end screenshots and recordings leave (evenly spaced, the rest counted);
+    /// and records under their size limit.
+    fn fit_for_filing(&self, review: &mut Review) -> Result<(), ProtocolError> {
+        let limit = crate::filing::MAX_ATTACHMENTS;
+        let base: usize = review
+            .items
+            .iter()
+            .map(|i| 2 + usize::from(i.recording.is_some()))
+            .sum();
+        if base > limit {
+            return Err(bad(format!(
+                "this review would file {base} files and VibeQ takes {limit}; review fewer captures at once"
+            )));
+        }
+        crate::record::share_shots(&mut review.items, limit - base);
+        for (index, item) in review.items.iter().enumerate() {
+            let evidence = self
+                .blobs
+                .read_all(&item.evidence.sha256)
+                .ok()
+                .and_then(|b| repro::parse(&b))
+                .ok_or_else(|| storage("the capture's evidence is not readable"))?;
+            crate::record::build(review, item, index + 1, &evidence).map_err(bad)?;
+        }
         Ok(())
     }
 

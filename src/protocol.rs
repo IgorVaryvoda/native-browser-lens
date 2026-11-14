@@ -418,6 +418,9 @@ pub struct ReviewItem {
     /// Steps and events left out because they fell in a trimmed or cut part.
     #[serde(default)]
     pub cut: u32,
+    /// Shots left out so the whole filing fits VibeQ's file limit.
+    #[serde(default)]
+    pub shots_dropped: u32,
     /// When the capture was saved, in Unix milliseconds.
     #[serde(default)]
     #[ts(type = "number")]

@@ -650,6 +650,7 @@ mod tests {
                 screen: vec![],
                 shots: vec![],
                 cut: 0,
+                shots_dropped: 0,
                 captured_at: 0,
                 started_at: 0,
             }],
