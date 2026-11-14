@@ -20,6 +20,8 @@ type ReplyTo = {
   getCapture: 'capture';
   saveAnnotations: 'capture';
   readBlob: 'blob';
+  listReviews: 'reviews';
+  getReview: 'review';
   createReview: 'review';
   exportReview: 'exported';
   getVibeQ: 'vibeQ';
@@ -29,6 +31,10 @@ type ReplyTo = {
   getFiling: 'filing';
   shutdown: 'stopping';
 };
+// Every protocol method must name its reply here; a new Rust request fails this line first.
+type MissingReplies = Exclude<Request['method'], keyof ReplyTo>;
+const everyMethodHasAReply: [MissingReplies] extends [never] ? true : MissingReplies = true;
+void everyMethodHasAReply;
 type ReplyData<M extends Request['method']> = Extract<Reply, { type: ReplyTo[M] }> extends { data: infer D } ? D : never;
 
 export class LensError extends Error {
