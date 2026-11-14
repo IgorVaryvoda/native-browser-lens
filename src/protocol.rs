@@ -372,6 +372,9 @@ pub struct Review {
     pub created_at: i64,
     pub title: String,
     pub notes: String,
+    /// The observation's tags when the review was made.
+    #[serde(default)]
+    pub tags: Vec<String>,
     pub items: Vec<ReviewItem>,
     /// The person's transcribed voice notes, oldest first.
     #[serde(default)]
@@ -1065,6 +1068,8 @@ pub struct Observation {
     pub notes: String,
     /// Grows by one with every saved edit; an update must name the revision it started from.
     pub revision: u32,
+    /// Short labels for the VibeQ task, such as `assets` or `bug`; see `clean_tags`.
+    pub tags: Vec<String>,
     /// Milliseconds since the Unix epoch.
     #[ts(type = "number")]
     pub created_at: i64,
@@ -1120,6 +1125,30 @@ pub struct ObservationUpdate {
     pub revision: u32,
     pub title: String,
     pub notes: String,
+    /// Left out (or null), the tags stay as they are.
+    #[serde(default)]
+    #[ts(optional)]
+    pub tags: Option<Vec<String>>,
+}
+
+/// Tags as VibeQ keeps them: lowercase, words joined by `-`, at most 32 characters, eight tags,
+/// each once. Anything else is dropped, so a model or a typo cannot add odd labels.
+pub fn clean_tags(tags: &[String]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for tag in tags {
+        let words: Vec<String> = tag
+            .to_lowercase()
+            .split(|c: char| !(c.is_ascii_alphanumeric() || c == ':'))
+            .filter(|w| !w.is_empty())
+            .map(String::from)
+            .collect();
+        let tag: String = words.join("-").chars().take(32).collect();
+        let tag = tag.trim_matches('-').to_string();
+        if !tag.is_empty() && !out.contains(&tag) && out.len() < 8 {
+            out.push(tag);
+        }
+    }
+    out
 }
 
 pub const MAX_NOTES_BYTES: usize = 256 * 1024;
@@ -1159,6 +1188,23 @@ impl ProtocolError {
 #[cfg(test)]
 mod tests {
     use super::{Edits, TimeRange};
+
+    #[test]
+    fn tags_are_cleaned() {
+        let raw = [
+            "AI Tools",
+            "ai-tools",
+            " Bug!! ",
+            "",
+            "x".repeat(40).as_str(),
+            "a/b",
+        ]
+        .map(String::from);
+        assert_eq!(
+            super::clean_tags(&raw),
+            ["ai-tools", "bug", &"x".repeat(32), "a-b"]
+        );
+    }
 
     #[test]
     fn trims_and_cuts_leave_the_kept_ranges() {

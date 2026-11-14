@@ -180,3 +180,11 @@ fieldset.split legend {
   float: left;
   margin-bottom: 4px;
 }
+
+/* Tags go to the VibeQ task: a quiet line under the title. */
+.tags-input {
+  height: 28px;
+  margin-top: -6px;
+  font: 500 12px var(--font-ui);
+  color: var(--muted-foreground);
+}

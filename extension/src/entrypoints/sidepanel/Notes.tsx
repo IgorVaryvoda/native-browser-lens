@@ -27,9 +27,12 @@ export function Notes({
   const [record, setRecord] = useState<Observation | null>(null);
   const [title, setTitle] = useState('');
   const [notes, setNotes] = useState('');
+  const [tags, setTags] = useState('');
   const [state, setState] = useState<SaveState>({ kind: 'saved' });
   const saving = useRef(false);
-  const dirty = record !== null && (title !== record.title || notes !== record.notes);
+  const tagList = tags.split(',').map((t) => t.trim()).filter(Boolean);
+  const dirty =
+    record !== null && (title !== record.title || notes !== record.notes || tagList.join(',') !== record.tags.join(','));
   if (appendRef) {
     appendRef.current = (text: string) => {
       setNotes((current) => (current.trim() ? `${current.trimEnd()}\n\n${text}` : text));
@@ -42,6 +45,7 @@ export function Notes({
     setRecord(found);
     setTitle(found.title);
     setNotes(found.notes);
+    setTags(found.tags.join(', '));
     setState({ kind: 'saved' });
   }, [client, id]);
 
@@ -56,9 +60,11 @@ export function Notes({
     try {
       const saved = await client.request({
         method: 'updateObservation',
-        params: { id, revision: record.revision, title, notes },
+        params: { id, revision: record.revision, title, notes, tags: tagList },
       });
       setRecord(saved);
+      // The daemon cleans tags ("AI Tools" becomes ai-tools): show what it kept.
+      if (saved.tags.join(',') !== tagList.join(',')) setTags(saved.tags.join(', '));
       // Typing during the save leaves a newer draft: the effect below saves it next.
       setState(saved.title === title && saved.notes === notes ? { kind: 'saved' } : { kind: 'editing' });
       onSaved();
@@ -75,10 +81,12 @@ export function Notes({
             notes: latest.notes.slice(0, latest.notes.length - record.notes.length) + notes,
           };
           try {
-            const saved = await client.request({ method: 'updateObservation', params: { id, revision: latest.revision, ...merged } });
+            const merging = { ...merged, tags: tagList.length || record.tags.length ? tagList : latest.tags };
+            const saved = await client.request({ method: 'updateObservation', params: { id, revision: latest.revision, ...merging } });
             setRecord(saved);
             setTitle(saved.title);
             setNotes(saved.notes);
+            setTags(saved.tags.join(', '));
             setState({ kind: 'saved' });
             onSaved();
             return;
@@ -91,13 +99,13 @@ export function Notes({
     } finally {
       saving.current = false;
     }
-  }, [client, id, record, dirty, title, notes, onSaved]);
+  }, [client, id, record, dirty, title, notes, tags, onSaved]);
 
   useEffect(() => {
     if (!dirty || state.kind === 'conflict' || state.kind === 'saving') return;
     const timer = setTimeout(() => void save(), AUTOSAVE_MS);
     return () => clearTimeout(timer);
-  }, [dirty, title, notes, state.kind, save]);
+  }, [dirty, title, notes, tags, state.kind, save]);
 
   useEffect(() => {
     const keys = (event: KeyboardEvent) => {
@@ -126,6 +134,13 @@ export function Notes({
         aria-label="Title"
         value={title}
         onChange={(e) => (setTitle(e.target.value), setState(editing))}
+      />
+      <input
+        className="input input-quiet tags-input"
+        aria-label="Tags"
+        placeholder="Tags for VibeQ, like assets, bug"
+        value={tags}
+        onChange={(e) => (setTags(e.target.value), setState(editing))}
       />
       <div className="field">
         <div className="notes-head">

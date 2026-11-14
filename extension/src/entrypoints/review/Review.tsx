@@ -85,6 +85,8 @@ export function Review({ observation: id }: { observation: number }) {
           revision: latest.revision,
           title: found.title.replace(/[[\]()<>!`*_#|\\]/g, '').trim(),
           notes: [findings, previous].filter(Boolean).join('\n\n'),
+          // The person's own tags win; the model's only fill an empty list.
+          ...(latest.tags.length ? {} : { tags: found.tags }),
         },
       });
       setObservation(saved);

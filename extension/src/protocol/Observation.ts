@@ -6,6 +6,10 @@ export type Observation = { id: number, title: string, url: string | null, notes
  */
 revision: number, 
 /**
+ * Short labels for the VibeQ task, such as `assets` or `bug`; see `clean_tags`.
+ */
+tags: Array<string>, 
+/**
  * Milliseconds since the Unix epoch.
  */
 createdAt: number, updatedAt: number, };

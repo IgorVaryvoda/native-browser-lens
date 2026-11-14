@@ -76,6 +76,7 @@ const MIGRATIONS: &[&str] = &[
     ALTER TABLE captures ADD COLUMN started_at INTEGER NOT NULL DEFAULT 0;
     ALTER TABLE captures ADD COLUMN edits TEXT NOT NULL DEFAULT '{}';",
     "ALTER TABLE captures ADD COLUMN shots TEXT NOT NULL DEFAULT '[]';",
+    "ALTER TABLE observations ADD COLUMN tags TEXT NOT NULL DEFAULT '[]';",
 ];
 
 /// What an update found.
@@ -86,7 +87,7 @@ pub enum Updated {
     Missing,
 }
 
-const OBSERVATION_COLUMNS: &str = "id, title, url, notes, revision, created_at, updated_at";
+const OBSERVATION_COLUMNS: &str = "id, title, url, notes, revision, created_at, updated_at, tags";
 
 fn observation_from_row(row: &rusqlite::Row) -> rusqlite::Result<Observation> {
     Ok(Observation {
@@ -97,6 +98,7 @@ fn observation_from_row(row: &rusqlite::Row) -> rusqlite::Result<Observation> {
         revision: row.get(4)?,
         created_at: row.get(5)?,
         updated_at: row.get(6)?,
+        tags: serde_json::from_str(&row.get::<_, String>(7)?).unwrap_or_default(),
     })
 }
 
@@ -357,12 +359,15 @@ impl Store {
         revision: u32,
         title: &str,
         notes: &str,
+        tags: Option<&[String]>,
         now: i64,
     ) -> rusqlite::Result<Updated> {
+        let tags = tags.map(|t| serde_json::to_string(t).expect("tags serialize"));
         let changed = self.db.execute(
-            "UPDATE observations SET title = ?3, notes = ?4, revision = revision + 1, updated_at = ?5
+            "UPDATE observations SET title = ?3, notes = ?4, tags = COALESCE(?6, tags),
+                revision = revision + 1, updated_at = ?5
              WHERE id = ?1 AND revision = ?2",
-            params![id, revision, title, notes, now],
+            params![id, revision, title, notes, now, tags],
         )?;
         Ok(match (changed, self.get_observation(id)?) {
             (1, Some(saved)) => Updated::Saved(saved),
@@ -396,8 +401,8 @@ impl Store {
             });
         }
         tx.execute(
-            "INSERT INTO observations (title, url, notes, created_at, updated_at)
-             SELECT ?2, url, ?3, ?4, ?4 FROM observations WHERE id = ?1",
+            "INSERT INTO observations (title, url, notes, tags, created_at, updated_at)
+             SELECT ?2, url, ?3, tags, ?4, ?4 FROM observations WHERE id = ?1",
             params![id, title, notes, now],
         )?;
         let copy = tx.last_insert_rowid();
@@ -963,7 +968,7 @@ mod tests {
         assert_eq!(created.revision, 0);
 
         let Updated::Saved(saved) = store
-            .update_observation(created.id, 0, "Cart", "NaN after coupon", 2)
+            .update_observation(created.id, 0, "Cart", "NaN after coupon", None, 2)
             .unwrap()
         else {
             panic!("the first update must save");
@@ -975,14 +980,14 @@ mod tests {
 
         // A second window still holds revision 0: it must not overwrite the first.
         let Updated::Conflict(current) = store
-            .update_observation(created.id, 0, "Cart", "stale", 3)
+            .update_observation(created.id, 0, "Cart", "stale", None, 3)
             .unwrap()
         else {
             panic!("a stale revision must conflict");
         };
         assert_eq!(current.notes, "NaN after coupon");
         assert!(matches!(
-            store.update_observation(999, 0, "x", "", 4).unwrap(),
+            store.update_observation(999, 0, "x", "", None, 4).unwrap(),
             Updated::Missing
         ));
     }

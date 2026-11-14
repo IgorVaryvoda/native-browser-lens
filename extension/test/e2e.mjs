@@ -74,7 +74,7 @@ writeFileSync(
 if (process.argv.includes('auth')) { console.log(JSON.stringify({ loggedIn: true, authMethod: 'claude.ai' })); process.exit(0); }
 process.stdin.resume();
 process.stdin.on('end', () => console.log(JSON.stringify({ type: 'result', is_error: false,
-  structured_output: { title: 'Checkout: total shows NaN after Pay', findings: ['The total shows NaN after Pay', 'The coupon field accepts expired codes'] } })));
+  structured_output: { title: 'Checkout: total shows NaN after Pay', findings: ['The total shows NaN after Pay', 'The coupon field accepts expired codes'], tags: ['Checkout', 'bug'] } })));
 `,
   { mode: 0o755 },
 );
@@ -299,6 +299,8 @@ try {
     .waitFor({ timeout: 30_000 });
   if (summaries) {
     if ((await review.getByLabel('Title', { exact: true }).inputValue()) !== 'Checkout: total shows NaN after Pay') throw new Error('the title was not written');
+    // The model's tags, cleaned, ready for the VibeQ task; the person can edit them.
+    if ((await review.getByLabel('Tags', { exact: true }).inputValue()) !== 'checkout, bug') throw new Error('the tags were not written');
     if (!(await review.getByLabel('Notes', { exact: true }).inputValue()).startsWith('Findings (written by Claude Haiku from the recording; check them):\n- The total shows NaN after Pay\n- The coupon field')) {
       throw new Error(`the findings are not first: ${await review.getByLabel('Notes', { exact: true }).inputValue()}`);
     }
@@ -399,6 +401,8 @@ try {
   await review.getByRole('status', { name: 'Filing' }).getByRole('link', { name: 'http://vibeq.test/?task=task-1' }).waitFor({ timeout: 30_000 });
   const [submitted] = [...vibeq.submissions.values()];
   if (vibeq.submits !== 1 || vibeq.submissions.size !== 1) throw new Error(`VibeQ got ${vibeq.submits} submits`);
+  // The task is tagged: `lens` for the source, then the observation's tags.
+  if (summaries && submitted.body.tags?.join(',') !== 'lens,checkout,bug') throw new Error(`the task's tags: ${submitted.body.tags}`);
   if (vibeq.staged !== submitted.body.evidenceManifest.length) {
     throw new Error(`${vibeq.staged} uploads for ${submitted.body.evidenceManifest.length} files`);
   }

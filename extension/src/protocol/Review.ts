@@ -5,7 +5,11 @@ import type { ReviewVoice } from "./ReviewVoice";
 /**
  * What a person approved to leave the notebook. Never changes after it is created.
  */
-export type Review = { id: number, observation: number, revision: number, createdAt: number, title: string, notes: string, items: Array<ReviewItem>, 
+export type Review = { id: number, observation: number, revision: number, createdAt: number, title: string, notes: string, 
+/**
+ * The observation's tags when the review was made.
+ */
+tags: Array<string>, items: Array<ReviewItem>, 
 /**
  * The person's transcribed voice notes, oldest first.
  */

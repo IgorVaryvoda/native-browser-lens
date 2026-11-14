@@ -265,7 +265,14 @@ impl Daemon {
                     ));
                 }
                 let outcome = store
-                    .update_observation(update.id, update.revision, title, &update.notes, now_ms())
+                    .update_observation(
+                        update.id,
+                        update.revision,
+                        title,
+                        &update.notes,
+                        update.tags.as_deref().map(clean_tags).as_deref(),
+                        now_ms(),
+                    )
                     .map_err(storage)?;
                 match outcome {
                     Updated::Saved(saved) => Reply::Observation(saved),
@@ -614,6 +621,7 @@ impl Daemon {
                     created_at: now_ms(),
                     title: observation.title,
                     notes: observation.notes,
+                    tags: observation.tags,
                     items,
                     // Transcribed notes only: one still waiting is not something the person has read.
                     voice: store
@@ -1236,7 +1244,15 @@ impl Daemon {
         let title = plain(&summary.title);
         // A person who edited meanwhile wins: the revision no longer matches and nothing changes.
         if let Updated::Saved(_) = store
-            .update_observation(observation, found.revision, &title, &notes, now_ms())
+            .update_observation(
+                observation,
+                found.revision,
+                &title,
+                &notes,
+                // The person's own tags win; the model's only fill an empty list.
+                found.tags.is_empty().then_some(summary.tags.as_slice()),
+                now_ms(),
+            )
             .map_err(|e| e.to_string())?
         {
             store.set_setting(&key, &title).map_err(|e| e.to_string())?;

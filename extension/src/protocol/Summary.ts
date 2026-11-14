@@ -8,4 +8,8 @@ export type Summary = { agent: Agent, title: string,
 /**
  * One line each: what is wrong, where; praise marked as such.
  */
-findings: Array<string>, };
+findings: Array<string>, 
+/**
+ * For the VibeQ task: the product area and the kind of problem, cleaned by `clean_tags`.
+ */
+tags: Array<string>, };

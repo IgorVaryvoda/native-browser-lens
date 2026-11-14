@@ -186,6 +186,8 @@ pub struct Summary {
     pub title: String,
     /// One line each: what is wrong, where; praise marked as such.
     pub findings: Vec<String>,
+    /// For the VibeQ task: the product area and the kind of problem, cleaned by `clean_tags`.
+    pub tags: Vec<String>,
 }
 
 const SUMMARY_INSTRUCTIONS: &str = "You name and summarize defect reports from what a person \
@@ -200,14 +202,18 @@ Findings: 1 to 6 short lines, one per distinct problem the person found, in thei
 clear; fix obvious transcription errors only when the context makes the meaning certain. Mark \
 praise or positive feedback with \"Works well:\". Add a failed request or console error only when \
 it relates to what the person said. No speculation about causes.\n\
+Tags: 1 to 4 lowercase labels: the product area from the page path or the screen (like assets, \
+ai-tools, comments, checkout, settings) and the kind (bug, ux, performance, praise). No names, \
+IDs or page titles.\n\
 Recording:\n";
 
 fn summary_schema() -> Value {
     json!({
-        "type": "object", "additionalProperties": false, "required": ["title", "findings"],
+        "type": "object", "additionalProperties": false, "required": ["title", "findings", "tags"],
         "properties": {
             "title": { "type": "string" },
             "findings": { "type": "array", "items": { "type": "string" } },
+            "tags": { "type": "array", "items": { "type": "string" } },
         },
     })
 }
@@ -260,10 +266,22 @@ pub fn summarize(context: &Value, notebook: &Path) -> Result<Summary, String> {
         .take(8)
         .map(|f| f.chars().take(300).collect())
         .collect();
+    let tags: Vec<String> = answer["tags"]
+        .as_array()
+        .map(|t| {
+            t.iter()
+                .filter_map(|t| t.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default();
     Ok(Summary {
         agent,
         title: title.chars().take(120).collect(),
         findings,
+        tags: crate::protocol::clean_tags(&tags)
+            .into_iter()
+            .take(4)
+            .collect(),
     })
 }
 
@@ -630,6 +648,7 @@ mod tests {
             created_at: 0,
             title: "NaN total".into(),
             notes: "after coupon".into(),
+            tags: vec![],
             items: vec![ReviewItem {
                 capture: 1,
                 page_url: "https://shop.test/".into(),

@@ -773,6 +773,7 @@ mod tests {
             notes: format!(
                 "{FINDINGS_HEADER}\n- The total shows NaN \\(after Pay\\)\n- Works well: the 3D view\n\nI was on staging."
             ),
+            tags: vec![],
             items: vec![],
             voice: vec![ReviewVoice {
                 started_at: 900,

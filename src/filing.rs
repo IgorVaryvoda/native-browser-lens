@@ -37,6 +37,9 @@ pub struct Submission {
     pub assignee_id: Option<String>,
     pub reviewed: bool,
     pub evidence_manifest: Vec<Artifact>,
+    /// `lens` first, then the observation's tags. Empty in attempts saved before tags existed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -117,6 +120,11 @@ pub fn prepare(
             assignee_id: assignee,
             reviewed: true,
             evidence_manifest: manifest,
+            tags: crate::protocol::clean_tags(
+                &std::iter::once("lens".to_string())
+                    .chain(review.tags.iter().cloned())
+                    .collect::<Vec<_>>(),
+            ),
         },
         member_id: None,
         receipt: None,
@@ -175,7 +183,18 @@ pub fn deliver(
     if receipt.is_none() || !missing.is_empty() {
         let mut body = serde_json::to_value(&attempt.submission).expect("submissions serialize");
         body["stagedAttachments"] = staged.into();
-        receipt = Some(validate(client.submit(&body)?, &attempt.submission)?);
+        let mut sent = client.submit(&body);
+        // ponytail: VibeQ's submission schema is strict and older deploys refuse `tags`; send
+        // once more without them. Remove when every VibeQ takes tags.
+        if sent.as_ref().is_err_and(|e| e.contains("HTTP 400"))
+            && body
+                .as_object_mut()
+                .and_then(|b| b.remove("tags"))
+                .is_some()
+        {
+            sent = client.submit(&body);
+        }
+        receipt = Some(validate(sent?, &attempt.submission)?);
     }
     attempt.receipt = receipt.clone();
     save(attempt)?;
@@ -352,6 +371,7 @@ mod tests {
             created_at: 1,
             title: "Cart total shows NaN".into(),
             notes: "After the coupon.".into(),
+            tags: vec!["Assets".into(), "bug".into()],
             items: vec![ReviewItem {
                 capture: 1,
                 page_url: "https://shop.test/cart".into(),
@@ -395,6 +415,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(attempt.submission.revision, 3);
+        assert_eq!(attempt.submission.tags, ["lens", "assets", "bug"]);
         let files = attempt.submission.evidence_manifest.len();
         // The report is the description, review.json is bookkeeping, and this evidence holds no
         // network or console event: only the screenshot goes as a file.
