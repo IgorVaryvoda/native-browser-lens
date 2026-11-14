@@ -32,7 +32,7 @@ if (!values['skip-build']) {
   run('cargo', ['build', '--release', '--locked', '-p', 'lens-speech', ...targetArgs]);
   if (values.gpu) {
     // Its own target folder: the GPU build of lens-speech must not overwrite the CPU one.
-    const gpuDir = `${metadata.target_directory}-gpu`;
+    const gpuDir = join(metadata.target_directory, 'gpu');
     run('cargo', ['build', '--release', '--locked', '-p', 'lens-speech', '--features', values.gpu, '--target-dir', gpuDir, ...targetArgs]);
     copyFileSync(
       join(gpuDir, ...(values.target ? [values.target] : []), 'release', `lens-speech${exe}`),
@@ -62,7 +62,10 @@ const config = {
   publisher: 'Sirv',
   // Several sizes: the AppImage needs a square one at a size it knows (512 at most).
   // Absolute: the packager resolves relative paths from the config file's folder.
-  icons: ['icon-32.png', 'icon-128.png', 'icon-256.png', 'icon-512.png', 'icon.png'].map((f) => join(root, 'assets', f)),
+  // macOS's icns writer takes 1024 px only as a @2x image ("No matching IconType" otherwise).
+  icons: ['icon-32.png', 'icon-128.png', 'icon-256.png', 'icon-512.png', process.platform === 'darwin' ? 'icon-512@2x.png' : 'icon.png'].map(
+    (f) => join(root, 'assets', f),
+  ),
   'out-dir': join(root, 'dist'),
   'binaries-dir': release,
   binaries,
@@ -75,7 +78,10 @@ const config = {
   // Not just "lens": other software uses that package name.
   deb: { 'package-name': 'sirv-lens', depends: ['libc6'] },
   pacman: { depends: ['glibc'] },
-  ...(process.env.APPLE_SIGNING_IDENTITY ? { macos: { 'signing-identity': process.env.APPLE_SIGNING_IDENTITY } } : {}),
+  macos: {
+    'info-plist-path': join(root, 'assets', 'macos', 'Info.plist'),
+    ...(process.env.APPLE_SIGNING_IDENTITY ? { 'signing-identity': process.env.APPLE_SIGNING_IDENTITY } : {}),
+  },
 };
 mkdirSync(join(root, 'dist'), { recursive: true });
 const configPath = join(root, 'dist', 'packager.json');
