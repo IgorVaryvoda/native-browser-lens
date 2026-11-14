@@ -398,7 +398,10 @@ mod tests {
             root: dir.path().join("Google/Chrome"),
         };
         std::fs::create_dir_all(dir.path().join("Firefox")).unwrap();
-        assert!(firefox.installed(), "Application Support/Firefox without Mozilla");
+        assert!(
+            firefox.installed(),
+            "Application Support/Firefox without Mozilla"
+        );
         assert!(!chrome.installed());
     }
 

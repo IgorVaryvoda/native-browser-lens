@@ -234,26 +234,60 @@ pub fn icon_rgba(size: u32, running: bool) -> Vec<u8> {
         .collect()
 }
 
-/// One tray per user session.
-fn single_instance(paths: &Paths) -> io::Result<Option<File>> {
+/// One tray per user session. `wait`: a tray that replaces an older one waits for it to let go.
+fn single_instance(paths: &Paths, wait: bool) -> io::Result<Option<File>> {
     paths.ensure()?;
     let lock = File::options()
         .create(true)
         .truncate(false)
         .write(true)
         .open(paths.runtime.join("tray.lock"))?;
-    match lock.try_lock() {
-        Ok(()) => Ok(Some(lock)),
-        Err(TryLockError::WouldBlock) => Ok(None),
-        Err(TryLockError::Error(e)) => Err(e),
+    for _ in 0..if wait { 40 } else { 1 } {
+        match lock.try_lock() {
+            Ok(()) => return Ok(Some(lock)),
+            Err(TryLockError::WouldBlock) => {
+                std::thread::sleep(std::time::Duration::from_millis(250))
+            }
+            Err(TryLockError::Error(e)) => return Err(e),
+        }
     }
+    Ok(None)
 }
 
-pub fn run(paths: &Paths) -> io::Result<()> {
-    let Some(_lock) = single_instance(paths)? else {
+pub fn run(paths: &Paths, wait: bool) -> io::Result<()> {
+    let Some(_lock) = single_instance(paths, wait)? else {
         return Ok(());
     };
     platform::run(paths)
+}
+
+/// When this tray's program file changed on disk, as an update or a new installer does.
+fn program_stamp() -> Option<std::time::SystemTime> {
+    std::fs::metadata(crate::paths::executable().ok()?)
+        .and_then(|m| m.modified())
+        .ok()
+}
+
+/// An update replaced the program: start a tray from the new file and end this one. The new
+/// tray waits for this one's lock; without this the old tray ran until logout.
+fn hand_over_if_replaced(started: Option<std::time::SystemTime>) {
+    if started.is_none() || program_stamp() == started {
+        return;
+    }
+    if let Ok(executable) = crate::paths::executable() {
+        let program = if cfg!(windows) {
+            executable.with_file_name("lensw.exe")
+        } else {
+            executable
+        };
+        let _ = std::process::Command::new(program)
+            .args(["tray", "--wait"])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn();
+    }
+    std::process::exit(0);
 }
 
 /// Starts the tray beside the service's daemon, detached, without a console window.
@@ -359,8 +393,10 @@ mod platform {
         let handle = tray
             .spawn()
             .map_err(|e| io::Error::other(format!("no system tray here: {e}")))?;
+        let started = program_stamp();
         loop {
             std::thread::sleep(POLL);
+            hand_over_if_replaced(started);
             let now = snapshot(paths);
             handle.update(|tray| tray.now = now);
             if handle.is_closed() {
@@ -433,6 +469,7 @@ mod platform {
         let mut actions = HashMap::new();
         let mut now = Snapshot::default();
         let mut next_poll = Instant::now();
+        let started = program_stamp();
         event_loop.run(move |event, _, flow| {
             *flow = ControlFlow::WaitUntil(next_poll);
             if let Event::NewEvents(StartCause::Init) = event {
@@ -461,6 +498,7 @@ mod platform {
             }
             if Instant::now() >= next_poll {
                 next_poll = Instant::now() + POLL;
+                hand_over_if_replaced(started);
                 let fresh = snapshot(&paths);
                 if fresh != now {
                     now = fresh;

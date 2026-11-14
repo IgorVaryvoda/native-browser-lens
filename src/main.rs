@@ -137,7 +137,10 @@ fn main() -> ExitCode {
         }),
         Some("doctor") => with_paths(setup::doctor),
         Some("mcp") => with_paths(mcp::run),
-        Some("tray") => with_paths(tray::run),
+        Some("tray") => {
+            let wait = args.get(1).is_some_and(|a| a == "--wait");
+            with_paths(|p| tray::run(p, wait))
+        }
         Some("stop") => with_paths(stop),
         Some("version" | "--version" | "-V") => {
             println!("lens {}", env!("CARGO_PKG_VERSION"));
