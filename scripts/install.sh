@@ -54,10 +54,27 @@ mkdir -p "$bin_dir"
 install -m 0755 "$work/sirv-lens-$version-$target/lens" "$bin_dir/.lens.new"
 mv -f "$bin_dir/.lens.new" "$bin_dir/lens"
 "$bin_dir/lens" stop >/dev/null 2>&1 || true
+
+# The extension, unpacked in a stable folder for Load unpacked until the store listings exist.
+extension_zip="sirv-lens-extension-$version-chrome.zip"
+if curl -fsSL -o "$work/$extension_zip" "$base/$extension_zip" 2>/dev/null &&
+  [ "$(sum "$work/$extension_zip")" = "$(awk -v asset="$extension_zip" '{ name = $2; sub(/^\*/, "", name); if (name == asset) print $1 }' "$work/SHA256SUMS")" ]; then
+  extension_dir=$("$bin_dir/lens" paths extension)
+  if command -v unzip >/dev/null; then
+    rm -rf "$extension_dir.new" && mkdir -p "$extension_dir.new" &&
+      unzip -q "$work/$extension_zip" -d "$extension_dir.new" &&
+      rm -rf "$extension_dir" && mv "$extension_dir.new" "$extension_dir"
+  else
+    echo "unzip is missing: the extension was not unpacked (install unzip and run this again)."
+  fi
+fi
+
 "$bin_dir/lens" register
 "$bin_dir/lens" service install
 
 echo
 echo "Lens $version is installed in $bin_dir/lens."
 case ":$PATH:" in *":$bin_dir:"*) ;; *) echo "Add $bin_dir to your PATH to use the lens command." ;; esac
-echo "Next: add the Lens extension to your browser, open a site, and click the Lens button."
+echo
+# Walk through the browser steps, unless this runs without a terminal (CI, scripts).
+if [ -t 1 ] && [ -r /dev/tty ]; then "$bin_dir/lens" setup </dev/tty; else "$bin_dir/lens" doctor || true; fi

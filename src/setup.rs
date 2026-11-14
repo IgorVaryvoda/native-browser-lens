@@ -160,7 +160,7 @@ fn extension_instructions(paths: &Paths) -> String {
             let folder = paths.data.join("extension");
             if folder.is_dir() {
                 format!(
-                    "add the extension: open chrome://extensions, turn on Developer mode, choose Load unpacked, select {}",
+                    "add the extension: open chrome://extensions (or edge://extensions, brave://extensions), turn on Developer mode, choose Load unpacked, select {}",
                     folder.display()
                 )
             } else {

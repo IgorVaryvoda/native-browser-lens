@@ -48,6 +48,19 @@ try {
     Copy-Item -Force "$work\sirv-lens-$version-$target\lens.exe" $exe
     Copy-Item -Force "$work\sirv-lens-$version-$target\lensw.exe" (Join-Path $dir 'lensw.exe')
 
+    # The extension, unpacked in a stable folder for Load unpacked until the store listings exist.
+    $extensionZip = "sirv-lens-extension-$version-chrome.zip"
+    try {
+        Invoke-WebRequest -UseBasicParsing -Uri "$base/$extensionZip" -OutFile "$work\$extensionZip"
+        $listed = Get-Content "$work\SHA256SUMS" | Where-Object { $_ -match " \*?$([regex]::Escape($extensionZip))$" }
+        $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath "$work\$extensionZip").Hash.ToLower()
+        if ($listed -and (($listed -split ' ')[0] -eq $hash)) {
+            $extensionDir = (& $exe paths extension)
+            if (Test-Path $extensionDir) { Remove-Item -Recurse -Force $extensionDir }
+            Expand-Archive -LiteralPath "$work\$extensionZip" -DestinationPath $extensionDir
+        }
+    } catch { Write-Host 'The extension package is not in this release; skipped.' }
+
     $path = [Environment]::GetEnvironmentVariable('Path', 'User')
     if (($path -split ';') -notcontains $dir) {
         [Environment]::SetEnvironmentVariable('Path', ($path.TrimEnd(';') + ";$dir").TrimStart(';'), 'User')
@@ -56,7 +69,10 @@ try {
     & $exe service install
     Write-Host ''
     Write-Host "Lens $version is installed in $exe."
-    Write-Host 'Next: add the Lens extension to your browser, open a site, and click the Lens button.'
+    if ([Environment]::UserInteractive -and -not $env:CI) { & $exe setup } else { & $exe doctor }
 } finally {
     Remove-Item -Recurse -Force $work -ErrorAction SilentlyContinue
 }
+
+# Open setup steps are not an install failure: doctor already printed them.
+exit 0

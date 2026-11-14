@@ -27,6 +27,7 @@ const USAGE: &str = "Usage: lens <command>
   setup              Set Lens up step by step, checking each step
   doctor             Check every setup step once
   status             Show the version, folders, service and daemon
+  paths <name>       Print one folder: data, logs or extension (for scripts)
   start              Start Lens in the background
   stop               Stop Lens (the service does not restart it)
   restart            Stop, then start
@@ -78,6 +79,16 @@ fn main() -> ExitCode {
         Some("unregister") => with_paths(|p| print_report(register::unregister(p)?)),
         Some("status") => with_paths(status),
         Some("setup") => with_paths(setup::setup),
+        Some("paths") => with_paths(|p| {
+            let folder = match args.get(1).map(String::as_str) {
+                Some("data") => p.data.clone(),
+                Some("logs") => p.logs.clone(),
+                Some("extension") => p.data.join("extension"),
+                _ => return Err(std::io::Error::other("lens paths data|logs|extension")),
+            };
+            println!("{}", folder.display());
+            Ok(())
+        }),
         Some("doctor") => with_paths(setup::doctor),
         Some("mcp") => with_paths(mcp::run),
         Some("stop") => with_paths(stop),
