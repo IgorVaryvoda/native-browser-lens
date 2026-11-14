@@ -196,7 +196,7 @@ pub fn transcribe(paths: &Paths, wav: &Path, duration_ms: i64) -> Result<Transcr
             .arg("--vad")
             .arg(dir.join(VAD.file))
             .args(["--threads", &threads.to_string()]);
-        match run(command, limit) {
+        match run(command, limit, &paths.data.join("tmp")) {
             Ok(stdout) => {
                 return serde_json::from_slice(&stdout)
                     .map_err(|e| format!("the {label} speech program answered badly: {e}"));
@@ -207,15 +207,22 @@ pub fn transcribe(paths: &Paths, wav: &Path, duration_ms: i64) -> Result<Transcr
     Err(failures.join("; "))
 }
 
-/// Runs a program with a deadline. Its output goes to files, so a full pipe cannot stall it.
-fn run(mut command: Command, limit: Duration) -> Result<Vec<u8>, String> {
+/// Runs a program with a deadline. Its output goes to files, so a full pipe cannot stall it. The
+/// files live in Lens's own data folder, not the shared temporary folder, and must be new.
+fn run(mut command: Command, limit: Duration, private: &Path) -> Result<Vec<u8>, String> {
     static RUNS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let run = RUNS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let scratch = std::env::temp_dir().join(format!("lens-speech-{}-{run}", std::process::id()));
+    let scratch = private.join(format!("speech-{}-{run}", std::process::id()));
     std::fs::create_dir_all(&scratch).map_err(|e| e.to_string())?;
     let result = (|| {
-        let stdout = std::fs::File::create(scratch.join("out")).map_err(|e| e.to_string())?;
-        let stderr = std::fs::File::create(scratch.join("err")).map_err(|e| e.to_string())?;
+        let new = |name: &str| {
+            std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(scratch.join(name))
+                .map_err(|e| e.to_string())
+        };
+        let (stdout, stderr) = (new("out")?, new("err")?);
         let mut child = command
             .stdin(Stdio::null())
             .stdout(stdout)
@@ -311,7 +318,8 @@ mod tests {
             let mut command = Command::new("sleep");
             command.arg("5");
             let started = Instant::now();
-            assert!(run(command, Duration::from_millis(300)).is_err());
+            let dir = tempfile::tempdir().unwrap();
+            assert!(run(command, Duration::from_millis(300), dir.path()).is_err());
             assert!(started.elapsed() < Duration::from_secs(3));
         }
     }
