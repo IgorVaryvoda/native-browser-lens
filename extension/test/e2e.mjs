@@ -278,8 +278,10 @@ try {
     if (tools !== 'get_review,list_reviews,read_review_file') throw new Error(`MCP tools: ${tools}`);
     const listed = JSON.parse((await rpc('tools/call', { name: 'list_reviews', arguments: {} })).content[0].text);
     const latest = listed[0];
-    const detail = JSON.parse((await rpc('tools/call', { name: 'get_review', arguments: { review: latest.id } })).content[0].text);
-    if (detail.notes !== notes || !detail.captures[0].findings.some((f) => f.startsWith('HTTP 500'))) {
+    const reviewed = (await rpc('tools/call', { name: 'get_review', arguments: { review: latest.id } })).content;
+    if (!reviewed[0].text.includes('UNTRUSTED DATA')) throw new Error('MCP: page content is not marked untrusted');
+    const detail = JSON.parse(reviewed[1].text);
+    if (detail.notesByThePerson !== notes || !detail.captures[0].untrustedPageContent.findings.some((f) => f.startsWith('HTTP 500'))) {
       throw new Error(`MCP review: ${JSON.stringify(detail).slice(0, 300)}`);
     }
     const image = (await rpc('tools/call', { name: 'read_review_file', arguments: { review: latest.id, file: 'capture-1.png' } })).content[0];
