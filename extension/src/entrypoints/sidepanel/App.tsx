@@ -419,7 +419,7 @@ function Captures({ client, observation }: { client: LensClient; observation: nu
                   onClick={() => open(`/replay.html?capture=${c.id}`)}
                 >
                   <PlayIcon />
-                  Replay
+                  Open recording
                 </button>
               )}
             </span>

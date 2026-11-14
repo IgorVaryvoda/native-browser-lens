@@ -233,13 +233,13 @@ try {
   await editor.getByRole('status').filter({ hasText: 'Saved · 2 marks' }).waitFor({ timeout: 15_000 });
   await capture.getByText(/· 2 marks/).waitFor({ timeout: 15_000 });
 
-  // Replay: the DOM recording of the seconds before the capture plays in its own page.
+  // The capture's recording opens in the editor, the same one Record mode uses.
   const [replay] = await Promise.all([
     context.waitForEvent('page'),
-    capture.getByRole('button', { name: 'Replay' }).click(),
+    capture.getByRole('button', { name: 'Open recording' }).click(),
   ]);
-  await replay.getByRole('status').filter({ hasText: /s before the capture/ }).waitFor({ timeout: 15_000 });
-  const replayed = replay.frameLocator('iframe').first().getByRole('heading', { name: 'Checkout' });
+  await replay.getByRole('region', { name: 'Recording editor' }).waitFor({ timeout: 15_000 });
+  const replayed = replay.frameLocator('.stage iframe').getByRole('heading', { name: 'Checkout' });
   await replayed.waitFor({ state: 'attached', timeout: 15_000 });
 
   // Notes: autosave, then still there after the panel reloads (a new shim, the same daemon).
@@ -256,7 +256,7 @@ try {
   // Voice: a spoken note becomes a transcript when the speech model and program are present
   // (LENS_SPEECH_MODELS, LENS_SPEECH_DIR); without them it waits and the panel offers the model.
   const speech = Boolean(process.env.LENS_SPEECH_MODELS && process.env.LENS_SPEECH_DIR);
-  await panel.getByRole('button', { name: 'Record' }).click();
+  await panel.getByRole('button', { name: 'Record', exact: true }).click();
   await panel.getByRole('status', { name: 'Recording' }).waitFor({ timeout: 15_000 });
   await panel.waitForTimeout(11_500);
   await panel.getByRole('button', { name: /^Stop/ }).click();

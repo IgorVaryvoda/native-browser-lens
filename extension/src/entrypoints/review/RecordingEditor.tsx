@@ -1,5 +1,6 @@
 import rrwebPlayer from 'rrweb-player';
 import 'rrweb-player/dist/style.css';
+import './editor.css';
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { locatorOf } from '@/collector/actions';
 import type { LensClient } from '@/lens-client';
