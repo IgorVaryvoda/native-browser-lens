@@ -52,6 +52,11 @@ impl Paths {
             .unwrap_or_else(|| self.data.join("exports"))
     }
 
+    /// Frozen filing attempts: what was reviewed, byte for byte, until VibeQ confirms it.
+    pub fn filings(&self) -> PathBuf {
+        self.data.join("filings")
+    }
+
     pub fn database(&self) -> PathBuf {
         self.data.join("lens.sqlite")
     }

@@ -66,6 +66,20 @@ pub enum Request {
         #[ts(type = "number")]
         review: i64,
     },
+    GetVibeQ,
+    /// Saves the VibeQ address; a token, when given, goes to the OS secret store (empty removes it).
+    SetVibeQ(VibeQInput),
+    ListMembers,
+    /// Files a review to VibeQ, or finishes an interrupted filing of it.
+    FileReview {
+        #[ts(type = "number")]
+        review: i64,
+        assignee: Option<String>,
+    },
+    GetFiling {
+        #[ts(type = "number")]
+        review: i64,
+    },
     /// One chunk of a stored blob. Replies stay under 1 MiB, so large blobs take several reads.
     ReadBlob {
         sha256: String,
@@ -108,6 +122,9 @@ pub enum Reply {
     Blob(BlobChunk),
     Review(Review),
     Exported(Exported),
+    VibeQ(VibeQSettings),
+    Members(Vec<crate::vibeq::Member>),
+    Filing(Filing),
     Stopping,
 }
 
@@ -160,6 +177,38 @@ pub struct ReviewItem {
     pub recording: Option<BlobRef>,
     /// What failed, as the report states it: HTTP errors, failed requests, console errors.
     pub findings: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct VibeQSettings {
+    pub endpoint: Option<String>,
+    /// Whether a token is saved. The token itself never leaves the daemon.
+    pub has_token: bool,
+    /// The token comes from LENS_VIBEQ_TOKEN, not the secret store.
+    pub token_from_environment: bool,
+    pub secret_store: SecretStoreStatus,
+}
+
+#[derive(Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct VibeQInput {
+    pub endpoint: String,
+    pub token: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct Filing {
+    #[ts(type = "number")]
+    pub review: i64,
+    /// Null until VibeQ confirmed the task.
+    pub task_url: Option<String>,
+    /// Files VibeQ does not hold yet; filing the review again uploads them.
+    pub missing_files: u32,
 }
 
 #[derive(Debug, Serialize, Deserialize, TS)]
@@ -462,6 +511,8 @@ pub enum ErrorCode {
     NotFound,
     /// The record changed since the client read it; read it again.
     Conflict,
+    /// VibeQ or the network failed; the message says whether a retry is safe.
+    Remote,
     TooLarge,
     Storage,
     Internal,

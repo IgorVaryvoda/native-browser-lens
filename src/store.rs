@@ -1,3 +1,4 @@
+use crate::filing::Attempt;
 use crate::protocol::{
     BlobRef, Capture, CaptureMode, Observation, ObservationSummary, Project, Review, Shape,
 };
@@ -43,6 +44,12 @@ const MIGRATIONS: &[&str] = &[
     "CREATE TABLE reviews (
         id INTEGER PRIMARY KEY,
         observation_id INTEGER NOT NULL REFERENCES observations(id) ON DELETE CASCADE,
+        body TEXT NOT NULL
+    );",
+    "CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+    CREATE TABLE filings (
+        review_id INTEGER PRIMARY KEY REFERENCES reviews(id) ON DELETE CASCADE,
+        observation_id INTEGER NOT NULL,
         body TEXT NOT NULL
     );",
 ];
@@ -262,6 +269,61 @@ impl Store {
             Some(body) => serde_json::from_str(&body).ok(),
             None => None,
         })
+    }
+
+    pub fn setting(&self, key: &str) -> rusqlite::Result<Option<String>> {
+        let mut statement = self
+            .db
+            .prepare("SELECT value FROM settings WHERE key = ?1")?;
+        statement
+            .query_map([key], |row| row.get(0))?
+            .next()
+            .transpose()
+    }
+
+    pub fn set_setting(&self, key: &str, value: &str) -> rusqlite::Result<()> {
+        self.db.execute(
+            "INSERT INTO settings (key, value) VALUES (?1, ?2)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            params![key, value],
+        )?;
+        Ok(())
+    }
+
+    pub fn filing(&self, review: i64) -> rusqlite::Result<Option<Attempt>> {
+        let mut statement = self
+            .db
+            .prepare("SELECT body FROM filings WHERE review_id = ?1")?;
+        let body: Option<String> = statement
+            .query_map([review], |row| row.get(0))?
+            .next()
+            .transpose()?;
+        Ok(body.and_then(|b| serde_json::from_str(&b).ok()))
+    }
+
+    pub fn save_filing(&self, attempt: &Attempt) -> rusqlite::Result<()> {
+        let body = serde_json::to_string(attempt).expect("attempts serialize");
+        self.db.execute(
+            "INSERT INTO filings (review_id, observation_id, body) VALUES (?1, ?2, ?3)
+             ON CONFLICT(review_id) DO UPDATE SET body = excluded.body",
+            params![attempt.review, attempt.observation, body],
+        )?;
+        Ok(())
+    }
+
+    /// The highest VibeQ revision this observation has a filing for, finished or not.
+    pub fn filed_revision(&self, observation: i64) -> rusqlite::Result<Option<u64>> {
+        let mut statement = self
+            .db
+            .prepare("SELECT body FROM filings WHERE observation_id = ?1")?;
+        let bodies = statement.query_map([observation], |row| row.get::<_, String>(0))?;
+        let mut highest = None;
+        for body in bodies {
+            if let Ok(attempt) = serde_json::from_str::<Attempt>(&body?) {
+                highest = highest.max(Some(attempt.submission.revision));
+            }
+        }
+        Ok(highest)
     }
 
     pub fn list_projects(&self) -> rusqlite::Result<Vec<Project>> {

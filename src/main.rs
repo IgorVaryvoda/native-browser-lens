@@ -1,6 +1,7 @@
 mod blobs;
 mod daemon;
 mod export;
+mod filing;
 mod framing;
 mod ipc;
 mod paths;
@@ -10,6 +11,7 @@ mod render;
 mod secrets;
 mod shim;
 mod store;
+mod vibeq;
 
 use paths::Paths;
 use protocol::{MAX_REPLY_BYTES, ReplyFrame, Request, RequestFrame};

@@ -4,6 +4,8 @@ import type { Capture } from '@/protocol/Capture';
 import type { Observation } from '@/protocol/Observation';
 import type { Review as FrozenReview } from '@/protocol/Review';
 import type { BlobRef } from '@/protocol/BlobRef';
+import type { Filing } from '@/protocol/Filing';
+import type { Member } from '@/protocol/Member';
 
 /**
  * Chooses what may leave the notebook. The person confirms the screenshots, the daemon freezes the
@@ -18,6 +20,10 @@ export function Review({ observation: id }: { observation: number }) {
   const [checked, setChecked] = useState(false);
   const [review, setReview] = useState<FrozenReview | null>(null);
   const [exported, setExported] = useState<string | null>(null);
+  const [members, setMembers] = useState<Member[] | null>(null);
+  const [assignee, setAssignee] = useState('');
+  const [filing, setFiling] = useState<Filing | null>(null);
+  const [sending, setSending] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
 
   useEffect(() => {
@@ -53,6 +59,28 @@ export function Review({ observation: id }: { observation: number }) {
       setProblem((error as Error).message);
     }
   }
+
+  async function file() {
+    if (!review) return;
+    setSending(true);
+    try {
+      const done = await client.request({ method: 'fileReview', params: { review: review.id, assignee: assignee || null } });
+      setFiling(done);
+      setProblem(done.missingFiles ? `${done.missingFiles} files did not reach VibeQ; file again to send them.` : null);
+    } catch (error) {
+      setProblem(`Not filed: ${(error as Error).message}. Filing again is safe: it never creates a second task.`);
+    } finally {
+      setSending(false);
+    }
+  }
+
+  useEffect(() => {
+    if (!review) return;
+    client
+      .request({ method: 'listMembers' })
+      .then(setMembers)
+      .catch(() => setMembers([]));
+  }, [client, review]);
 
   async function exportReview() {
     if (!review) return;
@@ -95,10 +123,39 @@ export function Review({ observation: id }: { observation: number }) {
             ))}
           </ol>
           <div className="actions">
-            <button type="button" className="primary" onClick={exportReview} disabled={exported !== null}>
+            {members && members.length > 0 && (
+              <label>
+                Assign to{' '}
+                <select value={assignee} onChange={(e) => setAssignee(e.target.value)} disabled={filing !== null}>
+                  <option value="">Nobody</option>
+                  {members.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+            <button
+              type="button"
+              className="primary"
+              onClick={file}
+              disabled={sending || (filing !== null && filing.missingFiles === 0)}
+            >
+              {sending ? 'Filing…' : filing ? 'Filed' : 'File to VibeQ'}
+            </button>
+            <button type="button" onClick={exportReview} disabled={exported !== null}>
               Export to Downloads
             </button>
           </div>
+          {filing?.taskUrl && (
+            <p role="status" aria-label="Filing">
+              Filed:{' '}
+              <a href={filing.taskUrl} target="_blank" rel="noreferrer">
+                {filing.taskUrl}
+              </a>
+            </p>
+          )}
           {exported && (
             <p role="status" aria-label="Export">
               Exported to {exported}

@@ -96,7 +96,12 @@ export function App() {
   return (
     <main>
       <header>
-        <h1>Lens</h1>
+        <h1>
+          Lens{' '}
+          <button type="button" className="link settings-link" onClick={() => void browser.runtime.openOptionsPage()}>
+            Settings
+          </button>
+        </h1>
         <p className="status" data-state={connection.state} role="status" aria-label="Connection">
           {connection.state === 'connecting' && 'Connecting…'}
           {connection.state === 'ready' && `Connected · Lens ${connection.hello.version}`}

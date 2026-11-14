@@ -5,7 +5,8 @@ use crate::framing::{read_frame, write_frame};
 use crate::paths::Paths;
 use crate::protocol::*;
 use crate::store::{CaptureRow, Store, Updated};
-use crate::{export, ipc, render, secrets};
+use crate::vibeq::{self, Client};
+use crate::{export, filing, ipc, render, secrets};
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use interprocess::local_socket::{Stream, prelude::*};
@@ -18,6 +19,19 @@ pub struct Daemon {
     blobs: Blobs,
     data_dir: String,
     downloads: std::path::PathBuf,
+    filings: std::path::PathBuf,
+}
+
+const TOKEN_ACCOUNT: &str = "vibeq-token";
+/// A token from the environment wins over the secret store: for CI and automation, where no
+/// keyring runs. People use Settings.
+const TOKEN_ENV: &str = "LENS_VIBEQ_TOKEN";
+
+fn saved_token() -> Result<Option<String>, ProtocolError> {
+    match std::env::var(TOKEN_ENV) {
+        Ok(token) if !token.trim().is_empty() => Ok(Some(token.trim().into())),
+        _ => secrets::get(TOKEN_ACCOUNT).map_err(storage),
+    }
 }
 
 /// A screenshot of a 4K display at 2x is about 10 MiB of PNG; the request limit leaves room for base64.
@@ -125,6 +139,7 @@ impl Daemon {
             blobs: Blobs::new(paths.blobs()),
             data_dir: paths.data.display().to_string(),
             downloads: paths.downloads(),
+            filings: paths.filings(),
         }
     }
 
@@ -376,6 +391,87 @@ impl Daemon {
                     folder: folder.display().to_string(),
                 })
             }
+            Request::GetVibeQ => Reply::VibeQ(VibeQSettings {
+                endpoint: store.setting("vibeq.endpoint").map_err(storage)?,
+                has_token: saved_token().ok().flatten().is_some(),
+                token_from_environment: std::env::var(TOKEN_ENV)
+                    .is_ok_and(|t| !t.trim().is_empty()),
+                secret_store: secrets::status(),
+            }),
+            Request::SetVibeQ(input) => {
+                let endpoint = vibeq::validate_endpoint(&input.endpoint).map_err(bad)?;
+                match input.token.as_deref().map(str::trim) {
+                    None => {}
+                    Some("") => secrets::delete(TOKEN_ACCOUNT).map_err(storage)?,
+                    Some(token) => {
+                        Client::new(endpoint.as_str(), token).map_err(bad)?;
+                        secrets::set(TOKEN_ACCOUNT, token).map_err(storage)?;
+                    }
+                }
+                let endpoint = endpoint.as_str().trim_end_matches('/').to_string();
+                store
+                    .set_setting("vibeq.endpoint", &endpoint)
+                    .map_err(storage)?;
+                Reply::VibeQ(VibeQSettings {
+                    endpoint: Some(endpoint),
+                    has_token: saved_token().ok().flatten().is_some(),
+                    token_from_environment: std::env::var(TOKEN_ENV)
+                        .is_ok_and(|t| !t.trim().is_empty()),
+                    secret_store: secrets::status(),
+                })
+            }
+            Request::ListMembers => {
+                drop(store);
+                Reply::Members(self.vibeq_client()?.members().map_err(remote)?)
+            }
+            Request::GetFiling { review } => {
+                let attempt = store
+                    .filing(review)
+                    .map_err(storage)?
+                    .ok_or_else(|| not_found("this review was not filed"))?;
+                Reply::Filing(filing_reply(&attempt))
+            }
+            Request::FileReview { review, assignee } => {
+                let found = store
+                    .get_review(review)
+                    .map_err(storage)?
+                    .ok_or_else(|| not_found("no such review"))?;
+                let existing = store.filing(review).map_err(storage)?;
+                let filed = store.filed_revision(found.observation).map_err(storage)?;
+                let install = self.install_id(&store)?;
+                let project =
+                    project_for(&store, found.items.first().map(|i| i.page_url.as_str()))?;
+                drop(store);
+                let client = self.vibeq_client()?;
+                let mut attempt = match existing {
+                    Some(attempt) => attempt,
+                    None => {
+                        if filed.is_some_and(|r| r > u64::from(found.revision)) {
+                            return Err(ProtocolError::new(
+                                ErrorCode::Conflict,
+                                "this revision is already filed; edit the notes and review again to file an amendment",
+                            ));
+                        }
+                        let attempt = filing::prepare(
+                            &found,
+                            &self.blobs,
+                            &self.filings,
+                            &client.endpoint(),
+                            install,
+                            project,
+                            assignee,
+                        )
+                        .map_err(bad)?;
+                        self.lock_store().save_filing(&attempt).map_err(storage)?;
+                        attempt
+                    }
+                };
+                let delivered = filing::deliver(&mut attempt, &client, |a| {
+                    self.lock_store().save_filing(a).map_err(|e| e.to_string())
+                });
+                delivered.map_err(remote)?;
+                Reply::Filing(filing_reply(&attempt))
+            }
             Request::ReadBlob {
                 sha256,
                 offset,
@@ -398,6 +494,69 @@ impl Daemon {
             Request::Shutdown => Reply::Stopping,
         })
     }
+}
+
+impl Daemon {
+    fn lock_store(&self) -> std::sync::MutexGuard<'_, Store> {
+        self.store
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    fn vibeq_client(&self) -> Result<Client, ProtocolError> {
+        let endpoint = self
+            .lock_store()
+            .setting("vibeq.endpoint")
+            .map_err(storage)?
+            .ok_or_else(|| bad("add the VibeQ address in Settings first"))?;
+        let token = saved_token()?.ok_or_else(|| bad("add your VibeQ token in Settings first"))?;
+        Client::new(&endpoint, &token).map_err(bad)
+    }
+
+    /// A random ID made once per notebook; VibeQ observation IDs derive from it, so two notebooks
+    /// never claim the same observation.
+    fn install_id(&self, store: &Store) -> Result<uuid::Uuid, ProtocolError> {
+        if let Some(id) = store.setting("install.id").map_err(storage)?
+            && let Ok(id) = uuid::Uuid::parse_str(&id)
+        {
+            return Ok(id);
+        }
+        let id = uuid::Uuid::new_v4();
+        store
+            .set_setting("install.id", &id.to_string())
+            .map_err(storage)?;
+        Ok(id)
+    }
+}
+
+/// The Lens project of the review's page, as VibeQ's project key.
+fn project_for(store: &Store, page_url: Option<&str>) -> Result<String, ProtocolError> {
+    let origin = page_url
+        .and_then(|u| url::Url::parse(u).ok())
+        .map(|u| u.origin().ascii_serialization());
+    let projects = store.list_projects().map_err(storage)?;
+    Ok(projects
+        .iter()
+        .find(|p| origin.as_ref().is_some_and(|o| p.origins.contains(o)))
+        .map(|p| format!("lens-project-{}", p.id))
+        .unwrap_or_else(|| "lens".into()))
+}
+
+fn filing_reply(attempt: &filing::Attempt) -> Filing {
+    Filing {
+        review: attempt.review,
+        task_url: attempt.receipt.as_ref().map(|r| r.task_url.clone()),
+        missing_files: attempt
+            .receipt
+            .as_ref()
+            .map_or(attempt.submission.evidence_manifest.len(), |r| {
+                r.missing_attachments.len()
+            }) as u32,
+    }
+}
+
+fn remote(message: String) -> ProtocolError {
+    ProtocolError::new(ErrorCode::Remote, message)
 }
 
 fn bad(message: impl Into<String>) -> ProtocolError {

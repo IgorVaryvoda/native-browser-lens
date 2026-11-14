@@ -1,0 +1,17 @@
+.settings {
+  padding: 16px;
+  max-width: 560px;
+}
+.settings form {
+  display: grid;
+  gap: 6px;
+}
+.settings input {
+  font: inherit;
+  padding: 6px 8px;
+}
+.settings .actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}

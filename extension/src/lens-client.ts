@@ -22,6 +22,11 @@ type ReplyTo = {
   readBlob: 'blob';
   createReview: 'review';
   exportReview: 'exported';
+  getVibeQ: 'vibeQ';
+  setVibeQ: 'vibeQ';
+  listMembers: 'members';
+  fileReview: 'filing';
+  getFiling: 'filing';
   shutdown: 'stopping';
 };
 type ReplyData<M extends Request['method']> = Extract<Reply, { type: ReplyTo[M] }> extends { data: infer D } ? D : never;

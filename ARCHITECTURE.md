@@ -75,9 +75,12 @@ live in the data folder.
    CI on all three systems, end-to-end test with a real Chromium.
 3. **Extension** (most done): collector (debugger and webRequest, redaction, ring buffer),
    projects with granted origins, capture with screenshot and evidence, annotations (Konva,
-   perfect-freehand), rrweb recording and replay, notes with revisions. Still open: the review
-   step before filing, the export, and the collector state across service-worker restarts.
-4. Integrations: VibeQ outbox, Codex investigation and fixes, MCP server, dictation, export.
+   perfect-freehand), rrweb recording and replay, notes with revisions, review. Still open: the
+   collector state across service-worker restarts.
+4. **Integrations** (started): review and export (done), VibeQ filing through a durable outbox
+   (done: frozen attempt, member binding, reconciliation, missing-only uploads, receipt checks;
+   the token lives in the OS secret store or LENS_VIBEQ_TOKEN). Still open: Codex
+   investigation and fixes, the MCP server, dictation.
 5. Release: CI matrix with signing, Chrome Web Store and AMO listings, package channels, installers.
 6. Removal of the earlier lines and branches.
 

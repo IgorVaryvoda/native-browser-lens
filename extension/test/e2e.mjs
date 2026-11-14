@@ -22,10 +22,47 @@ const extension = resolve(import.meta.dirname, '../.output/chrome-mv3');
 const extensionId = 'cggibhoaigdeemmdlfcncfkmoknndbfd';
 const isolated = process.platform !== 'win32';
 
+// A VibeQ that commits the first submission and then loses its reply, as a dropped connection does.
+const vibeq = { submissions: new Map(), staged: 0, submits: 0, dropFirstReply: true };
+const fakeVibeq = createServer((request, response) => {
+  const chunks = [];
+  request.on('data', (chunk) => chunks.push(chunk));
+  request.on('end', () => {
+    const json = (status, value) => {
+      response.writeHead(status, { 'content-type': 'application/json' });
+      response.end(JSON.stringify(value));
+    };
+    if (request.headers.authorization !== 'Bearer e2e-token') return json(403, { error: 'personal_token_required' });
+    const url = request.url;
+    if (url === '/auth/me') return json(200, { id: 'member-1' });
+    if (url === '/api/members') return json(200, [{ id: 'member-2', name: 'Ana' }]);
+    if (url === '/api/attachments/stage') return (vibeq.staged++, json(201, { stagedKey: `staged/member-1/${vibeq.staged}` }));
+    const found = url.match(/^\/api\/capture\/v1\/submissions\/(.+)$/);
+    if (found) return vibeq.submissions.has(found[1]) ? json(200, vibeq.submissions.get(found[1]).receipt) : json(404, {});
+    if (url === '/api/capture/v1/submissions' && request.method === 'POST') {
+      const body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+      vibeq.submits++;
+      const staged = new Set(body.stagedAttachments.map((s) => s.id));
+      const missing = body.evidenceManifest.map((a) => a.id).filter((id) => !staged.has(id));
+      const receipt = {
+        submissionId: body.submissionId, observationId: body.observationId, revision: body.revision,
+        taskId: 'task-1', taskUrl: 'http://vibeq.test/?task=task-1', createdAt: 1,
+        attachmentStatus: missing.length ? 'partial' : 'complete', missingAttachments: missing,
+      };
+      vibeq.submissions.set(body.submissionId, { body, receipt });
+      if (vibeq.dropFirstReply) return (vibeq.dropFirstReply = false), request.socket.destroy();
+      return json(201, receipt);
+    }
+    json(404, {});
+  });
+});
+await new Promise((ready) => fakeVibeq.listen(0, '127.0.0.1', ready));
+
 const work = mkdtempSync(join(tmpdir(), 'lens-e2e-'));
 const env = {
   ...process.env,
   LENS_HOME: join(work, 'lens'),
+  LENS_VIBEQ_TOKEN: 'e2e-token',
   ...(isolated ? { HOME: join(work, 'home'), XDG_CONFIG_HOME: join(work, 'config') } : {}),
 };
 const profile = {
@@ -193,11 +230,36 @@ try {
   }
   if (!isolated) rmSync(folder, { recursive: true, force: true });
 
-  console.log(`e2e: ok (${evidence.events.length} events, screenshot ${imageWidth}px wide, 2 marks, replay, notes kept, reviewed and exported)`);
+  // File to VibeQ: the first reply is lost; filing again finishes without a second task.
+  const settings = await context.newPage();
+  await settings.goto(`chrome-extension://${extensionId}/options.html`);
+  await settings.getByLabel('VibeQ address').fill(`http://127.0.0.1:${fakeVibeq.address().port}`);
+  await settings.getByRole('button', { name: 'Save' }).click();
+  await settings.getByRole('status').filter({ hasText: 'Saved' }).waitFor({ timeout: 15_000 });
+  await review.reload();
+  await review.getByLabel(/I checked every/).check();
+  await review.getByRole('button', { name: 'Create review' }).click();
+  await review.getByRole('list', { name: 'Reviewed captures' }).getByRole('img').first().waitFor({ timeout: 15_000 });
+  await review.getByLabel('Assign to').selectOption({ label: 'Ana' });
+  await review.getByRole('button', { name: 'File to VibeQ' }).click();
+  await review.getByRole('alert').filter({ hasText: /Filing again is safe/ }).waitFor({ timeout: 30_000 });
+  await review.getByRole('button', { name: 'File to VibeQ' }).click();
+  await review.getByRole('status', { name: 'Filing' }).getByRole('link', { name: 'http://vibeq.test/?task=task-1' }).waitFor({ timeout: 30_000 });
+  const [submitted] = [...vibeq.submissions.values()];
+  if (vibeq.submits !== 1 || vibeq.submissions.size !== 1) throw new Error(`VibeQ got ${vibeq.submits} submits`);
+  if (vibeq.staged !== submitted.body.evidenceManifest.length) {
+    throw new Error(`${vibeq.staged} uploads for ${submitted.body.evidenceManifest.length} files`);
+  }
+  if (submitted.body.assigneeId !== 'member-2' || !submitted.body.markdown.includes('HTTP 500 from')) {
+    throw new Error(`unexpected submission: ${JSON.stringify(submitted.body).slice(0, 400)}`);
+  }
+
+  console.log(`e2e: ok (${evidence.events.length} events, screenshot ${imageWidth}px wide, 2 marks, replay, notes kept, reviewed, exported and filed once despite a lost reply)`);
 } finally {
   // Cleanup must not hide the failure above, and must not hang the job.
   await Promise.race([context.close(), new Promise((done) => setTimeout(done, 20_000))]).catch(() => {});
   fixture.close();
+  fakeVibeq.close();
   for (const command of [['stop'], ...(isolated ? [] : [['unregister']])]) {
     try {
       execFileSync(bin, command, { env, timeout: 10_000 });
