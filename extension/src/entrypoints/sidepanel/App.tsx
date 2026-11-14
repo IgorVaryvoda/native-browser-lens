@@ -149,7 +149,7 @@ function Captures({ client, observation }: { client: LensClient; observation: nu
     const load = () => void client.request({ method: 'listCaptures', params: { observation } }).then(setCaptures);
     load();
     const listener = (message: Broadcast) => {
-      if (message.kind === 'captured' && message.capture.observation === observation) load();
+      if ((message.kind === 'captured' || message.kind === 'annotated') && message.capture.observation === observation) load();
     };
     browser.runtime.onMessage.addListener(listener);
     return () => browser.runtime.onMessage.removeListener(listener);
@@ -159,9 +159,16 @@ function Captures({ client, observation }: { client: LensClient; observation: nu
     <ol aria-label="Captures" className="captures">
       {captures.map((c) => (
         <li key={c.id}>
-          <Screenshot client={client} capture={c} />
+          <button
+            type="button"
+            className="shot"
+            aria-label={`Annotate capture ${c.id}`}
+            onClick={() => void browser.tabs.create({ url: browser.runtime.getURL(`/annotate.html?capture=${c.id}`) })}
+          >
+            <Screenshot client={client} capture={c} />
+          </button>
           <span className="facts">
-            {c.eventCount} events · {c.gapCount} gaps · {c.mode}
+            {c.eventCount} events · {c.gapCount} gaps · {c.mode} · {c.annotations.length} marks
           </span>
         </li>
       ))}

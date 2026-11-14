@@ -42,6 +42,16 @@ pub enum Request {
         #[ts(type = "number")]
         observation: i64,
     },
+    GetCapture {
+        #[ts(type = "number")]
+        id: i64,
+    },
+    /// Replaces the capture's annotations. The screenshot itself never changes.
+    SaveAnnotations {
+        #[ts(type = "number")]
+        capture: i64,
+        shapes: Vec<Shape>,
+    },
     /// One chunk of a stored blob. Replies stay under 1 MiB, so large blobs take several reads.
     ReadBlob {
         sha256: String,
@@ -186,6 +196,91 @@ pub struct Capture {
     pub evidence: BlobRef,
     pub event_count: u32,
     pub gap_count: u32,
+    pub annotations: Vec<Shape>,
+}
+
+/// A mark on a screenshot, in the screenshot's own pixels.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+#[ts(export)]
+pub enum Shape {
+    Rectangle {
+        x: f64,
+        y: f64,
+        width: f64,
+        height: f64,
+        color: String,
+    },
+    Arrow {
+        from: Point,
+        to: Point,
+        color: String,
+    },
+    Pen {
+        points: Vec<Point>,
+        color: String,
+    },
+    /// Hides what is under it in every export; the stored screenshot keeps the pixels.
+    Mask {
+        x: f64,
+        y: f64,
+        width: f64,
+        height: f64,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct Point {
+    pub x: f64,
+    pub y: f64,
+}
+
+pub const MAX_SHAPES: usize = 500;
+pub const MAX_PEN_POINTS: usize = 5000;
+
+impl Shape {
+    /// Finite coordinates, `#rrggbb` colors and bounded sizes, so a stored shape always renders.
+    pub fn validate(&self) -> Result<(), String> {
+        let color_ok = |c: &str| {
+            c.len() == 7 && c.starts_with('#') && c[1..].bytes().all(|b| b.is_ascii_hexdigit())
+        };
+        let finite = |values: &[f64]| values.iter().all(|v| v.is_finite());
+        let (numbers, color): (Vec<f64>, Option<&str>) = match self {
+            Shape::Rectangle {
+                x,
+                y,
+                width,
+                height,
+                color,
+            } => (vec![*x, *y, *width, *height], Some(color)),
+            Shape::Mask {
+                x,
+                y,
+                width,
+                height,
+            } => (vec![*x, *y, *width, *height], None),
+            Shape::Arrow { from, to, color } => (vec![from.x, from.y, to.x, to.y], Some(color)),
+            Shape::Pen { points, color } => {
+                if points.len() > MAX_PEN_POINTS {
+                    return Err(format!(
+                        "a pen stroke has more than {MAX_PEN_POINTS} points"
+                    ));
+                }
+                (
+                    points.iter().flat_map(|p| [p.x, p.y]).collect(),
+                    Some(color),
+                )
+            }
+        };
+        if !finite(&numbers) {
+            return Err("a shape has a coordinate that is not a finite number".into());
+        }
+        match color {
+            Some(c) if !color_ok(c) => Err(format!("{c:?} is not a #rrggbb color")),
+            _ => Ok(()),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]

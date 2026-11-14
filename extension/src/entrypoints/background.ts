@@ -22,11 +22,27 @@ export default defineBackground(() => {
   const permitted = (origin: string | null) =>
     origin ? browser.permissions.contains({ origins: [`${origin}/*`] }) : Promise.resolve(false);
 
-  /** Starts or stops collection on a tab to match the projects and the granted origins. */
-  async function sync(tabId: number, url: string | undefined) {
+  const queues = new Map<number, Promise<void>>();
+
+  /**
+   * Starts or stops collection on a tab to match the projects and the granted origins. Calls for one
+   * tab run in order, and each works on the tab's latest URL, so a navigation during an await can
+   * never leave the debugger on a site the person did not grant.
+   */
+  function sync(tabId: number, url: string | undefined): Promise<void> {
     if (url) urls.set(tabId, url);
-    const origin = originOf(url);
-    if (!projectFor(origin) || !(await permitted(origin))) {
+    const next = (queues.get(tabId) ?? Promise.resolve()).then(() => syncNow(tabId)).catch(() => {});
+    queues.set(tabId, next);
+    return next;
+  }
+
+  async function allowed(tabId: number) {
+    const origin = originOf(urls.get(tabId));
+    return Boolean(projectFor(origin)) && (await permitted(origin));
+  }
+
+  async function syncNow(tabId: number) {
+    if (!(await allowed(tabId))) {
       buffer.stop(tabId);
       await deep?.detach(tabId);
       return;
@@ -39,6 +55,10 @@ export default defineBackground(() => {
     } catch (error) {
       buffer.start(tabId, 'screenshotOnly');
       buffer.gap(tabId, 'debugger', `The browser refused the debugger: ${(error as Error).message}`);
+    }
+    if (!(await allowed(tabId))) {
+      buffer.stop(tabId);
+      await deep.detach(tabId);
     }
   }
 
@@ -117,7 +137,11 @@ export default defineBackground(() => {
   });
 
   browser.tabs.onUpdated.addListener((tabId, change, tab) => {
-    if (change.url && buffer.mode(tabId) !== undefined) buffer.record(tabId, 'navigation', { url: change.url });
+    if (change.url && buffer.mode(tabId) !== undefined) {
+      // Leaving the project's origins stops recording at once; sync then detaches.
+      if (projectFor(originOf(change.url))) buffer.record(tabId, 'navigation', { url: change.url });
+      else buffer.stop(tabId);
+    }
     if (change.url || change.status === 'complete') void sync(tabId, tab.url).then(() => broadcast({ kind: 'tabChanged', tabId }));
   });
   browser.tabs.onActivated.addListener(({ tabId }) => void broadcast({ kind: 'tabChanged', tabId }));

@@ -15,6 +15,8 @@ type ReplyTo = {
   deleteProject: 'deleted';
   createCapture: 'capture';
   listCaptures: 'captures';
+  getCapture: 'capture';
+  saveAnnotations: 'capture';
   readBlob: 'blob';
   shutdown: 'stopping';
 };

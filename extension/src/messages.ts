@@ -20,7 +20,10 @@ export interface TabStatus {
 }
 
 /** Background → every extension page. */
-export type Broadcast = { kind: 'captured'; capture: Capture } | { kind: 'tabChanged'; tabId: number };
+export type Broadcast =
+  | { kind: 'captured'; capture: Capture }
+  | { kind: 'annotated'; capture: Capture }
+  | { kind: 'tabChanged'; tabId: number };
 
 export function send<T>(request: BackgroundRequest): Promise<T> {
   return browser.runtime.sendMessage(request) as Promise<T>;

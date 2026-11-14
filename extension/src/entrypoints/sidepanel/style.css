@@ -107,3 +107,11 @@ li[aria-current='true'] > .observation strong {
   font-size: 12px;
   margin: 0;
 }
+.shot {
+  all: unset;
+  cursor: zoom-in;
+  display: block;
+}
+.shot:focus-visible {
+  outline: 2px solid currentColor;
+}

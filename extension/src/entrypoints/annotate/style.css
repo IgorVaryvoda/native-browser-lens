@@ -1,0 +1,32 @@
+.editor {
+  padding: 16px;
+}
+.toolbar {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+[role='toolbar'] {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+[role='toolbar'] button {
+  padding: 6px 10px;
+}
+[role='toolbar'] button[aria-pressed='true'] {
+  outline: 2px solid currentColor;
+  outline-offset: 1px;
+}
+.swatch {
+  width: 28px;
+  height: 28px;
+  padding: 0 !important;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+}
+.konvajs-content {
+  border: 1px solid var(--line);
+  cursor: crosshair;
+}

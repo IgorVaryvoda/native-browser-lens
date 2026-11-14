@@ -213,6 +213,29 @@ impl Daemon {
             Request::ListCaptures { observation } => {
                 Reply::Captures(store.list_captures(observation).map_err(storage)?)
             }
+            Request::GetCapture { id } => Reply::Capture(
+                store
+                    .get_capture(id)
+                    .map_err(storage)?
+                    .ok_or_else(|| not_found("no such capture"))?,
+            ),
+            Request::SaveAnnotations { capture, shapes } => {
+                if shapes.len() > MAX_SHAPES {
+                    return Err(bad(format!("more than {MAX_SHAPES} shapes")));
+                }
+                for shape in &shapes {
+                    shape.validate().map_err(bad)?;
+                }
+                if !store.save_annotations(capture, &shapes).map_err(storage)? {
+                    return Err(not_found("no such capture"));
+                }
+                Reply::Capture(
+                    store
+                        .get_capture(capture)
+                        .map_err(storage)?
+                        .ok_or_else(|| not_found("no such capture"))?,
+                )
+            }
             Request::ReadBlob {
                 sha256,
                 offset,

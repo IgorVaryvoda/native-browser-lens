@@ -16,6 +16,7 @@ jobs:
   check:
     name: ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -52,6 +53,7 @@ jobs:
         run: |
           pnpm install --frozen-lockfile
           pnpm compile
+          pnpm test
           pnpm build
           pnpm build:firefox
       - name: Chromium for the end-to-end test

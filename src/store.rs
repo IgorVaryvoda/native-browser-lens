@@ -1,4 +1,4 @@
-use crate::protocol::{BlobRef, Capture, CaptureMode, Observation, Project};
+use crate::protocol::{BlobRef, Capture, CaptureMode, Observation, Project, Shape};
 use rusqlite::{Connection, params};
 use std::path::Path;
 
@@ -31,7 +31,38 @@ const MIGRATIONS: &[&str] = &[
         gap_count INTEGER NOT NULL
     );
     CREATE INDEX captures_by_observation ON captures(observation_id);",
+    "ALTER TABLE captures ADD COLUMN annotations TEXT NOT NULL DEFAULT '[]';",
 ];
+
+const CAPTURE_COLUMNS: &str = "id, observation_id, created_at, page_url, page_title, mode,
+    screenshot_sha256, screenshot_size, evidence_sha256, evidence_size, event_count, gap_count,
+    annotations";
+
+fn capture_from_row(row: &rusqlite::Row) -> rusqlite::Result<Capture> {
+    let mode: String = row.get(5)?;
+    let annotations: String = row.get(12)?;
+    Ok(Capture {
+        id: row.get(0)?,
+        observation: row.get(1)?,
+        created_at: row.get(2)?,
+        page_url: row.get(3)?,
+        page_title: row.get(4)?,
+        mode: mode_from(&mode),
+        screenshot: BlobRef {
+            sha256: row.get(6)?,
+            size: row.get::<_, i64>(7)? as u64,
+            media_type: "image/png".into(),
+        },
+        evidence: BlobRef {
+            sha256: row.get(8)?,
+            size: row.get::<_, i64>(9)? as u64,
+            media_type: "application/json".into(),
+        },
+        event_count: row.get(10)?,
+        gap_count: row.get(11)?,
+        annotations: serde_json::from_str(&annotations).unwrap_or_default(),
+    })
+}
 
 /// A capture's row before it has an ID and an observation.
 pub struct CaptureRow {
@@ -250,40 +281,34 @@ impl Store {
             evidence: row.evidence,
             event_count: row.event_count,
             gap_count: row.gap_count,
+            annotations: Vec::new(),
         }))
     }
 
     pub fn list_captures(&self, observation: i64) -> rusqlite::Result<Vec<Capture>> {
-        let mut statement = self.db.prepare(
-            "SELECT id, observation_id, created_at, page_url, page_title, mode, screenshot_sha256,
-                screenshot_size, evidence_sha256, evidence_size, event_count, gap_count
-             FROM captures WHERE observation_id = ?1 ORDER BY created_at, id",
-        )?;
+        let mut statement = self.db.prepare(&format!(
+            "SELECT {CAPTURE_COLUMNS} FROM captures WHERE observation_id = ?1 ORDER BY created_at, id"
+        ))?;
         statement
-            .query_map([observation], |row| {
-                let mode: String = row.get(5)?;
-                Ok(Capture {
-                    id: row.get(0)?,
-                    observation: row.get(1)?,
-                    created_at: row.get(2)?,
-                    page_url: row.get(3)?,
-                    page_title: row.get(4)?,
-                    mode: mode_from(&mode),
-                    screenshot: BlobRef {
-                        sha256: row.get(6)?,
-                        size: row.get::<_, i64>(7)? as u64,
-                        media_type: "image/png".into(),
-                    },
-                    evidence: BlobRef {
-                        sha256: row.get(8)?,
-                        size: row.get::<_, i64>(9)? as u64,
-                        media_type: "application/json".into(),
-                    },
-                    event_count: row.get(10)?,
-                    gap_count: row.get(11)?,
-                })
-            })?
+            .query_map([observation], capture_from_row)?
             .collect()
+    }
+
+    pub fn get_capture(&self, id: i64) -> rusqlite::Result<Option<Capture>> {
+        let mut statement = self.db.prepare(&format!(
+            "SELECT {CAPTURE_COLUMNS} FROM captures WHERE id = ?1"
+        ))?;
+        let mut rows = statement.query_map([id], capture_from_row)?;
+        rows.next().transpose()
+    }
+
+    /// Returns false when the capture does not exist.
+    pub fn save_annotations(&self, capture: i64, shapes: &[Shape]) -> rusqlite::Result<bool> {
+        let encoded = serde_json::to_string(shapes).expect("shapes serialize");
+        Ok(self.db.execute(
+            "UPDATE captures SET annotations = ?2 WHERE id = ?1",
+            params![capture, encoded],
+        )? > 0)
     }
 }
 
@@ -343,6 +368,24 @@ mod tests {
         assert_eq!(captures[1].mode, CaptureMode::Deep);
 
         assert!(store.create_capture(Some(999), row("x")).unwrap().is_none());
+
+        let mask = Shape::Mask {
+            x: 1.0,
+            y: 2.0,
+            width: 3.0,
+            height: 4.0,
+        };
+        assert!(
+            store
+                .save_annotations(first.id, std::slice::from_ref(&mask))
+                .unwrap()
+        );
+        assert_eq!(
+            store.get_capture(first.id).unwrap().unwrap().annotations,
+            vec![mask]
+        );
+        assert!(!store.save_annotations(999, &[]).unwrap());
+        assert!(store.get_capture(999).unwrap().is_none());
         let untitled = store.create_capture(None, row("  ")).unwrap().unwrap();
         let titles: Vec<_> = store
             .list_observations()

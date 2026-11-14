@@ -3,9 +3,10 @@
 //   LENS_E2E=1 pnpm build && pnpm test:e2e
 // LENS_BIN and CHROMIUM_PATH override the binaries.
 //
-// Linux runs in a temporary home, so no real profile or registration is touched. On macOS and
-// Windows, Chromium finds its user folder through the system, not $HOME, so the test registers for
-// the current user and unregisters at the end; run it there on CI or a disposable account.
+// macOS and Linux run in a temporary home: Chromium reads user-level hosts from
+// <user-data-dir>/NativeMessagingHosts, and the profile is the folder `lens register` writes into.
+// Windows reads hosts from HKCU, so there the test registers for the current user and unregisters
+// at the end; run it on CI or a disposable account.
 import { chromium } from 'playwright-core';
 import { execFileSync } from 'node:child_process';
 import { createServer } from 'node:http';
@@ -19,7 +20,7 @@ const targetDir = () =>
 const bin = process.env.LENS_BIN ?? join(targetDir(), 'debug', process.platform === 'win32' ? 'lens.exe' : 'lens');
 const extension = resolve(import.meta.dirname, '../.output/chrome-mv3');
 const extensionId = 'cggibhoaigdeemmdlfcncfkmoknndbfd';
-const isolated = process.platform === 'linux';
+const isolated = process.platform !== 'win32';
 
 const work = mkdtempSync(join(tmpdir(), 'lens-e2e-'));
 const env = {
@@ -27,11 +28,12 @@ const env = {
   LENS_HOME: join(work, 'lens'),
   ...(isolated ? { HOME: join(work, 'home'), XDG_CONFIG_HOME: join(work, 'config') } : {}),
 };
-const profile = isolated ? join(env.XDG_CONFIG_HOME, 'chromium') : join(work, 'profile');
+const profile = {
+  linux: () => join(env.XDG_CONFIG_HOME, 'chromium'),
+  darwin: () => join(env.HOME, 'Library', 'Application Support', 'Chromium'),
+  win32: () => join(work, 'profile'),
+}[process.platform]();
 mkdirSync(profile, { recursive: true });
-if (process.platform === 'darwin') {
-  mkdirSync(join(process.env.HOME, 'Library', 'Application Support', 'Chromium'), { recursive: true });
-}
 execFileSync(bin, ['register'], { env, stdio: 'inherit' });
 
 // The fixture: a checkout whose price request fails with a body that holds a secret.
@@ -84,8 +86,10 @@ try {
   await panel.getByText('Collecting network, console and errors').waitFor({ timeout: 15_000 });
 
   // The defect happens, then the person captures it.
-  await shop.getByRole('button', { name: 'Pay' }).click();
-  await shop.waitForResponse(`${site}/api/price`);
+  await Promise.all([
+    shop.waitForResponse(`${site}/api/price`),
+    shop.getByRole('button', { name: 'Pay' }).click(),
+  ]);
   await panel.waitForTimeout(500);
   await panel.getByRole('button', { name: 'Capture to a new observation' }).click();
 
@@ -108,12 +112,42 @@ try {
   if (!text.includes('total is NaN') || !text.includes('price is NaN')) throw new Error('the defect is missing');
   if (text.includes('fixture-secret-123')) throw new Error('the secret reached the notebook');
   if (!evidence.events.some((e) => e.kind === 'response' && e.data.status === 500)) throw new Error('no 500 response');
-  console.log(`e2e: ok (${evidence.events.length} events, screenshot ${imageWidth}px wide)`);
+
+  // Annotate: a rectangle, a mask drawn twice with an undo between, then save.
+  const [editor] = await Promise.all([
+    context.waitForEvent('page'),
+    capture.getByRole('button', { name: /Annotate capture/ }).click(),
+  ]);
+  const canvas = editor.locator('canvas').first();
+  await canvas.waitFor({ timeout: 15_000 });
+  const area = await canvas.boundingBox();
+  const drag = async (x1, y1, x2, y2) => {
+    await editor.mouse.move(area.x + x1, area.y + y1);
+    await editor.mouse.down();
+    await editor.mouse.move(area.x + x2, area.y + y2, { steps: 5 });
+    await editor.mouse.up();
+  };
+  await drag(20, 20, 160, 90);
+  await editor.getByRole('button', { name: 'Mask' }).click();
+  await drag(200, 20, 300, 60);
+  await editor.getByRole('button', { name: 'Undo' }).click();
+  await drag(200, 20, 320, 70);
+  await editor.getByRole('button', { name: 'Save' }).click();
+  await editor.getByRole('status').filter({ hasText: 'Saved · 2 marks' }).waitFor({ timeout: 15_000 });
+  await capture.getByText(/· 2 marks/).waitFor({ timeout: 15_000 });
+
+  console.log(`e2e: ok (${evidence.events.length} events, screenshot ${imageWidth}px wide, 2 marks)`);
 } finally {
-  await context.close();
+  // Cleanup must not hide the failure above, and must not hang the job.
+  await Promise.race([context.close(), new Promise((done) => setTimeout(done, 20_000))]).catch(() => {});
   fixture.close();
-  execFileSync(bin, ['stop'], { env });
-  if (!isolated) execFileSync(bin, ['unregister'], { env });
+  for (const command of [['stop'], ...(isolated ? [] : [['unregister']])]) {
+    try {
+      execFileSync(bin, command, { env, timeout: 10_000 });
+    } catch (error) {
+      console.error(`cleanup: lens ${command[0]}: ${error.message}`);
+    }
+  }
   rmSync(work, { recursive: true, force: true });
 }
 

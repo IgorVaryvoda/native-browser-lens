@@ -2,6 +2,8 @@
 // console text are replaced; nothing is uploaded until a person reviews it, but the local notebook
 // should not hold secrets either.
 const SENSITIVE = /authorization|cookie|password|passwd|secret|token|api.?key|session.?id|credential|csrf|xsrf/i;
+/** Query keys that carry credentials in signed or OAuth URLs, beyond the general list. */
+const SENSITIVE_QUERY = /^(code|state|sig|signature|key|auth|jwt|otp)$|^x-(amz|goog)-/i;
 export const REDACTED = '[REDACTED]';
 const MAX_TEXT = 16 * 1024;
 
@@ -11,8 +13,12 @@ export function sanitizeUrl(input: string): string {
     url.username = '';
     url.password = '';
     url.hash = '';
-    for (const key of [...url.searchParams.keys()]) if (SENSITIVE.test(key)) url.searchParams.set(key, REDACTED);
-    return url.toString();
+    for (const [key, value] of [...url.searchParams.entries()]) {
+      const clean = SENSITIVE.test(key) || SENSITIVE_QUERY.test(key) ? REDACTED : sanitizeText(value);
+      if (clean !== value) url.searchParams.set(key, clean);
+    }
+    // Content rules over the whole URL too: tokens also travel in paths.
+    return sanitizeText(url.toString());
   } catch {
     return sanitizeText(input);
   }
