@@ -135,3 +135,11 @@ li[aria-current='true'] > .observation strong {
   font-size: 12px;
   min-height: 1.4em;
 }
+.link {
+  all: unset;
+  cursor: pointer;
+  text-decoration: underline;
+}
+.replay {
+  padding: 16px;
+}

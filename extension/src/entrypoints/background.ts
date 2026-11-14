@@ -6,6 +6,10 @@ import { LensClient } from '@/lens-client';
 import { originOf, type BackgroundRequest, type Broadcast, type CaptureResult, type TabStatus } from '@/messages';
 import type { Project } from '@/protocol/Project';
 import type { JsonValue } from '@/protocol/serde_json/JsonValue';
+import type { CoverageGap } from '@/protocol/CoverageGap';
+
+/** The request limit is 16 MiB, shared with the screenshot and the evidence. */
+const MAX_RECORDING_BYTES = 8 * 1024 * 1024;
 
 export default defineBackground(() => {
   const buffer = new EvidenceBuffer();
@@ -48,6 +52,7 @@ export default defineBackground(() => {
       return;
     }
     if (buffer.mode(tabId) !== undefined && (!deep || deep.isAttached(tabId))) return;
+    void injectRecorder(tabId);
     if (!deep) return buffer.start(tabId, 'limited');
     buffer.start(tabId, 'deep');
     try {
@@ -59,6 +64,32 @@ export default defineBackground(() => {
     if (!(await allowed(tabId))) {
       buffer.stop(tabId);
       await deep.detach(tabId);
+    }
+  }
+
+  /** The rrweb recorder, in collected tabs only. Idempotent: the script guards against a second run. */
+  async function injectRecorder(tabId: number) {
+    try {
+      await browser.scripting.executeScript({ target: { tabId }, files: ['/content-scripts/recorder.js'] });
+    } catch (error) {
+      buffer.gap(tabId, 'recording', `The page refused the recorder: ${(error as Error).message}`);
+    }
+  }
+
+  /** The tab's recent DOM recording, or null with a gap that says why. */
+  async function takeRecording(tabId: number, gaps: CoverageGap[]) {
+    const gap = (reason: string) => gaps.push({ channel: 'recording', reason, startedAt: Date.now(), endedAt: null });
+    if (buffer.mode(tabId) === undefined) return null;
+    try {
+      const events = (await Promise.race([
+        browser.tabs.sendMessage(tabId, { kind: 'lens-recording' }),
+        new Promise((_, fail) => setTimeout(() => fail(new Error('the recorder did not answer')), 3000)),
+      ])) as unknown[] | undefined;
+      if (!events?.length) return gap('The recording is empty'), null;
+      if (JSON.stringify(events).length > MAX_RECORDING_BYTES) return gap('The recording exceeds 8 MiB'), null;
+      return events as JsonValue[];
+    } catch (error) {
+      return gap((error as Error).message), null;
     }
   }
 
@@ -95,6 +126,7 @@ export default defineBackground(() => {
         events: [],
         gaps: [{ channel: 'collector', reason: 'Lens does not collect evidence on this site', startedAt: Date.now(), endedAt: null }],
       };
+      const recording = await takeRecording(tabId, snapshot.gaps);
       const page = await pageSnapshot(tabId).catch((error: Error) => {
         snapshot.gaps.push({ channel: 'page', reason: error.message, startedAt: Date.now(), endedAt: null });
         return null;
@@ -107,6 +139,7 @@ export default defineBackground(() => {
           pageTitle: tab.title ?? '',
           screenshot,
           evidence: { ...snapshot, page },
+          recording,
         },
       });
       void broadcast({ kind: 'captured', capture: saved });
@@ -142,7 +175,13 @@ export default defineBackground(() => {
       if (projectFor(originOf(change.url))) buffer.record(tabId, 'navigation', { url: change.url });
       else buffer.stop(tabId);
     }
-    if (change.url || change.status === 'complete') void sync(tabId, tab.url).then(() => broadcast({ kind: 'tabChanged', tabId }));
+    if (change.url || change.status === 'complete') {
+      void sync(tabId, tab.url).then(async () => {
+        // A new document has no recorder yet; sync starts one only when collection begins.
+        if (change.status === 'complete' && buffer.mode(tabId) !== undefined) await injectRecorder(tabId);
+        await broadcast({ kind: 'tabChanged', tabId });
+      });
+    }
   });
   browser.tabs.onActivated.addListener(({ tabId }) => void broadcast({ kind: 'tabChanged', tabId }));
   browser.tabs.onRemoved.addListener((tabId) => {

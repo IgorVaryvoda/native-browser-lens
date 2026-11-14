@@ -7,4 +7,8 @@ export type Capture = { id: number, observation: number, createdAt: number, page
 /**
  * The full `Evidence` as JSON.
  */
-evidence: BlobRef, eventCount: number, gapCount: number, annotations: Array<Shape>, };
+evidence: BlobRef, eventCount: number, gapCount: number, annotations: Array<Shape>, 
+/**
+ * rrweb events as a JSON array.
+ */
+recording: BlobRef | null, };

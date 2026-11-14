@@ -179,6 +179,18 @@ function Captures({ client, observation }: { client: LensClient; observation: nu
           </button>
           <span className="facts">
             {c.eventCount} events · {c.gapCount} gaps · {c.mode} · {c.annotations.length} marks
+            {c.recording && (
+              <>
+                {' · '}
+                <button
+                  type="button"
+                  className="link"
+                  onClick={() => void browser.tabs.create({ url: browser.runtime.getURL(`/replay.html?capture=${c.id}`) })}
+                >
+                  Replay
+                </button>
+              </>
+            )}
           </span>
         </li>
       ))}

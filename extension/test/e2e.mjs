@@ -44,6 +44,7 @@ const fixture = createServer((request, response) => {
   }
   response.writeHead(200, { 'content-type': 'text/html' });
   response.end(`<!doctype html><title>Checkout</title><h1>Checkout</h1>
+    <label>Card number <input name="card"></label>
     <button onclick="console.error('total is NaN'); fetch('/api/price')">Pay</button>`);
 });
 await new Promise((ready) => fixture.listen(0, '127.0.0.1', ready));
@@ -86,6 +87,7 @@ try {
   await panel.getByText('Collecting network, console and errors').waitFor({ timeout: 15_000 });
 
   // The defect happens, then the person captures it.
+  await shop.getByLabel('Card number').fill('4111111111111111');
   await Promise.all([
     shop.waitForResponse(`${site}/api/price`),
     shop.getByRole('button', { name: 'Pay' }).click(),
@@ -111,6 +113,8 @@ try {
   const text = JSON.stringify(evidence);
   if (!text.includes('total is NaN') || !text.includes('price is NaN')) throw new Error('the defect is missing');
   if (text.includes('fixture-secret-123')) throw new Error('the secret reached the notebook');
+  const everything = allBlobs(join(env.LENS_HOME, 'blobs'));
+  if (everything.includes('4111111111111111')) throw new Error('a typed card number reached the notebook');
   if (!evidence.events.some((e) => e.kind === 'response' && e.data.status === 500)) throw new Error('no 500 response');
 
   // Annotate: a rectangle, a mask drawn twice with an undo between, then save.
@@ -136,6 +140,15 @@ try {
   await editor.getByRole('status').filter({ hasText: 'Saved · 2 marks' }).waitFor({ timeout: 15_000 });
   await capture.getByText(/· 2 marks/).waitFor({ timeout: 15_000 });
 
+  // Replay: the DOM recording of the seconds before the capture plays in its own page.
+  const [replay] = await Promise.all([
+    context.waitForEvent('page'),
+    capture.getByRole('button', { name: 'Replay' }).click(),
+  ]);
+  await replay.getByRole('status').filter({ hasText: /s before the capture/ }).waitFor({ timeout: 15_000 });
+  const replayed = replay.frameLocator('iframe').first().getByRole('heading', { name: 'Checkout' });
+  await replayed.waitFor({ state: 'attached', timeout: 15_000 });
+
   // Notes: autosave, then still there after the panel reloads (a new shim, the same daemon).
   const notes = 'Coupon SAVE10 applied, then Pay: total shows NaN.';
   await panel.getByLabel('Notes', { exact: true }).fill(notes);
@@ -146,7 +159,7 @@ try {
   await reloaded.waitFor({ timeout: 15_000 });
   if ((await reloaded.inputValue()) !== notes) throw new Error(`notes after reload: ${await reloaded.inputValue()}`);
 
-  console.log(`e2e: ok (${evidence.events.length} events, screenshot ${imageWidth}px wide, 2 marks, notes kept)`);
+  console.log(`e2e: ok (${evidence.events.length} events, screenshot ${imageWidth}px wide, 2 marks, replay, notes kept)`);
 } finally {
   // Cleanup must not hide the failure above, and must not hang the job.
   await Promise.race([context.close(), new Promise((done) => setTimeout(done, 20_000))]).catch(() => {});
@@ -158,10 +171,20 @@ try {
       console.error(`cleanup: lens ${command[0]}: ${error.message}`);
     }
   }
-  rmSync(work, { recursive: true, force: true });
+  try {
+    rmSync(work, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 });
+  } catch (error) {
+    console.error(`cleanup: ${error.message}`);
+  }
 }
 
-/** The one JSON blob in the store: the capture's evidence. */
+function allBlobs(blobs) {
+  return readdirSync(blobs)
+    .flatMap((folder) => readdirSync(join(blobs, folder)).map((name) => readFileSync(join(blobs, folder, name), 'latin1')))
+    .join('\n');
+}
+
+/** The one JSON object blob in the store: the capture's evidence. */
 function findEvidence(blobs) {
   for (const folder of readdirSync(blobs)) {
     for (const name of readdirSync(join(blobs, folder))) {

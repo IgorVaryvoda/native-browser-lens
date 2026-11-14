@@ -38,6 +38,8 @@ const MIGRATIONS: &[&str] = &[
     ALTER TABLE observations ADD COLUMN revision INTEGER NOT NULL DEFAULT 0;
     ALTER TABLE observations ADD COLUMN updated_at INTEGER NOT NULL DEFAULT 0;
     UPDATE observations SET updated_at = created_at;",
+    "ALTER TABLE captures ADD COLUMN recording_sha256 TEXT;
+    ALTER TABLE captures ADD COLUMN recording_size INTEGER;",
 ];
 
 /// What an update found.
@@ -64,7 +66,7 @@ fn observation_from_row(row: &rusqlite::Row) -> rusqlite::Result<Observation> {
 
 const CAPTURE_COLUMNS: &str = "id, observation_id, created_at, page_url, page_title, mode,
     screenshot_sha256, screenshot_size, evidence_sha256, evidence_size, event_count, gap_count,
-    annotations";
+    annotations, recording_sha256, recording_size";
 
 fn capture_from_row(row: &rusqlite::Row) -> rusqlite::Result<Capture> {
     let mode: String = row.get(5)?;
@@ -89,6 +91,17 @@ fn capture_from_row(row: &rusqlite::Row) -> rusqlite::Result<Capture> {
         event_count: row.get(10)?,
         gap_count: row.get(11)?,
         annotations: serde_json::from_str(&annotations).unwrap_or_default(),
+        recording: match (
+            row.get::<_, Option<String>>(13)?,
+            row.get::<_, Option<i64>>(14)?,
+        ) {
+            (Some(sha256), Some(size)) => Some(BlobRef {
+                sha256,
+                size: size as u64,
+                media_type: "application/json".into(),
+            }),
+            _ => None,
+        },
     })
 }
 
@@ -102,6 +115,7 @@ pub struct CaptureRow {
     pub evidence: BlobRef,
     pub event_count: u32,
     pub gap_count: u32,
+    pub recording: Option<BlobRef>,
 }
 
 fn mode_name(mode: CaptureMode) -> &'static str {
@@ -313,8 +327,9 @@ impl Store {
         };
         tx.execute(
             "INSERT INTO captures (observation_id, created_at, page_url, page_title, mode,
-                screenshot_sha256, screenshot_size, evidence_sha256, evidence_size, event_count, gap_count)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                screenshot_sha256, screenshot_size, evidence_sha256, evidence_size, event_count, gap_count,
+                recording_sha256, recording_size)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
             params![
                 observation,
                 row.created_at,
@@ -326,7 +341,9 @@ impl Store {
                 row.evidence.sha256,
                 row.evidence.size as i64,
                 row.event_count,
-                row.gap_count
+                row.gap_count,
+                row.recording.as_ref().map(|r| r.sha256.clone()),
+                row.recording.as_ref().map(|r| r.size as i64)
             ],
         )?;
         let id = tx.last_insert_rowid();
@@ -347,6 +364,7 @@ impl Store {
             event_count: row.event_count,
             gap_count: row.gap_count,
             annotations: Vec::new(),
+            recording: row.recording,
         }))
     }
 
@@ -415,6 +433,7 @@ mod tests {
             evidence: blob('b'),
             event_count: 4,
             gap_count: 1,
+            recording: None,
         };
 
         let first = store.create_capture(None, row("Cart")).unwrap().unwrap();

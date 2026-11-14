@@ -128,7 +128,9 @@ impl Daemon {
 
     fn handle(&self, request: Request) -> Outcome {
         match self.reply(request) {
-            Ok(result) => Outcome::Ok { result },
+            Ok(result) => Outcome::Ok {
+                result: Box::new(result),
+            },
             Err(error) => Outcome::Error { error },
         }
     }
@@ -234,6 +236,17 @@ impl Daemon {
                 let page_url = url::Url::parse(&capture.page_url)
                     .map_err(|e| bad(format!("the page URL is not valid: {e}")))?;
                 let evidence = serde_json::to_vec(&capture.evidence).expect("evidence serializes");
+                let recording = match &capture.recording {
+                    Some(events) if !events.is_empty() => {
+                        let bytes = serde_json::to_vec(events).expect("events serialize");
+                        Some(
+                            self.blobs
+                                .put(&bytes, "application/json")
+                                .map_err(storage)?,
+                        )
+                    }
+                    _ => None,
+                };
                 let row = CaptureRow {
                     created_at: now_ms(),
                     page_url: page_url.into(),
@@ -246,6 +259,7 @@ impl Daemon {
                         .map_err(storage)?,
                     event_count: capture.evidence.events.len() as u32,
                     gap_count: capture.evidence.gaps.len() as u32,
+                    recording,
                 };
                 let saved = store
                     .create_capture(capture.observation, row)
@@ -418,7 +432,8 @@ mod tests {
                 "observation": null, "pageUrl": "http://127.0.0.1:4100/cart", "pageTitle": "Cart",
                 "screenshot": BASE64.encode(&png),
                 "evidence": { "mode": "deep", "page": null, "gaps": [],
-                    "events": [{ "timestamp": 1, "kind": "console", "data": { "level": "error" } }] }
+                    "events": [{ "timestamp": 1, "kind": "console", "data": { "level": "error" } }] },
+                "recording": [{ "type": 4, "data": { "href": "http://127.0.0.1:4100/cart" }, "timestamp": 1 }]
             }
         });
         let reply = ask(&daemon, &request.to_string());
@@ -448,7 +463,7 @@ mod tests {
 
         let not_png = serde_json::json!({ "id": 3, "method": "createCapture", "params": {
             "observation": null, "pageUrl": "http://a.test/", "pageTitle": "", "screenshot": BASE64.encode(b"GIF89a"),
-            "evidence": { "mode": "screenshotOnly", "page": null, "gaps": [], "events": [] } } });
+            "evidence": { "mode": "screenshotOnly", "page": null, "gaps": [], "events": [] }, "recording": null } });
         assert_eq!(
             ask(&daemon, &not_png.to_string())["error"]["code"],
             "badRequest"

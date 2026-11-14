@@ -81,7 +81,7 @@ pub struct ReplyFrame {
 #[serde(tag = "status", rename_all = "camelCase")]
 #[ts(export)]
 pub enum Outcome {
-    Ok { result: Reply },
+    Ok { result: Box<Reply> },
     Error { error: ProtocolError },
 }
 
@@ -137,6 +137,8 @@ pub struct NewCapture {
     /// PNG bytes, base64.
     pub screenshot: String,
     pub evidence: Evidence,
+    /// rrweb events of the last seconds before the capture, when the tab was recorded.
+    pub recording: Option<Vec<serde_json::Value>>,
 }
 
 /// What the collector saw before the capture, and what it could not see.
@@ -203,6 +205,8 @@ pub struct Capture {
     pub event_count: u32,
     pub gap_count: u32,
     pub annotations: Vec<Shape>,
+    /// rrweb events as a JSON array.
+    pub recording: Option<BlobRef>,
 }
 
 /// A mark on a screenshot, in the screenshot's own pixels.

@@ -71,9 +71,12 @@ live in the data folder.
 ## Phases
 
 1. Specification: protocol, data model, threat model, feature list from both earlier lines.
-2. **Native core** (started): daemon, shim, CLI, store, endpoint, secret-store status, registration,
+2. **Native core** (done): daemon, shim, CLI, store, endpoint, secret-store status, registration,
    CI on all three systems, end-to-end test with a real Chromium.
-3. Extension: collector port, side panel notebook, annotations (Konva, perfect-freehand), rrweb, review.
+3. **Extension** (most done): collector (debugger and webRequest, redaction, ring buffer),
+   projects with granted origins, capture with screenshot and evidence, annotations (Konva,
+   perfect-freehand), rrweb recording and replay, notes with revisions. Still open: the review
+   step before filing, the export, and the collector state across service-worker restarts.
 4. Integrations: VibeQ outbox, Codex investigation and fixes, MCP server, dictation, export.
 5. Release: CI matrix with signing, Chrome Web Store and AMO listings, package channels, installers.
 6. Removal of the earlier lines and branches.
@@ -87,4 +90,6 @@ live in the data folder.
   started from an elevated prompt owns its pipe as Administrators and is refused too. All of this
   still needs a test with two accounts.
 - Side panel microphone permission may need a one-time normal extension tab.
+- Screenshots show typed text as pixels. Recordings mask inputs and evidence is redacted, but the
+  review before filing must make the person check the screenshots and mask what is private.
 - Native messaging from Flatpak and Snap browsers, per format.
