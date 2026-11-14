@@ -265,16 +265,15 @@ pub fn setup(paths: &Paths) -> io::Result<()> {
 pub fn open(paths: &Paths) -> io::Result<()> {
     let result = open_steps(paths);
     let connected = matches!(result, Ok(true));
-    if !connected {
-        let problem = result.as_ref().err().map(|e| e.to_string());
-        if let Err(e) = &result {
-            crate::daemon::log(paths, &format!("lens open: {e}"));
-        }
-        let page = paths.data.join("welcome.html");
-        std::fs::create_dir_all(&paths.data)?;
-        std::fs::write(&page, welcome(paths, problem.as_deref()))?;
-        open_url(&page.display().to_string())?;
+    let problem = result.as_ref().err().map(|e| e.to_string());
+    if let Err(e) = &result {
+        crate::daemon::log(paths, &format!("lens open: {e}"));
     }
+    // A person opened the app: always answer with the page, which says what is left, if anything.
+    let page = paths.data.join("welcome.html");
+    std::fs::create_dir_all(&paths.data)?;
+    std::fs::write(&page, welcome(paths, problem.as_deref(), connected))?;
+    open_url(&page.display().to_string())?;
     result.map(drop)
 }
 
@@ -303,7 +302,7 @@ fn open_steps(paths: &Paths) -> io::Result<bool> {
     ))
 }
 
-fn welcome(paths: &Paths, problem: Option<&str>) -> String {
+fn welcome(paths: &Paths, problem: Option<&str>, connected: bool) -> String {
     let escape = |text: &str| {
         text.replace('&', "&amp;")
             .replace('<', "&lt;")
@@ -326,8 +325,24 @@ fn welcome(paths: &Paths, problem: Option<&str>) -> String {
     } else {
         "system tray"
     };
+    let (headline, lede) = if connected {
+        (
+            "Lens is ready.".to_string(),
+            format!(
+                "The Lens app runs in the background and starts with your computer; its icon is in the {tray}. The browser extension is connected: open the site you test and click the Lens button. To add Lens to another browser, follow the steps below."
+            ),
+        )
+    } else {
+        (
+            "Lens is installed. Add it to your browser.".to_string(),
+            format!(
+                "The Lens app now runs in the background and starts with your computer; its icon is in the {tray}. One step is left: the browser extension, which records the site you test."
+            ),
+        )
+    };
     page.replace("{{VERSION}}", env!("CARGO_PKG_VERSION"))
-        .replace("{{TRAY}}", tray)
+        .replace("{{HEADLINE}}", &headline)
+        .replace("{{LEDE}}", &lede)
         .replace(
             "{{CHROME_FOLDER}}",
             &escape(&paths.data.join("extension").display().to_string()),
@@ -411,6 +426,7 @@ mod tests {
                 logs: "/l".into(),
             },
             Some("<boom>"),
+            false,
         );
         assert!(page.contains("/home/a&amp;b/lens/extension"));
         assert!(page.contains("Setup stopped: &lt;boom&gt;"));

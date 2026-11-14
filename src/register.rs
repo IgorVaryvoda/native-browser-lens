@@ -152,6 +152,20 @@ pub fn browsers() -> Vec<Browser> {
 pub type Report = Vec<(&'static str, String)>;
 
 #[cfg(unix)]
+#[cfg(unix)]
+impl Browser {
+    /// Whether the browser is on this computer. Firefox on macOS keeps its profiles in
+    /// Application Support/Firefox and may never have made the Mozilla folder, where it still
+    /// reads native messaging hosts; registering creates that folder.
+    pub fn installed(&self) -> bool {
+        self.root.is_dir()
+            || (self.family == Family::Firefox
+                && (self.root.with_file_name("Firefox").is_dir()
+                    || (cfg!(target_os = "macos")
+                        && Path::new("/Applications/Firefox.app").is_dir())))
+    }
+}
+
 pub fn register(_paths: &Paths, executable: &Path) -> io::Result<Report> {
     let (home, config) = home_and_config()?;
     register_unix(&browsers(&home, &config), executable)
@@ -161,7 +175,7 @@ pub fn register(_paths: &Paths, executable: &Path) -> io::Result<Report> {
 pub fn register_unix(browsers: &[Browser], executable: &Path) -> io::Result<Report> {
     let mut report = Vec::new();
     for browser in browsers {
-        if !browser.root.is_dir() {
+        if !browser.installed() {
             report.push((browser.name, "not installed".to_string()));
             continue;
         }
@@ -276,7 +290,7 @@ pub fn check(_paths: &Paths, executable: &Path) -> Vec<BrowserCheck> {
     #[cfg_attr(target_os = "macos", allow(unused_mut))]
     let mut checks: Vec<BrowserCheck> = browsers(&home, &config)
         .iter()
-        .filter(|b| b.root.is_dir())
+        .filter(|b| b.installed())
         .map(|b| {
             let problem = manifest_problem(&manifest_path(b), b.family, executable);
             BrowserCheck {
@@ -368,6 +382,25 @@ fn write_atomically(path: &Path, body: &[u8]) -> io::Result<()> {
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn firefox_counts_as_installed_from_its_own_profile_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let firefox = Browser {
+            name: "Firefox",
+            family: Family::Firefox,
+            root: dir.path().join("Mozilla"),
+        };
+        let chrome = Browser {
+            name: "Google Chrome",
+            family: Family::Chromium,
+            root: dir.path().join("Google/Chrome"),
+        };
+        std::fs::create_dir_all(dir.path().join("Firefox")).unwrap();
+        assert!(firefox.installed(), "Application Support/Firefox without Mozilla");
+        assert!(!chrome.installed());
+    }
 
     #[test]
     fn writes_manifests_only_for_installed_browsers() {

@@ -421,7 +421,14 @@ mod platform {
 
     pub fn run(paths: &Paths) -> io::Result<()> {
         let paths = paths.clone();
-        let event_loop = EventLoopBuilder::new().build();
+        #[allow(unused_mut)]
+        let mut event_loop = EventLoopBuilder::new().build();
+        // tao starts as a regular app, which puts Lens in the Dock despite LSUIElement.
+        #[cfg(target_os = "macos")]
+        {
+            use tao::platform::macos::{ActivationPolicy, EventLoopExtMacOS};
+            event_loop.set_activation_policy(ActivationPolicy::Accessory);
+        }
         let mut tray: Option<TrayIcon> = None;
         let mut actions = HashMap::new();
         let mut now = Snapshot::default();
@@ -439,6 +446,18 @@ mod platform {
                     .with_icon(icon(now.running).expect("the icon is valid RGBA"))
                     .build()
                     .ok();
+            }
+            // macOS: opening Sirv Lens again while it runs only wakes this tray process, the
+            // bundle's running app. Do what opening it does: the setup checks and the welcome page.
+            if let Event::Reopen { .. } = event
+                && let Ok(executable) = crate::paths::executable()
+            {
+                let _ = std::process::Command::new(executable)
+                    .arg("open")
+                    .stdin(std::process::Stdio::null())
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .spawn();
             }
             if Instant::now() >= next_poll {
                 next_poll = Instant::now() + POLL;
