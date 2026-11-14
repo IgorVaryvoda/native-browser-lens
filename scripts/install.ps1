@@ -47,6 +47,11 @@ try {
     if (Test-Path $exe) { & $exe stop 2>$null | Out-Null }
     Copy-Item -Force "$work\sirv-lens-$version-$target\lens.exe" $exe
     Copy-Item -Force "$work\sirv-lens-$version-$target\lensw.exe" (Join-Path $dir 'lensw.exe')
+    # The speech programs for voice notes, where the release builds them for this computer.
+    foreach ($program in @('lens-speech.exe', 'lens-speech-gpu.exe')) {
+        $source = "$work\sirv-lens-$version-$target\$program"
+        if (Test-Path $source) { Copy-Item -Force $source (Join-Path $dir $program) }
+    }
 
     # The extension, unpacked in a stable folder for Load unpacked until the store listings exist.
     $extensionZip = "sirv-lens-extension-$version-chrome.zip"

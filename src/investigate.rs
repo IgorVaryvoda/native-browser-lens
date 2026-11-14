@@ -105,6 +105,8 @@ fn selection(review: &Review) -> Value {
     json!({
         "title": review.title,
         "reporterNotes": review.notes,
+        // The reporter's dictated notes, transcribed on their computer.
+        "reporterVoiceNotes": review.voice.iter().map(crate::export::voice_transcript).collect::<Vec<_>>(),
         "captures": review.items.iter().enumerate().map(|(i, item)| json!({
             "capture": i + 1, "pageUrl": item.page_url, "pageTitle": item.page_title,
             "collection": item.mode, "findings": item.findings,
@@ -522,6 +524,7 @@ mod tests {
                 findings: vec!["HTTP 500 from https://shop.test/api".into()],
                 marks: vec![],
             }],
+            voice: vec![],
         }
     }
 

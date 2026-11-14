@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type RefObject } from 'react';
 import { LensError, type LensClient } from '@/lens-client';
 import type { Observation } from '@/protocol/Observation';
 
@@ -12,13 +12,30 @@ type SaveState =
   | { kind: 'conflict' };
 
 /** Title and notes of one observation. A failed or conflicting save never drops the draft. */
-export function Notes({ client, id, onSaved }: { client: LensClient; id: number; onSaved: () => void }) {
+export function Notes({
+  client,
+  id,
+  onSaved,
+  appendRef,
+}: {
+  client: LensClient;
+  id: number;
+  onSaved: () => void;
+  /** Filled with a function that adds text at the end of the notes, for transcripts. */
+  appendRef?: RefObject<((text: string) => void) | null>;
+}) {
   const [record, setRecord] = useState<Observation | null>(null);
   const [title, setTitle] = useState('');
   const [notes, setNotes] = useState('');
   const [state, setState] = useState<SaveState>({ kind: 'saved' });
   const saving = useRef(false);
   const dirty = record !== null && (title !== record.title || notes !== record.notes);
+  if (appendRef) {
+    appendRef.current = (text: string) => {
+      setNotes((current) => (current.trim() ? `${current.trimEnd()}\n\n${text}` : text));
+      setState((s) => (s.kind === 'conflict' ? s : { kind: 'editing' }));
+    };
+  }
 
   const load = useCallback(async () => {
     const found = await client.request({ method: 'getObservation', params: { id } });

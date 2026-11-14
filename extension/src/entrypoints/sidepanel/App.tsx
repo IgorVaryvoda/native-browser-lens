@@ -6,6 +6,7 @@ import type { Hello } from '@/protocol/Hello';
 import type { ObservationSummary } from '@/protocol/ObservationSummary';
 import { AlertIcon, BackIcon, CameraIcon, ExportIcon, PenIcon, PlayIcon, SettingsIcon, LensMark } from '@/ui/icons';
 import { Notes } from './Notes';
+import { VoiceNotes } from './Voice';
 import { InstallApp, SetupCard } from './Onboarding';
 
 type Connection = { state: 'connecting' } | { state: 'ready'; hello: Hello } | { state: 'failed'; message: string };
@@ -318,13 +319,15 @@ function Detail({
   onBack: () => void;
   onSaved: () => void;
 }) {
+  const append = useRef<((text: string) => void) | null>(null);
   return (
     <section className="detail" aria-label="Observation">
       <button type="button" className="btn btn-ghost btn-sm back" onClick={onBack}>
         <BackIcon size={14} />
         All observations
       </button>
-      <Notes client={client} id={observation.id} onSaved={onSaved} />
+      <Notes client={client} id={observation.id} onSaved={onSaved} appendRef={append} />
+      <VoiceNotes client={client} observation={observation.id} onAppend={(text) => append.current?.(text)} />
       <Captures client={client} observation={observation.id} />
       <div className="detail-actions">
         <button

@@ -1,7 +1,7 @@
 //! A review as a folder anyone can open: a Markdown report, the rendered screenshots, the evidence
 //! and the recordings, and the review itself as JSON.
 use crate::blobs::Blobs;
-use crate::protocol::{Evidence, Review, ReviewItem};
+use crate::protocol::{Evidence, Review, ReviewItem, ReviewVoice};
 use crate::repro;
 use serde_json::Value;
 use std::fmt::Write as _;
@@ -30,7 +30,7 @@ pub fn export(review: &Review, blobs: &Blobs, root: &Path) -> io::Result<PathBuf
         let evidence = blobs.read_all(&item.evidence.sha256)?;
         std::fs::write(folder.join(format!("capture-{n}-evidence.json")), &evidence)?;
         let parsed = repro::parse(&evidence);
-        for (name, contents) in reproduction(item, n, parsed.as_ref()) {
+        for (name, contents) in reproduction(item, n, parsed.as_ref(), &review.voice) {
             std::fs::write(folder.join(name), contents)?;
         }
         if let Some(recording) = &item.recording {
@@ -62,9 +62,20 @@ pub fn export(review: &Review, blobs: &Blobs, root: &Path) -> io::Result<PathBuf
                 report,
                 "Steps and events, oldest first. To repeat the steps: \
                  `npx playwright test capture-{n}.spec.ts`\n\n{}\n",
-                fenced(&repro::timeline(evidence))
+                fenced(&repro::timeline(evidence, &review.voice))
             );
         }
+    }
+    if !review.voice.is_empty() {
+        report.push_str(
+            "## Voice notes\n\nTranscribed on this computer; the person's own words.\n\n",
+        );
+    }
+    for (index, note) in review.voice.iter().enumerate() {
+        let n = index + 1;
+        let transcript = voice_transcript(note);
+        let _ = write!(report, "Voice note {n}:\n\n{}\n", fenced(&transcript));
+        std::fs::write(folder.join(format!("voice-{n}.txt")), transcript)?;
     }
     std::fs::write(folder.join("report.md"), report)?;
     std::fs::write(
@@ -74,11 +85,22 @@ pub fn export(review: &Review, blobs: &Blobs, root: &Path) -> io::Result<PathBuf
     Ok(folder)
 }
 
+/// A voice note as text: `[mm:ss] words`, one line per stretch of speech.
+pub fn voice_transcript(note: &ReviewVoice) -> String {
+    let mut out = String::new();
+    for segment in &note.segments {
+        let s = segment.start_ms / 1000;
+        let _ = writeln!(out, "[{:02}:{:02}] {}", s / 60, s % 60, segment.text.trim());
+    }
+    out
+}
+
 /// The generated files of one capture: its timeline, a Playwright test, and a HAR file.
 pub fn reproduction(
     item: &ReviewItem,
     n: usize,
     evidence: Option<&Evidence>,
+    voice: &[ReviewVoice],
 ) -> Vec<(String, Vec<u8>)> {
     let Some(evidence) = evidence else {
         return Vec::new();
@@ -91,11 +113,11 @@ pub fn reproduction(
     vec![
         (
             format!("capture-{n}-timeline.txt"),
-            repro::timeline(evidence).into_bytes(),
+            repro::timeline(evidence, voice).into_bytes(),
         ),
         (
             format!("capture-{n}.spec.ts"),
-            repro::playwright(evidence, n, title, &item.page_url).into_bytes(),
+            repro::playwright(evidence, voice, n, title, &item.page_url).into_bytes(),
         ),
         (
             format!("capture-{n}.har"),

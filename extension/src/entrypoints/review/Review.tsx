@@ -11,6 +11,8 @@ import type { Agent } from '@/protocol/Agent';
 import type { Suggestion } from '@/protocol/Suggestion';
 import type { Action } from '@/protocol/Action';
 import type { Locator } from '@/protocol/Locator';
+import type { VoiceNote } from '@/protocol/VoiceNote';
+import type { ReviewVoice } from '@/protocol/ReviewVoice';
 import { AlertIcon, DoneIcon, DraftIcon, ExportIcon, FileIcon, MaskIcon } from '@/ui/icons';
 
 /**
@@ -25,6 +27,7 @@ export function Review({ observation: id }: { observation: number }) {
   const [recordings, setRecordings] = useState<Set<number>>(new Set());
   const [checked, setChecked] = useState(false);
   const [typedValues, setTypedValues] = useState(true);
+  const [voice, setVoice] = useState<VoiceNote[]>([]);
   const [review, setReview] = useState<FrozenReview | null>(null);
   const [exported, setExported] = useState<string | null>(null);
   const [members, setMembers] = useState<Member[] | null>(null);
@@ -41,10 +44,12 @@ export function Review({ observation: id }: { observation: number }) {
     Promise.all([
       client.request({ method: 'getObservation', params: { id } }),
       client.request({ method: 'listCaptures', params: { observation: id } }),
+      client.request({ method: 'listVoiceNotes', params: { observation: id } }),
     ])
-      .then(([found, list]) => {
+      .then(([found, list, notes]) => {
         setObservation(found);
         setCaptures(list);
+        setVoice(notes);
         setChosen(new Set(list.map((c) => c.id)));
       })
       .catch((error: Error) => setProblem(error.message));
@@ -202,6 +207,8 @@ export function Review({ observation: id }: { observation: number }) {
               </li>
             ))}
           </ol>
+
+          {review.voice.length > 0 && <VoiceList notes={review.voice} label="Reviewed voice notes" />}
 
           {suggestion && (
             <section aria-label="Draft report" className="card draft">
@@ -375,6 +382,15 @@ export function Review({ observation: id }: { observation: number }) {
               </li>
             ))}
           </ol>
+          {voice.length > 0 && (
+            <section className="card voice-review">
+              <VoiceList notes={voice.filter((v) => v.state === 'done')} label="Voice notes to share" />
+              {voice.some((v) => v.state !== 'done') && (
+                <p className="small muted">Voice notes that are not transcribed yet stay out of this review.</p>
+              )}
+              <p className="small muted">Only the transcripts leave; the recordings stay on this computer.</p>
+            </section>
+          )}
           {problem && (
             <div role="alert" className="notice">
               <AlertIcon />
@@ -394,6 +410,28 @@ export function Review({ observation: id }: { observation: number }) {
         </>
       )}
     </main>
+  );
+}
+
+/** Transcripts, with the time of each stretch of speech. */
+function VoiceList({ notes, label }: { notes: (VoiceNote | ReviewVoice)[]; label: string }) {
+  if (!notes.length) return null;
+  const at = (ms: number) => `${Math.floor(ms / 60000)}:${String(Math.floor(ms / 1000) % 60).padStart(2, '0')}`;
+  return (
+    <section className="section voice-review-list">
+      <h2>Voice notes</h2>
+      <ol aria-label={label} className="small">
+        {notes.map((note, n) => (
+          <li key={n}>
+            {note.segments.map((s, i) => (
+              <p key={i}>
+                <span className="muted num">[{at(Number(s.startMs))}]</span> {s.text}
+              </p>
+            ))}
+          </li>
+        ))}
+      </ol>
+    </section>
   );
 }
 

@@ -311,3 +311,76 @@
   padding: 10px 0 0;
   background: linear-gradient(transparent, var(--background) 30%);
 }
+
+/* ---------- Voice notes ---------- */
+.voice {
+  display: grid;
+  gap: 8px;
+}
+.voice-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.voice-list {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.voice-note {
+  display: grid;
+  gap: 4px;
+  padding: 8px 10px;
+  border-radius: var(--radius);
+  background: var(--card);
+  box-shadow: var(--app-shadow-hairline);
+}
+.voice-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.voice-actions {
+  display: inline-flex;
+  margin: -4px -6px -4px 0;
+}
+.voice-text {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.danger-text {
+  color: var(--danger-foreground);
+}
+.rec-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 4px;
+  border-radius: 50%;
+  background: var(--danger);
+  vertical-align: 1px;
+  animation: rec-pulse 1.2s ease-in-out infinite;
+}
+@keyframes rec-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .rec-dot {
+    animation: none;
+  }
+}
+.model-progress {
+  display: grid;
+  gap: 6px;
+  width: 100%;
+}
+.model-progress .meter {
+  display: block;
+}

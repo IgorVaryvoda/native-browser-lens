@@ -3,6 +3,8 @@ import { createRoot } from 'react-dom/client';
 import { LensClient } from '@/lens-client';
 import type { VibeQSettings } from '@/protocol/VibeQSettings';
 import type { UpdateState } from '@/protocol/UpdateState';
+import type { SpeechStatus } from '@/protocol/SpeechStatus';
+import { ModelNotice } from '../sidepanel/Voice';
 import { AlertIcon, DoneIcon, LensMark, LinkIcon } from '@/ui/icons';
 import '@/ui/base.css';
 import { followSystemTheme } from '@/ui/theme';
@@ -31,6 +33,7 @@ function Settings() {
         {version && <span className="small muted num">Lens {version}</span>}
       </header>
       <VibeQ client={client} />
+      <Voice client={client} />
       <Updates client={client} />
       <section className="card settings-section" aria-label="Privacy">
         <h2>What Lens reads</h2>
@@ -272,6 +275,40 @@ async function mintToken(origin: string): Promise<string | null> {
   const token = (body as { token?: unknown } | null)?.token;
   if (typeof token !== 'string' || !token) throw new Error('VibeQ sent no token');
   return token;
+}
+
+/** The speech model for voice notes: where it runs, and the one-time download. */
+function Voice({ client }: { client: LensClient }) {
+  const [speech, setSpeech] = useState<SpeechStatus | null>(null);
+  const load = useCallback(() => client.request({ method: 'speechStatus' }).then(setSpeech).catch(() => {}), [client]);
+  useEffect(() => {
+    void load();
+  }, [load]);
+  useEffect(() => {
+    if (speech?.model.state !== 'downloading') return;
+    const timer = setInterval(() => void load(), 1000);
+    return () => clearInterval(timer);
+  }, [speech?.model.state, load]);
+  if (!speech) return null;
+  const engines = speech.engines.length ? speech.engines.join(', then ') : 'none found';
+  return (
+    <section aria-label="Voice notes" className="card settings-section">
+      <div className="section">
+        <h2>Voice notes</h2>
+        <p className="small muted">
+          Lens writes down what you say with {speech.modelName}, on this computer. The recordings never leave it; transcripts leave
+          only in a review you create.
+        </p>
+      </div>
+      {speech.model.state === 'ready' ? (
+        <p className="small" role="status" aria-label="Speech model">
+          <DoneIcon size={14} /> {speech.modelName} is ready. Engine: {engines}.
+        </p>
+      ) : (
+        <ModelNotice speech={speech} onInstall={() => void client.request({ method: 'installSpeech' }).then(setSpeech)} />
+      )}
+    </section>
+  );
 }
 
 /** Lens updates itself from signed releases, unless a package manager or the Store does. */

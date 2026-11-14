@@ -39,6 +39,12 @@ type ReplyTo = {
   setAutomaticUpdates: 'updates';
   updateNow: 'updates';
   setPaused: 'done';
+  uploadChunk: 'uploaded';
+  addVoiceNote: 'voiceNote';
+  listVoiceNotes: 'voiceNotes';
+  deleteVoiceNote: 'deleted';
+  speechStatus: 'speech';
+  installSpeech: 'speech';
   shutdown: 'stopping';
 };
 // Every protocol method must name its reply here; a new Rust request fails this line first.

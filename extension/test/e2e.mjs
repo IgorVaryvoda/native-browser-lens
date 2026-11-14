@@ -113,7 +113,14 @@ const context = await chromium.launchPersistentContext(profile, {
   ...(executablePath ? { executablePath } : { channel: 'chromium' }),
   headless: true,
   env,
-  args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`],
+  args: [
+    `--disable-extensions-except=${extension}`,
+    `--load-extension=${extension}`,
+    // A WAV file stands in for the microphone, and its prompt answers itself.
+    '--use-fake-ui-for-media-stream',
+    '--use-fake-device-for-media-stream',
+    `--use-file-for-fake-audio-capture=${join(import.meta.dirname, 'fixtures', 'speech.wav')}%noloop`,
+  ],
 });
 const consoleErrors = [];
 context.on('page', (page) => {
@@ -244,6 +251,21 @@ try {
   await reloaded.waitFor({ timeout: 15_000 });
   if ((await reloaded.inputValue()) !== notes) throw new Error(`notes after reload: ${await reloaded.inputValue()}`);
 
+  // Voice: a spoken note becomes a transcript when the speech model and program are present
+  // (LENS_SPEECH_MODELS, LENS_SPEECH_DIR); without them it waits and the panel offers the model.
+  const speech = Boolean(process.env.LENS_SPEECH_MODELS && process.env.LENS_SPEECH_DIR);
+  await panel.getByRole('button', { name: 'Record' }).click();
+  await panel.getByRole('status', { name: 'Recording' }).waitFor({ timeout: 15_000 });
+  await panel.waitForTimeout(11_500);
+  await panel.getByRole('button', { name: /^Stop/ }).click();
+  const transcript = panel.getByRole('list', { name: 'Voice note list' }).getByLabel('Transcript').first();
+  if (speech) {
+    await transcript.filter({ hasText: /fellow Americans/i }).waitFor({ timeout: 180_000 });
+  } else {
+    await transcript.filter({ hasText: /Waiting for the speech model/ }).waitFor({ timeout: 30_000 });
+    await panel.getByRole('button', { name: 'Download the speech model' }).waitFor();
+  }
+
   // Review and export: only after the person confirms the screenshots; the export holds the
   // daemon-rendered images and a report of what failed.
   const [review] = await Promise.all([
@@ -269,6 +291,15 @@ try {
   for (const file of ['capture-1.png', 'capture-1-evidence.json', 'capture-1-recording.json', 'review.json', 'capture-1-timeline.txt', 'capture-1.spec.ts', 'capture-1.har']) {
     if (!existsSync(join(folder, file))) throw new Error(`the export lacks ${file}`);
   }
+  if (speech) {
+    const said = readFileSync(join(folder, 'voice-1.txt'), 'utf8');
+    if (!/fellow Americans/i.test(said) || !/^\[00:0\d\] /.test(said)) throw new Error(`voice-1.txt: ${said}`);
+    if (!readFileSync(join(folder, 'capture-1-timeline.txt'), 'utf8').includes('the person said:')) {
+      throw new Error('the timeline lacks the voice note');
+    }
+  }
+  // Voice recordings never leave this computer: only their transcripts do.
+  if (readdirSync(folder).some((f) => /\.(wav|webm|ogg)$/.test(f))) throw new Error(`audio in the export: ${readdirSync(folder)}`);
   const spec = readFileSync(join(folder, 'capture-1.spec.ts'), 'utf8');
   for (const expected of ['.fill("SAVE10")', 'getByRole("button", { name: "Pay", exact: true }).click()', '// Lens recorded: HTTP 500 from POST']) {
     if (!spec.includes(expected)) throw new Error(`capture-1.spec.ts lacks ${expected}:\n${spec}`);
@@ -364,6 +395,9 @@ try {
     const detail = JSON.parse(reviewed[1].text);
     if (detail.notesByThePerson !== notes || !detail.captures[0].untrustedPageContent.findings.some((f) => f.startsWith('HTTP 500'))) {
       throw new Error(`MCP review: ${JSON.stringify(detail).slice(0, 300)}`);
+    }
+    if (speech && !/fellow Americans/i.test(detail.voiceNotesByThePerson[0]?.transcript ?? '')) {
+      throw new Error(`MCP voice: ${JSON.stringify(detail.voiceNotesByThePerson)}`);
     }
     if (detail.captures[0].untrustedPageContent.marks[0]?.kind !== 'rectangle') throw new Error(`MCP marks: ${JSON.stringify(detail.captures[0].untrustedPageContent.marks)}`);
     const served = (await rpc('tools/call', { name: 'read_review_file', arguments: { review: latest.id, file: 'capture-1.spec.ts' } })).content;

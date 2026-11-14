@@ -26,13 +26,15 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # musl: one static binary for every Linux distribution, no glibc floor.
-          - { os: ubuntu-24.04, target: x86_64-unknown-linux-musl }
-          - { os: ubuntu-24.04-arm, target: aarch64-unknown-linux-musl }
-          - { os: macos-15, target: aarch64-apple-darwin }
-          - { os: macos-15-intel, target: x86_64-apple-darwin }
-          - { os: windows-2025, target: x86_64-pc-windows-msvc }
-          - { os: windows-11-arm, target: aarch64-pc-windows-msvc }
+          # musl: one static binary for every Linux distribution, no glibc floor. The speech
+          # programs are C++ (whisper.cpp) and link glibc; without them Lens still runs, only
+          # voice notes wait. gpu: the backend of lens-speech-gpu, none where it does not pay.
+          - { os: ubuntu-24.04, target: x86_64-unknown-linux-musl, speech: x86_64-unknown-linux-gnu, gpu: vulkan }
+          - { os: ubuntu-24.04-arm, target: aarch64-unknown-linux-musl, speech: aarch64-unknown-linux-gnu, gpu: vulkan }
+          - { os: macos-15, target: aarch64-apple-darwin, speech: aarch64-apple-darwin, gpu: metal }
+          - { os: macos-15-intel, target: x86_64-apple-darwin, speech: x86_64-apple-darwin, gpu: "" }
+          - { os: windows-2025, target: x86_64-pc-windows-msvc, speech: x86_64-pc-windows-msvc, gpu: vulkan }
+          - { os: windows-11-arm, target: aarch64-pc-windows-msvc, speech: aarch64-pc-windows-msvc, gpu: "" }
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -47,6 +49,34 @@ jobs:
 
       - name: Build
         run: cargo build --release --locked --target ${{ matrix.target }}
+
+      - name: Vulkan headers and shader compiler (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get install -y --no-install-recommends libvulkan-dev glslc
+      - name: Vulkan SDK (Windows)
+        if: runner.os == 'Windows' && matrix.gpu == 'vulkan'
+        uses: jakoch/install-vulkan-sdk-action@7fe84289ddbf750f7eff9f8e4588e600e1dd06c8 # v1.8.1
+        with:
+          cache: true
+
+      - name: Speech programs
+        shell: bash
+        run: |
+          rustup target add ${{ matrix.speech }}
+          cargo build --release --locked -p lens-speech --target ${{ matrix.speech }}
+          if [[ -n "${{ matrix.gpu }}" ]]; then
+            cargo build --release --locked -p lens-speech --features ${{ matrix.gpu }} \
+              --target ${{ matrix.speech }} --target-dir target-gpu
+          fi
+          ext=""; [[ "$RUNNER_OS" == "Windows" ]] && ext=.exe
+          mkdir -p speech
+          cp "target/${{ matrix.speech }}/release/lens-speech$ext" "speech/lens-speech$ext"
+          if [[ -n "${{ matrix.gpu }}" ]]; then
+            cp "target-gpu/${{ matrix.speech }}/release/lens-speech$ext" "speech/lens-speech-gpu$ext"
+          fi
+          # Without arguments it prints its usage and fails: proof that it starts.
+          out=$("speech/lens-speech$ext" 2>&1 || true)
+          [[ "$out" == *usage* ]]
 
       - name: Smoke test
         shell: bash
@@ -79,8 +109,12 @@ jobs:
           security list-keychains -d user -s "$keychain"
           security set-key-partition-list -S apple-tool:,apple: -s -k "" "$keychain"
           bin=target/${{ matrix.target }}/release/lens
-          codesign --force --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" "$bin"
-          ditto -c -k "$bin" "$RUNNER_TEMP/notarize.zip"
+          mkdir -p "$RUNNER_TEMP/notarize"
+          for program in "$bin" speech/*; do
+            codesign --force --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" "$program"
+            cp "$program" "$RUNNER_TEMP/notarize/"
+          done
+          ditto -c -k "$RUNNER_TEMP/notarize" "$RUNNER_TEMP/notarize.zip"
           xcrun notarytool submit "$RUNNER_TEMP/notarize.zip" --apple-id "$APPLE_ID" \
             --password "$APPLE_PASSWORD" --team-id "$APPLE_TEAM_ID" --wait
 
@@ -91,6 +125,7 @@ jobs:
           name="sirv-lens-$version-${{ matrix.target }}"
           mkdir -p "dist/$name"
           cp README.md "dist/$name/"
+          cp speech/* "dist/$name/"
           if [[ "$RUNNER_OS" == "Windows" ]]; then
             cp target/${{ matrix.target }}/release/lens.exe target/${{ matrix.target }}/release/lensw.exe "dist/$name/"
             (cd dist && 7z a -tzip "$name.zip" "$name" >/dev/null)

@@ -16,6 +16,7 @@ mod secrets;
 mod service;
 mod setup;
 mod shim;
+mod speech;
 mod store;
 mod tray;
 mod update;

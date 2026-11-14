@@ -1,7 +1,7 @@
 use crate::filing::Attempt;
 use crate::protocol::{
     BlobRef, Capture, CaptureMode, ClientInfo, ClientSeen, Observation, ObservationSummary,
-    Project, Review, ReviewSummary, Shape,
+    Project, Review, ReviewSummary, Shape, VoiceNote, VoiceSegment, VoiceState,
 };
 use rusqlite::{Connection, params};
 use std::path::Path;
@@ -58,6 +58,19 @@ const MIGRATIONS: &[&str] = &[
         body TEXT NOT NULL,
         last_seen INTEGER NOT NULL
     );",
+    "CREATE TABLE voice_notes (
+        id INTEGER PRIMARY KEY,
+        observation_id INTEGER NOT NULL REFERENCES observations(id) ON DELETE CASCADE,
+        started_at INTEGER NOT NULL,
+        duration_ms INTEGER NOT NULL,
+        audio_sha256 TEXT NOT NULL,
+        audio_size INTEGER NOT NULL,
+        state TEXT NOT NULL,
+        language TEXT,
+        segments TEXT NOT NULL DEFAULT '[]',
+        detail TEXT
+    );
+    CREATE INDEX voice_notes_by_observation ON voice_notes(observation_id);",
 ];
 
 /// What an update found.
@@ -120,6 +133,34 @@ fn capture_from_row(row: &rusqlite::Row) -> rusqlite::Result<Capture> {
             }),
             _ => None,
         },
+    })
+}
+
+const VOICE_COLUMNS: &str = "id, observation_id, started_at, duration_ms, audio_sha256, audio_size,
+    state, language, segments, detail";
+
+fn voice_from_row(row: &rusqlite::Row) -> rusqlite::Result<VoiceNote> {
+    let state: String = row.get(6)?;
+    let segments: String = row.get(8)?;
+    Ok(VoiceNote {
+        id: row.get(0)?,
+        observation: row.get(1)?,
+        started_at: row.get(2)?,
+        duration_ms: row.get(3)?,
+        audio: BlobRef {
+            sha256: row.get(4)?,
+            size: row.get::<_, i64>(5)? as u64,
+            media_type: "audio/wav".into(),
+        },
+        state: match state.as_str() {
+            "transcribing" => VoiceState::Transcribing,
+            "done" => VoiceState::Done,
+            "failed" => VoiceState::Failed,
+            _ => VoiceState::Waiting,
+        },
+        language: row.get(7)?,
+        segments: serde_json::from_str(&segments).unwrap_or_default(),
+        detail: row.get(9)?,
     })
 }
 
@@ -517,6 +558,83 @@ impl Store {
             annotations: Vec::new(),
             recording: row.recording,
         }))
+    }
+
+    pub fn add_voice_note(
+        &self,
+        observation: i64,
+        started_at: i64,
+        duration_ms: i64,
+        audio: &BlobRef,
+    ) -> rusqlite::Result<VoiceNote> {
+        self.db.execute(
+            "INSERT INTO voice_notes (observation_id, started_at, duration_ms, audio_sha256, audio_size, state)
+             VALUES (?1, ?2, ?3, ?4, ?5, 'waiting')",
+            params![observation, started_at, duration_ms, audio.sha256, audio.size as i64],
+        )?;
+        let id = self.db.last_insert_rowid();
+        Ok(self.get_voice_note(id)?.expect("just inserted"))
+    }
+
+    pub fn get_voice_note(&self, id: i64) -> rusqlite::Result<Option<VoiceNote>> {
+        let mut statement = self.db.prepare(&format!(
+            "SELECT {VOICE_COLUMNS} FROM voice_notes WHERE id = ?1"
+        ))?;
+        statement
+            .query_map([id], voice_from_row)?
+            .next()
+            .transpose()
+    }
+
+    pub fn list_voice_notes(&self, observation: i64) -> rusqlite::Result<Vec<VoiceNote>> {
+        let mut statement = self.db.prepare(&format!(
+            "SELECT {VOICE_COLUMNS} FROM voice_notes WHERE observation_id = ?1 ORDER BY started_at, id"
+        ))?;
+        statement
+            .query_map([observation], voice_from_row)?
+            .collect()
+    }
+
+    /// Voice notes that still need a transcript, oldest first.
+    pub fn untranscribed_voice_notes(&self) -> rusqlite::Result<Vec<i64>> {
+        let mut statement = self.db.prepare(
+            "SELECT id FROM voice_notes WHERE state IN ('waiting', 'transcribing') ORDER BY id",
+        )?;
+        statement.query_map([], |row| row.get(0))?.collect()
+    }
+
+    pub fn set_voice_state(
+        &self,
+        id: i64,
+        state: VoiceState,
+        language: Option<&str>,
+        segments: &[VoiceSegment],
+        detail: Option<&str>,
+    ) -> rusqlite::Result<()> {
+        let state = match state {
+            VoiceState::Waiting => "waiting",
+            VoiceState::Transcribing => "transcribing",
+            VoiceState::Done => "done",
+            VoiceState::Failed => "failed",
+        };
+        self.db.execute(
+            "UPDATE voice_notes SET state = ?2, language = ?3, segments = ?4, detail = ?5 WHERE id = ?1",
+            params![
+                id,
+                state,
+                language,
+                serde_json::to_string(segments).expect("segments serialize"),
+                detail
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn delete_voice_note(&self, id: i64) -> rusqlite::Result<bool> {
+        Ok(self
+            .db
+            .execute("DELETE FROM voice_notes WHERE id = ?1", [id])?
+            > 0)
     }
 
     pub fn list_captures(&self, observation: i64) -> rusqlite::Result<Vec<Capture>> {

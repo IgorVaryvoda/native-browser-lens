@@ -106,3 +106,17 @@
   color: var(--muted-foreground);
   overflow-wrap: anywhere;
 }
+.voice-review {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+}
+.voice-review-list ol {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding-left: 20px;
+}
+.voice-review-list p {
+  margin: 0 0 2px;
+}

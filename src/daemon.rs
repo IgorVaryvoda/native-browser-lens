@@ -6,7 +6,7 @@ use crate::paths::Paths;
 use crate::protocol::*;
 use crate::store::{CaptureRow, Store, Updated};
 use crate::vibeq::{self, Client};
-use crate::{export, filing, investigate, ipc, render, repro, secrets};
+use crate::{export, filing, investigate, ipc, render, repro, secrets, speech};
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use interprocess::local_socket::{Stream, prelude::*};
@@ -16,6 +16,12 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 pub struct Daemon {
     store: Mutex<Store>,
+    /// What a speech model install in progress reports; None when none runs.
+    speech_download: Mutex<Option<ModelState>>,
+    /// Voice note IDs for the transcription worker.
+    speech_queue: std::sync::OnceLock<std::sync::mpsc::Sender<i64>>,
+    /// The daemon itself, for work that outlives a request.
+    me: std::sync::OnceLock<std::sync::Weak<Daemon>>,
     blobs: Blobs,
     data_dir: String,
     downloads: std::path::PathBuf,
@@ -94,6 +100,9 @@ pub fn run(paths: &Paths, service: bool) -> std::io::Result<()> {
     let store = Store::open(&paths.database()).map_err(std::io::Error::other)?;
     let daemon = Arc::new(Daemon::new(store, paths));
     crate::update::clean_up();
+    // Unfinished uploads cannot resume after a restart: the client starts them again.
+    let _ = std::fs::remove_dir_all(paths.data.join("uploads"));
+    start_transcription(daemon.clone());
     if service {
         schedule_updates(daemon.clone());
         crate::tray::spawn(paths);
@@ -183,6 +192,9 @@ impl Daemon {
     pub fn new(store: Store, paths: &Paths) -> Self {
         Self {
             store: Mutex::new(store),
+            speech_download: Mutex::new(None),
+            speech_queue: std::sync::OnceLock::new(),
+            me: std::sync::OnceLock::new(),
             blobs: Blobs::new(paths.blobs()),
             data_dir: paths.data.display().to_string(),
             downloads: paths.downloads(),
@@ -445,6 +457,19 @@ impl Daemon {
                             title: observation.title,
                             notes: observation.notes,
                             items,
+                            // Transcribed notes only: one still waiting is not something the person has read.
+                            voice: store
+                                .list_voice_notes(observation.id)
+                                .map_err(storage)?
+                                .into_iter()
+                                .filter(|v| v.state == VoiceState::Done)
+                                .map(|v| ReviewVoice {
+                                    started_at: v.started_at,
+                                    duration_ms: v.duration_ms,
+                                    language: v.language,
+                                    segments: v.segments,
+                                })
+                                .collect(),
                         })
                         .map_err(storage)?,
                 )
@@ -630,6 +655,49 @@ impl Daemon {
                 delivered.map_err(remote)?;
                 Reply::Filing(filing_reply(&attempt))
             }
+            Request::UploadChunk(chunk) => {
+                drop(store);
+                Reply::Uploaded(self.upload(chunk)?)
+            }
+            Request::AddVoiceNote(note) => {
+                store
+                    .get_observation(note.observation)
+                    .map_err(storage)?
+                    .ok_or_else(|| not_found("no such observation"))?;
+                let (header, size) = self
+                    .blobs
+                    .read(&note.audio.sha256, 0, 44)
+                    .map_err(|_| not_found("upload the recording first"))?;
+                let duration = speech::wav_duration_ms(&header, size).map_err(bad)?;
+                let audio = BlobRef {
+                    size,
+                    media_type: "audio/wav".into(),
+                    ..note.audio
+                };
+                let saved = store
+                    .add_voice_note(note.observation, note.started_at, duration, &audio)
+                    .map_err(storage)?;
+                self.queue_transcription(saved.id);
+                Reply::VoiceNote(saved)
+            }
+            Request::ListVoiceNotes { observation } => {
+                Reply::VoiceNotes(store.list_voice_notes(observation).map_err(storage)?)
+            }
+            Request::DeleteVoiceNote { id } => {
+                if !store.delete_voice_note(id).map_err(storage)? {
+                    return Err(not_found("no such voice note"));
+                }
+                Reply::Deleted
+            }
+            Request::SpeechStatus => {
+                drop(store);
+                Reply::Speech(self.speech_status())
+            }
+            Request::InstallSpeech => {
+                drop(store);
+                self.install_speech();
+                Reply::Speech(self.speech_status())
+            }
             Request::ReadBlob {
                 sha256,
                 offset,
@@ -715,6 +783,161 @@ impl Daemon {
         Ok(())
     }
 
+    fn me(&self) -> Option<Arc<Daemon>> {
+        self.me.get().and_then(std::sync::Weak::upgrade)
+    }
+
+    fn speech_status(&self) -> SpeechStatus {
+        let download = self
+            .speech_download
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone();
+        speech::status(&self.paths, download.as_ref())
+    }
+
+    /// Starts the model download unless the models are there or a download runs.
+    fn install_speech(&self) {
+        let mut slot = self
+            .speech_download
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        if matches!(*slot, Some(ModelState::Downloading { .. }))
+            || speech::models_ready(&self.paths)
+        {
+            return;
+        }
+        *slot = Some(ModelState::Downloading {
+            received: 0,
+            total: speech::download_size(),
+        });
+        drop(slot);
+        let Some(daemon) = self.me() else { return };
+        std::thread::spawn(move || {
+            let result = speech::download(&daemon.paths, |received, total| {
+                *daemon
+                    .speech_download
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner()) =
+                    Some(ModelState::Downloading { received, total });
+            });
+            let next = match result {
+                Ok(()) => None,
+                Err(reason) => {
+                    log(&daemon.paths, &format!("speech model download: {reason}"));
+                    Some(ModelState::Failed { reason })
+                }
+            };
+            *daemon
+                .speech_download
+                .lock()
+                .unwrap_or_else(|p| p.into_inner()) = next;
+            // Voice notes that waited for the model go now.
+            if let Ok(waiting) = daemon.lock_store().untranscribed_voice_notes() {
+                for id in waiting {
+                    daemon.queue_transcription(id);
+                }
+            }
+        });
+    }
+
+    fn queue_transcription(&self, id: i64) {
+        if let Some(queue) = self.speech_queue.get() {
+            let _ = queue.send(id);
+        }
+    }
+
+    /// Transcribes one voice note, unless it is done or the model is missing.
+    fn transcribe(&self, id: i64) {
+        let Ok(Some(note)) = self.lock_store().get_voice_note(id) else {
+            return;
+        };
+        if matches!(note.state, VoiceState::Done | VoiceState::Failed) {
+            return;
+        }
+        let wait = |detail: &str| {
+            let _ =
+                self.lock_store()
+                    .set_voice_state(id, VoiceState::Waiting, None, &[], Some(detail));
+        };
+        if !speech::models_ready(&self.paths) {
+            return wait("Waiting for the speech model: download it in Lens settings.");
+        }
+        let Ok(file) = self.blobs.file(&note.audio.sha256) else {
+            return wait("The recording is missing.");
+        };
+        let _ = self
+            .lock_store()
+            .set_voice_state(id, VoiceState::Transcribing, None, &[], None);
+        let result = speech::transcribe(&self.paths, &file, note.duration_ms);
+        let store = self.lock_store();
+        let _ = match result {
+            Ok(t) => store.set_voice_state(
+                id,
+                VoiceState::Done,
+                Some(&t.language),
+                &t.segments,
+                Some(&t.engine),
+            ),
+            Err(e) => {
+                log(&self.paths, &format!("voice note {id}: {e}"));
+                store.set_voice_state(id, VoiceState::Failed, None, &[], Some(&e))
+            }
+        };
+    }
+
+    /// Appends a chunk to an upload in `uploads/`; the last one becomes a blob.
+    fn upload(&self, chunk: UploadChunk) -> Result<Option<BlobRef>, ProtocolError> {
+        const MAX_UPLOAD: u64 = 512 * 1024 * 1024;
+        let id_ok = chunk.upload.len() == 36
+            && chunk
+                .upload
+                .bytes()
+                .all(|b| b.is_ascii_hexdigit() || b == b'-');
+        if !id_ok {
+            return Err(bad("the upload ID must be a UUID"));
+        }
+        if !matches!(chunk.media_type.as_str(), "audio/wav" | "application/json") {
+            return Err(bad("Lens takes WAV audio and JSON uploads only"));
+        }
+        let data = BASE64
+            .decode(chunk.data.as_bytes())
+            .map_err(|e| bad(format!("the chunk is not base64: {e}")))?;
+        let dir = self.paths.data.join("uploads");
+        std::fs::create_dir_all(&dir).map_err(storage)?;
+        let part = dir.join(&chunk.upload);
+        let received = std::fs::metadata(&part).map(|m| m.len()).unwrap_or(0);
+        if chunk.offset != received {
+            return Err(ProtocolError::new(
+                ErrorCode::Conflict,
+                format!("the upload has {received} bytes, not {}", chunk.offset),
+            ));
+        }
+        if received + data.len() as u64 > MAX_UPLOAD {
+            let _ = std::fs::remove_file(&part);
+            return Err(ProtocolError::new(
+                ErrorCode::TooLarge,
+                "uploads stop at 512 MiB",
+            ));
+        }
+        {
+            use std::io::Write;
+            let mut file = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&part)
+                .map_err(storage)?;
+            file.write_all(&data).map_err(storage)?;
+        }
+        if !chunk.done {
+            return Ok(None);
+        }
+        self.blobs
+            .put_file(&part, &chunk.media_type)
+            .map(Some)
+            .map_err(storage)
+    }
+
     fn lock_store(&self) -> std::sync::MutexGuard<'_, Store> {
         self.store
             .lock()
@@ -788,6 +1011,27 @@ fn restart_soon(paths: &Paths) {
 }
 
 /// Checks for updates an hour after start and then daily; installs them when the person allows it.
+/// One worker transcribes voice notes in order; a GPU runs one model at a time anyway.
+fn start_transcription(daemon: Arc<Daemon>) {
+    let (queue, jobs) = std::sync::mpsc::channel::<i64>();
+    let _ = daemon.speech_queue.set(queue);
+    let _ = daemon.me.set(Arc::downgrade(&daemon));
+    if let Ok(waiting) = daemon.lock_store().untranscribed_voice_notes() {
+        for id in waiting {
+            daemon.queue_transcription(id);
+        }
+    }
+    let worker = Arc::downgrade(&daemon);
+    std::thread::spawn(move || {
+        for id in jobs {
+            match worker.upgrade() {
+                Some(daemon) => daemon.transcribe(id),
+                None => break,
+            }
+        }
+    });
+}
+
 fn schedule_updates(daemon: Arc<Daemon>) {
     std::thread::spawn(move || {
         std::thread::sleep(std::time::Duration::from_secs(3600));

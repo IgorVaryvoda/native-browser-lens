@@ -9,6 +9,9 @@ cargo fmt --check
 cargo clippy --all-targets --locked -- -D warnings
 scripts/cross-clippy.sh
 cargo test --locked   # also regenerates extension/src/protocol; CI checks it is committed
+# The speech program builds whisper.cpp (C++, needs cmake); it is not part of cross-clippy.
+cargo clippy -p lens-speech --all-targets --locked -- -D warnings
+cargo test -p lens-speech --locked
 
 cd extension
 pnpm compile

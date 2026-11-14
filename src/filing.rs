@@ -341,6 +341,7 @@ mod tests {
                 findings: vec!["HTTP 500 from https://shop.test/api".into()],
                 marks: vec![],
             }],
+            voice: vec![],
         };
         (review, blobs)
     }

@@ -115,8 +115,140 @@ pub enum Request {
         offset: u64,
         length: u32,
     },
+    /// Appends one chunk to an upload; the last chunk stores the whole file as a blob. Uploads
+    /// carry what does not fit one request: voice recordings, long DOM recordings.
+    UploadChunk(UploadChunk),
+    /// Adds a recorded voice note to an observation and queues its transcription.
+    AddVoiceNote(NewVoiceNote),
+    ListVoiceNotes {
+        #[ts(type = "number")]
+        observation: i64,
+    },
+    DeleteVoiceNote {
+        #[ts(type = "number")]
+        id: i64,
+    },
+    /// Whether transcription is ready: the speech model, and the engine that runs it.
+    SpeechStatus,
+    /// Downloads the speech models (once, about 575 MB), then transcribes waiting voice notes.
+    InstallSpeech,
     /// Ends the daemon after the reply (updates, tests). The next connection starts a new one.
     Shutdown,
+}
+
+#[derive(Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct UploadChunk {
+    /// A UUID the client chose for this upload.
+    pub upload: String,
+    /// Where this chunk starts; it must equal the bytes received so far.
+    #[ts(type = "number")]
+    pub offset: u64,
+    /// Base64.
+    pub data: String,
+    /// The last chunk: the daemon stores the file and replies with its blob.
+    pub done: bool,
+    pub media_type: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct NewVoiceNote {
+    #[ts(type = "number")]
+    pub observation: i64,
+    /// When the recording began, in Unix milliseconds: segment times are relative to it.
+    #[ts(type = "number")]
+    pub started_at: i64,
+    /// A 16 kHz mono 16-bit WAV from UploadChunk.
+    pub audio: BlobRef,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct VoiceNote {
+    #[ts(type = "number")]
+    pub id: i64,
+    #[ts(type = "number")]
+    pub observation: i64,
+    #[ts(type = "number")]
+    pub started_at: i64,
+    #[ts(type = "number")]
+    pub duration_ms: i64,
+    pub audio: BlobRef,
+    pub state: VoiceState,
+    pub language: Option<String>,
+    pub segments: Vec<VoiceSegment>,
+    /// Why the transcription failed, or what it waits for.
+    pub detail: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum VoiceState {
+    /// Waiting for the speech model or for its turn.
+    Waiting,
+    Transcribing,
+    Done,
+    Failed,
+}
+
+/// A stretch of speech, in milliseconds from the start of the recording.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct VoiceSegment {
+    #[ts(type = "number")]
+    pub start_ms: i64,
+    #[ts(type = "number")]
+    pub end_ms: i64,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct SpeechStatus {
+    pub model: ModelState,
+    /// The engines found next to Lens, best first, such as `GPU (Vulkan)` and `CPU`.
+    pub engines: Vec<String>,
+    /// The model's name, for the settings page.
+    pub model_name: String,
+    #[ts(type = "number")]
+    pub download_bytes: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(tag = "state", rename_all = "camelCase")]
+#[ts(export)]
+pub enum ModelState {
+    Missing,
+    Downloading {
+        #[ts(type = "number")]
+        received: u64,
+        #[ts(type = "number")]
+        total: u64,
+    },
+    Ready,
+    Failed {
+        reason: String,
+    },
+}
+
+/// A voice note as a review shares it: the transcript only. The recording stays on this computer.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ReviewVoice {
+    #[ts(type = "number")]
+    pub started_at: i64,
+    #[ts(type = "number")]
+    pub duration_ms: i64,
+    pub language: Option<String>,
+    pub segments: Vec<VoiceSegment>,
 }
 
 #[derive(Debug, Serialize, Deserialize, TS)]
@@ -158,6 +290,10 @@ pub enum Reply {
     Done,
     Setup(Box<SetupStatus>),
     Updates(UpdateState),
+    Uploaded(Option<BlobRef>),
+    VoiceNote(VoiceNote),
+    VoiceNotes(Vec<VoiceNote>),
+    Speech(SpeechStatus),
     Suggestion(crate::investigate::Suggestion),
     Stopping,
 }
@@ -196,6 +332,9 @@ pub struct Review {
     pub title: String,
     pub notes: String,
     pub items: Vec<ReviewItem>,
+    /// The person's transcribed voice notes, oldest first.
+    #[serde(default)]
+    pub voice: Vec<ReviewVoice>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]

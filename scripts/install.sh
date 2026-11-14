@@ -53,6 +53,13 @@ mkdir -p "$bin_dir"
 # Replace through a rename, so a running daemon keeps its old file until it restarts.
 install -m 0755 "$work/sirv-lens-$version-$target/lens" "$bin_dir/.lens.new"
 mv -f "$bin_dir/.lens.new" "$bin_dir/lens"
+# The speech programs for voice notes, where the release builds them for this computer.
+for program in lens-speech lens-speech-gpu; do
+  if [ -f "$work/sirv-lens-$version-$target/$program" ]; then
+    install -m 0755 "$work/sirv-lens-$version-$target/$program" "$bin_dir/.$program.new"
+    mv -f "$bin_dir/.$program.new" "$bin_dir/$program"
+  fi
+done
 "$bin_dir/lens" stop >/dev/null 2>&1 || true
 
 # The extension, unpacked in a stable folder for Load unpacked until the store listings exist.

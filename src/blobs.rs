@@ -51,6 +51,49 @@ impl Blobs {
         Ok((chunk, total))
     }
 
+    /// Moves a finished file into the store. The file is hashed as it is read, so a large
+    /// recording never has to fit in memory.
+    pub fn put_file(&self, file: &std::path::Path, media_type: &str) -> io::Result<BlobRef> {
+        let mut hasher = Sha256::new();
+        let mut reader = std::fs::File::open(file)?;
+        let mut buffer = vec![0; 1 << 20];
+        let mut size = 0u64;
+        loop {
+            let n = reader.read(&mut buffer)?;
+            if n == 0 {
+                break;
+            }
+            hasher.update(&buffer[..n]);
+            size += n as u64;
+        }
+        let sha256: String = hasher
+            .finalize()
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        let path = self.path(&sha256)?;
+        if path.exists() {
+            std::fs::remove_file(file)?;
+        } else {
+            std::fs::create_dir_all(path.parent().expect("blob path has a folder"))?;
+            if std::fs::rename(file, &path).is_err() {
+                // Another volume: copy, then remove.
+                std::fs::copy(file, &path)?;
+                std::fs::remove_file(file)?;
+            }
+        }
+        Ok(BlobRef {
+            sha256,
+            size,
+            media_type: media_type.into(),
+        })
+    }
+
+    /// Where a blob's file is, for a program that reads it directly.
+    pub fn file(&self, sha256: &str) -> io::Result<PathBuf> {
+        self.path(sha256)
+    }
+
     pub fn read_all(&self, sha256: &str) -> io::Result<Vec<u8>> {
         std::fs::read(self.path(sha256)?)
     }

@@ -123,10 +123,25 @@ impl LensMcp {
                 })
             })
             .collect();
+        let voice: Vec<_> = review
+            .voice
+            .iter()
+            .enumerate()
+            .map(|(index, note)| {
+                serde_json::json!({
+                    "file": format!("voice-{}.txt", index + 1),
+                    "startedAt": note.started_at,
+                    "language": note.language,
+                    "transcript": crate::export::voice_transcript(note),
+                })
+            })
+            .collect();
         let text = serde_json::json!({
             "review": review.id,
             "revision": review.revision,
             "notesByThePerson": review.notes,
+            // Transcribed on the person's computer; their words, placed in each capture's timeline.
+            "voiceNotesByThePerson": voice,
             // The title starts as the page title unless the person changed it.
             "title": review.title,
             "captures": captures,
@@ -149,6 +164,17 @@ impl LensMcp {
         Parameters(FileArgument { review, file }): Parameters<FileArgument>,
     ) -> Result<CallToolResult, ErrorData> {
         let found = self.review(review)?;
+        if let Some(note) = file
+            .strip_prefix("voice-")
+            .and_then(|rest| rest.strip_suffix(".txt"))
+            .and_then(|n| n.parse::<usize>().ok())
+            .and_then(|n| n.checked_sub(1))
+            .and_then(|i| found.voice.get(i))
+        {
+            return Ok(CallToolResult::success(vec![ContentBlock::text(
+                crate::export::voice_transcript(note),
+            )]));
+        }
         let (n, kind) = parse_file(&file)
             .ok_or_else(|| failure(format!("{file:?} is not a file of this review")))?;
         let item = found
@@ -182,7 +208,7 @@ impl LensMcp {
             )]));
         }
         let bytes = if generated {
-            crate::export::reproduction(item, n, crate::repro::parse(&bytes).as_ref())
+            crate::export::reproduction(item, n, crate::repro::parse(&bytes).as_ref(), &found.voice)
                 .into_iter()
                 .find(|(name, _)| *name == file)
                 .map(|(_, contents)| contents)

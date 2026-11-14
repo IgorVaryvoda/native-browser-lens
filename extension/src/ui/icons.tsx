@@ -19,6 +19,10 @@ import {
   SparklesIcon,
   TaskDone02Icon,
   ViewOffSlashIcon,
+  Mic01Icon,
+  StopCircleIcon,
+  Delete02Icon,
+  NoteAddIcon,
 } from '@hugeicons/core-free-icons';
 
 /** Studio's icon set (Hugeicons) at Studio's 1.5px stroke. */
@@ -55,6 +59,10 @@ export const FileIcon = make(TaskDone02Icon);
 export const LinkIcon = make(LinkSquare02Icon);
 export const MissingImageIcon = make(ImageNotFound01Icon);
 export const EraseIcon = make(EraserIcon);
+export const MicIcon = make(Mic01Icon);
+export const StopIcon = make(StopCircleIcon);
+export const DeleteIcon = make(Delete02Icon);
+export const AddNoteIcon = make(NoteAddIcon);
 
 /** The Lens logo: viewfinder corners around a lens. It takes the color of `.mark`. */
 export function LensMark() {

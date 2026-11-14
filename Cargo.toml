@@ -1,3 +1,6 @@
+[workspace]
+members = [".", "speech"]
+
 [package]
 name = "lens"
 version = "0.1.0"

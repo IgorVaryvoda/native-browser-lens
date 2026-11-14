@@ -165,6 +165,14 @@ pub fn install(paths: &Paths, manifest: &Manifest) -> Result<(), String> {
         replace(&executable.with_file_name(name), &bytes)
             .map_err(|e| format!("cannot replace {name}: {e}"))?;
     }
+    // The speech programs, where the release builds them for this computer.
+    for name in SPEECH_PROGRAMS {
+        let name = format!("{name}{}", std::env::consts::EXE_SUFFIX);
+        if let Ok(bytes) = extract(&archive, &asset.file, &name) {
+            replace(&executable.with_file_name(&name), &bytes)
+                .map_err(|e| format!("cannot replace {name}: {e}"))?;
+        }
+    }
     if let Some(extension) = &manifest.extension {
         let folder = paths.data.join("extension");
         if folder.is_dir() {
@@ -241,10 +249,17 @@ fn unpack_extension(package: &[u8], folder: &Path) -> io::Result<()> {
     std::fs::rename(&fresh, folder)
 }
 
+const SPEECH_PROGRAMS: [&str; 2] = ["lens-speech", "lens-speech-gpu"];
+
 /// Removes the renamed executables a Windows update leaves behind once they no longer run.
 pub fn clean_up() {
     if let Ok(executable) = std::env::current_exe() {
-        for name in ["lens.old", "lensw.old"] {
+        for name in [
+            "lens.old",
+            "lensw.old",
+            "lens-speech.old",
+            "lens-speech-gpu.old",
+        ] {
             let _ = std::fs::remove_file(executable.with_file_name(name));
         }
     }
