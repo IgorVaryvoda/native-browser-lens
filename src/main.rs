@@ -16,6 +16,7 @@ mod service;
 mod setup;
 mod shim;
 mod store;
+mod tray;
 mod update;
 mod vibeq;
 
@@ -38,6 +39,7 @@ const USAGE: &str = "Usage: lens <command>
   register           Register Lens with every installed browser (per user)
   unregister         Remove those registrations
   mcp                Serve reviewed defects to coding agents over MCP (stdio)
+  tray               Show the Lens menu-bar / tray icon
   daemon             Run the Lens daemon in the foreground
   version            Print the version";
 
@@ -126,6 +128,7 @@ fn main() -> ExitCode {
         }),
         Some("doctor") => with_paths(setup::doctor),
         Some("mcp") => with_paths(mcp::run),
+        Some("tray") => with_paths(tray::run),
         Some("stop") => with_paths(stop),
         Some("version" | "--version" | "-V") => {
             println!("lens {}", env!("CARGO_PKG_VERSION"));

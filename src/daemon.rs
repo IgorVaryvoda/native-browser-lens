@@ -82,6 +82,7 @@ pub fn run(paths: &Paths, service: bool) -> std::io::Result<()> {
     crate::update::clean_up();
     if service {
         schedule_updates(daemon.clone());
+        crate::tray::spawn(paths);
     }
     let listener = ipc::listen(paths).map_err(|e| {
         std::io::Error::new(
@@ -197,6 +198,11 @@ impl Daemon {
                 protocol: PROTOCOL_VERSION,
                 data_dir: self.data_dir.clone(),
                 secret_store: secrets::status(),
+                paused: store
+                    .setting("collection.paused")
+                    .map_err(storage)?
+                    .as_deref()
+                    == Some("true"),
             }),
             Request::CreateObservation { title, url } => {
                 let title = title.trim();
@@ -440,6 +446,12 @@ impl Daemon {
                 };
                 status.steps = crate::setup::steps(&status, &self.paths);
                 Reply::Setup(Box::new(status))
+            }
+            Request::SetPaused { paused } => {
+                store
+                    .set_setting("collection.paused", if paused { "true" } else { "false" })
+                    .map_err(storage)?;
+                Reply::Done
             }
             Request::GetUpdates => Reply::Updates(self.update_state(&store)?),
             Request::SetAutomaticUpdates { enabled } => {

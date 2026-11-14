@@ -21,6 +21,14 @@ impl Client {
         })
     }
 
+    /// Connects only to a daemon that already runs.
+    pub fn attach(paths: &Paths) -> io::Result<Self> {
+        Ok(Self {
+            stream: crate::ipc::connect(paths)?,
+            next: 1,
+        })
+    }
+
     pub fn call(&mut self, request: Request) -> Result<Reply, String> {
         let id = self.next;
         self.next += 1;

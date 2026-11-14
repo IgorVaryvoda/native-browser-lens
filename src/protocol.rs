@@ -70,6 +70,10 @@ pub enum Request {
     Announce(ClientInfo),
     /// Every setup step, checked against the real state: service, browsers, extensions, sites.
     SetupStatus,
+    /// Pauses or resumes evidence collection in every browser.
+    SetPaused {
+        paused: bool,
+    },
     /// The update state: this version, the newest known, and whether updates install by themselves.
     GetUpdates,
     SetAutomaticUpdates {
@@ -551,6 +555,8 @@ pub struct Hello {
     pub protocol: u32,
     pub data_dir: String,
     pub secret_store: SecretStoreStatus,
+    /// Collection is paused from the Lens menu: no tab collects until it resumes.
+    pub paused: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, TS)]
