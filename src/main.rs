@@ -4,6 +4,7 @@ mod daemon;
 mod export;
 mod filing;
 mod framing;
+mod investigate;
 mod ipc;
 mod mcp;
 mod paths;

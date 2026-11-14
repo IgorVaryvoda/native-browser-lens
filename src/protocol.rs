@@ -66,6 +66,14 @@ pub enum Request {
         #[ts(type = "number")]
         review: i64,
     },
+    /// Which agent CLIs are installed and signed in.
+    ListAgents,
+    /// A draft report from Codex or Claude Code over one frozen review. Nothing is saved.
+    Investigate {
+        #[ts(type = "number")]
+        review: i64,
+        agent: crate::investigate::Agent,
+    },
     /// Writes a review to a new folder in Downloads.
     ExportReview {
         #[ts(type = "number")]
@@ -131,6 +139,8 @@ pub enum Reply {
     VibeQ(VibeQSettings),
     Members(Vec<crate::vibeq::Member>),
     Filing(Filing),
+    Agents(Vec<crate::investigate::AgentInfo>),
+    Suggestion(crate::investigate::Suggestion),
     Stopping,
 }
 

@@ -7,11 +7,7 @@ cd "$(dirname "$0")/.."
 
 cargo fmt --check
 cargo clippy --all-targets --locked -- -D warnings
-cargo test --locked
-git diff --exit-code -- extension/src/protocol || {
-  echo "The generated TypeScript protocol changed: commit it." >&2
-  exit 1
-}
+cargo test --locked   # also regenerates extension/src/protocol; CI checks it is committed
 
 cd extension
 pnpm compile

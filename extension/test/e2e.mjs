@@ -236,7 +236,8 @@ try {
   await settings.goto(`chrome-extension://${extensionId}/options.html`);
   await settings.getByLabel('VibeQ address').fill(`http://127.0.0.1:${fakeVibeq.address().port}`);
   await settings.getByRole('button', { name: 'Save' }).click();
-  await settings.getByRole('status').filter({ hasText: 'Saved' }).waitFor({ timeout: 15_000 });
+  await settings.getByRole('status').filter({ hasText: 'Saved' }).or(settings.getByRole('alert')).waitFor({ timeout: 15_000 });
+  if (await settings.getByRole('alert').isVisible()) throw new Error(`settings: ${await settings.getByRole('alert').textContent()}`);
   await review.reload();
   await review.getByLabel(/I checked every/).check();
   await review.getByRole('button', { name: 'Create review' }).click();

@@ -6,7 +6,7 @@ use crate::paths::Paths;
 use crate::protocol::*;
 use crate::store::{CaptureRow, Store, Updated};
 use crate::vibeq::{self, Client};
-use crate::{export, filing, ipc, render, secrets};
+use crate::{export, filing, investigate, ipc, render, secrets};
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use interprocess::local_socket::{Stream, prelude::*};
@@ -20,6 +20,7 @@ pub struct Daemon {
     data_dir: String,
     downloads: std::path::PathBuf,
     filings: std::path::PathBuf,
+    notebook: std::path::PathBuf,
 }
 
 const TOKEN_ACCOUNT: &str = "vibeq-token";
@@ -140,6 +141,7 @@ impl Daemon {
             data_dir: paths.data.display().to_string(),
             downloads: paths.downloads(),
             filings: paths.filings(),
+            notebook: paths.data.clone(),
         }
     }
 
@@ -377,6 +379,29 @@ impl Daemon {
                             items,
                         })
                         .map_err(storage)?,
+                )
+            }
+            Request::ListAgents => {
+                drop(store);
+                Reply::Agents(
+                    [investigate::Agent::Codex, investigate::Agent::Claude]
+                        .into_iter()
+                        .map(|agent| investigate::AgentInfo {
+                            agent,
+                            state: investigate::status(agent),
+                        })
+                        .collect(),
+                )
+            }
+            Request::Investigate { review, agent } => {
+                let review = store
+                    .get_review(review)
+                    .map_err(storage)?
+                    .ok_or_else(|| not_found("no such review"))?;
+                drop(store);
+                Reply::Suggestion(
+                    investigate::investigate(agent, &review, &self.blobs, &self.notebook)
+                        .map_err(remote)?,
                 )
             }
             Request::ListReviews => Reply::Reviews(store.list_reviews().map_err(storage)?),

@@ -42,7 +42,8 @@ trap 'rm -rf "$work"' EXIT
 echo "Downloading Lens $version for $target"
 curl -fsSL -o "$work/$asset" "$base/$asset" || die "cannot download $asset"
 curl -fsSL -o "$work/SHA256SUMS" "$base/SHA256SUMS" || die "cannot download SHA256SUMS"
-expected=$(grep " $asset\$" "$work/SHA256SUMS" | cut -d' ' -f1)
+# "hash  file" or "hash *file" (binary mode), depending on the tool that wrote it.
+expected=$(awk -v asset="$asset" '{ name = $2; sub(/^\*/, "", name); if (name == asset) print $1 }' "$work/SHA256SUMS")
 [ -n "$expected" ] || die "SHA256SUMS does not list $asset"
 [ "$(sum "$work/$asset")" = "$expected" ] || die "the download does not match SHA256SUMS; nothing was installed"
 

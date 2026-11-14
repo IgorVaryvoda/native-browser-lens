@@ -27,3 +27,9 @@
   display: flex;
   gap: 8px;
 }
+.review .draft pre {
+  white-space: pre-wrap;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 12px;
+}

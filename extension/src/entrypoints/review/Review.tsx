@@ -6,6 +6,9 @@ import type { Review as FrozenReview } from '@/protocol/Review';
 import type { BlobRef } from '@/protocol/BlobRef';
 import type { Filing } from '@/protocol/Filing';
 import type { Member } from '@/protocol/Member';
+import type { AgentInfo } from '@/protocol/AgentInfo';
+import type { Agent } from '@/protocol/Agent';
+import type { Suggestion } from '@/protocol/Suggestion';
 
 /**
  * Chooses what may leave the notebook. The person confirms the screenshots, the daemon freezes the
@@ -24,6 +27,10 @@ export function Review({ observation: id }: { observation: number }) {
   const [assignee, setAssignee] = useState('');
   const [filing, setFiling] = useState<Filing | null>(null);
   const [sending, setSending] = useState(false);
+  const [agents, setAgents] = useState<AgentInfo[]>([]);
+  const [drafting, setDrafting] = useState<Agent | null>(null);
+  const [suggestion, setSuggestion] = useState<Suggestion | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
 
   useEffect(() => {
@@ -80,7 +87,42 @@ export function Review({ observation: id }: { observation: number }) {
       .request({ method: 'listMembers' })
       .then(setMembers)
       .catch(() => setMembers([]));
+    client
+      .request({ method: 'listAgents' })
+      .then(setAgents)
+      .catch(() => setAgents([]));
   }, [client, review]);
+
+  async function draft(agent: Agent) {
+    if (!review) return;
+    setDrafting(agent);
+    try {
+      setSuggestion(await client.request({ method: 'investigate', params: { review: review.id, agent } }));
+      setProblem(null);
+    } catch (error) {
+      setProblem((error as Error).message);
+    } finally {
+      setDrafting(null);
+    }
+  }
+
+  /** The draft replaces the notes: a new revision, so this review no longer matches and is redone. */
+  async function useDraft() {
+    if (!observation || !suggestion) return;
+    try {
+      const saved = await client.request({
+        method: 'updateObservation',
+        params: { id: observation.id, revision: observation.revision, title: observation.title, notes: suggestion.markdown },
+      });
+      setObservation(saved);
+      setReview(null);
+      setSuggestion(null);
+      setChecked(false);
+      setNotice('Your notes now hold the draft. Check them, then create a new review before you file.');
+    } catch (error) {
+      setProblem((error as Error).message);
+    }
+  }
 
   async function exportReview() {
     if (!review) return;
@@ -148,6 +190,35 @@ export function Review({ observation: id }: { observation: number }) {
               Export to Downloads
             </button>
           </div>
+          {agents.some((a) => a.state === 'ready') && (
+            <div className="actions">
+              {agents
+                .filter((a) => a.state === 'ready')
+                .map((a) => (
+                  <button key={a.agent} type="button" onClick={() => void draft(a.agent)} disabled={drafting !== null}>
+                    {drafting === a.agent ? 'Drafting…' : `Draft the report with ${a.agent === 'codex' ? 'Codex' : 'Claude'}`}
+                  </button>
+                ))}
+            </div>
+          )}
+          {suggestion && (
+            <section aria-label="Draft report" className="draft">
+              <h2>Draft from {suggestion.agent === 'codex' ? 'Codex' : 'Claude'} (a suggestion; nothing is saved)</h2>
+              <pre>{suggestion.markdown}</pre>
+              {suggestion.findings.length > 0 && (
+                <ul>
+                  {suggestion.findings.map((f, n) => (
+                    <li key={n}>
+                      <strong>{f.kind}:</strong> {f.text}
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <button type="button" onClick={useDraft}>
+                Use as my notes
+              </button>
+            </section>
+          )}
           {filing?.taskUrl && (
             <p role="status" aria-label="Filing">
               Filed:{' '}
@@ -211,6 +282,7 @@ export function Review({ observation: id }: { observation: number }) {
           </div>
         </>
       )}
+      {notice && <p role="status">{notice}</p>}
       {problem && <p role="alert">{problem}</p>}
     </main>
   );

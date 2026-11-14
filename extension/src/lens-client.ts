@@ -29,6 +29,8 @@ type ReplyTo = {
   listMembers: 'members';
   fileReview: 'filing';
   getFiling: 'filing';
+  listAgents: 'agents';
+  investigate: 'suggestion';
   shutdown: 'stopping';
 };
 // Every protocol method must name its reply here; a new Rust request fails this line first.

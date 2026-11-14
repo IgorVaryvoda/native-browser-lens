@@ -33,7 +33,8 @@ try {
     Write-Host "Downloading Lens $version for $target"
     Invoke-WebRequest -UseBasicParsing -Uri "$base/$asset" -OutFile "$work\$asset"
     Invoke-WebRequest -UseBasicParsing -Uri "$base/SHA256SUMS" -OutFile "$work\SHA256SUMS"
-    $line = Get-Content "$work\SHA256SUMS" | Where-Object { $_ -match " $([regex]::Escape($asset))$" }
+    # "hash  file" or "hash *file" (binary mode), depending on the tool that wrote it.
+    $line = Get-Content "$work\SHA256SUMS" | Where-Object { $_ -match " \*?$([regex]::Escape($asset))$" }
     if (-not $line) { throw "SHA256SUMS does not list $asset" }
     $expected = ($line -split ' ')[0]
     $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath "$work\$asset").Hash.ToLower()
