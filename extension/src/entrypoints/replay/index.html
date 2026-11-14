@@ -6,10 +6,13 @@
     <title>Lens · Replay</title>
   </head>
   <body>
-    <main class="replay">
-      <h1 id="title">Replay</h1>
-      <p role="status" class="mode" id="status">Loading…</p>
-      <div id="player"></div>
+    <main class="page replay">
+      <header class="page-head">
+        <span class="pill" data-tone="info">Replay</span>
+        <h1 id="title">Replay</h1>
+        <p role="status" class="muted small" id="status">Loading…</p>
+      </header>
+      <div id="player" class="player"></div>
     </main>
     <script type="module" src="./main.ts"></script>
   </body>

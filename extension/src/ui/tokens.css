@@ -1,0 +1,450 @@
+/* Sirv design system tokens, vendored from @sirv/sid-kit 0.34.8 (packages/sid-kit/src/styles/tokens.css,
+   the :root and .dark blocks). Lens follows Sirv AI Studio's look; refresh this file from sid-kit, never
+   edit tokens here. */
+:root {
+  color-scheme: light;
+  /* @tokens Core | Base tokens used by primitives across surfaces, text, controls, and overlays. */
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.145 0 0);
+  --muted: oklch(0.92 0 0);
+  --muted-foreground: oklch(var(--l-muted-foreground) 0 0);
+  --on-muted: var(--on-neutral);
+  --input: oklch(0.922 0 0);
+  --ring: var(--primary);
+  --accent: var(--primary);
+  --accent-foreground: var(--primary-foreground);
+  --muted-accent-foreground: oklch(from var(--accent-foreground) var(--l-muted-foreground) calc(c * var(--c-factor-muted-foreground)) h);
+  --on-accent: var(--on-primary);
+
+  /* @tokens Coefficients | Reusable OKLCH lightness, alpha, and transform values shared by semantic token families. */
+  --l-intent: 0.6;
+  --l-intent-foreground: 0.44;
+  --c-intent-foreground: 0.18;
+  /* WCAG AA: the binding surface is --muted (#e4e4e4), the darkest of the quiet
+     backgrounds, not --sidebar. 0.535 (#6d6d6d) was tuned against a #f2f2f2
+     reading of --muted and actually measures 4.07:1 there, so the most common
+     quiet pairing in the app failed. 0.51 (#666666) gives 4.52:1 on --muted,
+     5.36:1 on --card, and 5.74:1 on white. Lightening --muted instead would
+     collapse it into --card and take the selected-row highlight with it. */
+  --l-muted-foreground: 0.51;
+  --c-factor-muted-foreground: 0.5;
+  --k-intent-hover-l: 0.9;
+  --k-intent-hover-c: 0.8;
+  --a-border: 30%;
+  --opacity-disabled: 0.4;
+  --l-card: 0.975;
+  --c-card-intent: 0.05;
+  --a-shadow-xs: 10%;
+  --a-shadow-sm: 5%;
+  --a-shadow-md: 6%;
+  --a-shadow-lg: 8%;
+  --a-shadow-xl: 10%;
+  --a-shadow-2xl: 14%;
+  --a-shadow-hairline: 50%;
+  --a-shadow-hairline-inset: 100%;
+  --shadow-hairline-ring: 0 0 0.75px 0.25px;
+
+  /* @tokens Intents | Semantic colors, readable foregrounds, and on-fill text colors used across shared UI states. */
+  /* WCAG AA: tuned for both roles, like every intent below. 0.56 (#747474)
+     cleared white-on-fill at 4.65:1 but read at 4.36:1 as `text-neutral` on
+     --card. 0.55 (#717171) measures 4.88:1 with white and 4.56:1 on --card.
+     Dark-mode neutral (0.50 0 0) already measures ~6.0:1. */
+  --neutral: oklch(0.55 0 0);
+  --neutral-hover: oklch(from var(--neutral) calc(l * var(--k-intent-hover-l)) calc(c * var(--k-intent-hover-c)) h);
+  --neutral-foreground: oklch(var(--l-intent-foreground) 0 0);
+  --muted-neutral-foreground: oklch(from var(--neutral-foreground) var(--l-muted-foreground) calc(c * var(--c-factor-muted-foreground)) h);
+  --on-neutral: oklch(1 0 0);
+  /* WCAG AA: this token is read both as a fill (white on-primary copy) and as
+     text (`text-primary` links on quiet surfaces), so it has to clear 4.5:1 on
+     the darkest surface it lands on — --muted (#e4e4e4), not white. 0.575
+     (#006bff) cleared white at 4.62:1 but left text at 4.31:1 on --card; 0.545
+     fixed --card and still measured 4.00:1 on --muted. 0.51 (#0055f0) measures
+     5.90:1 on white, 5.51:1 on --card, 5.41:1 on --card-primary, and 4.64:1 on
+     --muted, so the fill side gains headroom rather than trading it away.
+     Dark-mode primary (0.56 0.21 258) is a separate declaration. */
+  --primary: oklch(0.51 0.25 258);
+  --primary-hover: oklch(from var(--primary) calc(l * var(--k-intent-hover-l)) calc(c * var(--k-intent-hover-c)) h);
+  --primary-foreground: oklch(var(--l-intent-foreground) var(--c-intent-foreground) 258);
+  --muted-primary-foreground: oklch(from var(--primary-foreground) var(--l-muted-foreground) calc(c * var(--c-factor-muted-foreground)) h);
+  --on-primary: oklch(1 0 0);
+  /* WCAG AA: 0.570 (#e30029) puts white on-danger copy at 4.89:1 and reads 4.56:1
+     as `text-danger` on --card. --l-intent (0.6) failed both. */
+  --danger: oklch(0.570 0.24 23);
+  --danger-hover: oklch(from var(--danger) calc(l * var(--k-intent-hover-l)) calc(c * var(--k-intent-hover-c)) h);
+  --danger-foreground: oklch(var(--l-intent-foreground) var(--c-intent-foreground) 23);
+  --muted-danger-foreground: oklch(from var(--danger-foreground) var(--l-muted-foreground) calc(c * var(--c-factor-muted-foreground)) h);
+  --on-danger: oklch(1 0 0);
+  --destructive: var(--danger);
+  --destructive-foreground: var(--danger-foreground);
+  --muted-destructive-foreground: var(--muted-danger-foreground);
+  --on-destructive: var(--on-danger);
+  /* WCAG AA: 0.550 (#b95100) puts white on-warning copy at 4.95:1 and reads 4.62:1
+     as `text-warning` on --card. --l-intent (0.6) failed both. */
+  --warning: oklch(0.550 0.35 92);
+  --warning-hover: oklch(from var(--warning) calc(l * var(--k-intent-hover-l)) calc(c * var(--k-intent-hover-c)) h);
+  --warning-foreground: oklch(var(--l-intent-foreground) var(--c-intent-foreground) 92);
+  --muted-warning-foreground: oklch(from var(--warning-foreground) var(--l-muted-foreground) calc(c * var(--c-factor-muted-foreground)) h);
+  --on-warning: oklch(1 0 0);
+  /* WCAG AA: 0.500 (#00840b) puts white on-success copy at 4.88:1 and reads 4.55:1
+     as `text-success` on --card. --l-intent (0.6) failed both. */
+  --success: oklch(0.500 0.23 154);
+  --success-hover: oklch(from var(--success) calc(l * var(--k-intent-hover-l)) calc(c * var(--k-intent-hover-c)) h);
+  --success-foreground: oklch(var(--l-intent-foreground) var(--c-intent-foreground) 156);
+  --muted-success-foreground: oklch(from var(--success-foreground) var(--l-muted-foreground) calc(c * var(--c-factor-muted-foreground)) h);
+  --on-success: oklch(1 0 0);
+  /* WCAG AA: 0.470 (#0073c5) puts white on-info copy at 4.93:1 and reads 4.60:1
+     as `text-info` on --card. --l-intent (0.6) failed both. */
+  --info: oklch(0.470 0.32 214);
+  --info-hover: oklch(from var(--info) calc(l * var(--k-intent-hover-l)) calc(c * var(--k-intent-hover-c)) h);
+  --info-foreground: oklch(var(--l-intent-foreground) var(--c-intent-foreground) 214);
+  --muted-info-foreground: oklch(from var(--info-foreground) var(--l-muted-foreground) calc(c * var(--c-factor-muted-foreground)) h);
+  --on-info: oklch(1 0 0);
+  /* WCAG AA: 0.575 (#973cef) puts white on-review copy at 4.99:1 and reads 4.66:1
+     as `text-review` on --card. --l-intent (0.6) failed both. */
+  --review: oklch(0.575 0.25 302);
+  --review-hover: oklch(from var(--review) calc(l * var(--k-intent-hover-l)) calc(c * var(--k-intent-hover-c)) h);
+  --review-foreground: oklch(var(--l-intent-foreground) var(--c-intent-foreground) 302);
+  --muted-review-foreground: oklch(from var(--review-foreground) var(--l-muted-foreground) calc(c * var(--c-factor-muted-foreground)) h);
+  --on-review: oklch(1 0 0);
+  --uploading: var(--success);
+  --uploading-foreground: var(--success-foreground);
+  --muted-uploading-foreground: var(--muted-success-foreground);
+  --on-uploading: var(--on-success);
+  --cancelled: var(--neutral);
+  --cancelled-foreground: var(--neutral-foreground);
+  --muted-cancelled-foreground: var(--muted-neutral-foreground);
+  --on-cancelled: var(--on-neutral);
+  --notification: var(--danger);
+  --notification-foreground: var(--danger-foreground);
+  --muted-notification-foreground: var(--muted-danger-foreground);
+  --on-notification: var(--on-danger);
+
+  /* @tokens Borders | Intent-aware border colors used by controls, alerts, and framed surfaces. */
+  --border-neutral: oklch(from var(--neutral) l c h / var(--a-border));
+  --border-primary: oklch(from var(--primary) l c h / var(--a-border));
+  --border-accent: oklch(from var(--accent) l c h / var(--a-border));
+  --border-danger: oklch(from var(--danger) l c h / var(--a-border));
+  --border-destructive: var(--border-danger);
+  --border-warning: oklch(from var(--warning) l c h / var(--a-border));
+  --border-success: oklch(from var(--success) l c h / var(--a-border));
+  --border-info: oklch(from var(--info) l c h / var(--a-border));
+  --border-review: oklch(from var(--review) l c h / var(--a-border));
+  --border-uploading: var(--border-success);
+  --border-cancelled: var(--border-neutral);
+  --border-notification: var(--border-danger);
+  --border: var(--border-neutral);
+  --border-subtle: oklch(from var(--border) l c h / calc(alpha * 0.5));
+
+  /* @tokens Surfaces | Base and intent-tinted surface colors for quiet UI chrome. */
+  --popover: oklch(1 0 0);
+  --card: oklch(var(--l-card) 0 0);
+  --card-neutral: oklch(var(--l-card) 0 0);
+  --card-primary: oklch(var(--l-card) var(--c-card-intent) 258);
+  --card-danger: oklch(var(--l-card) var(--c-card-intent) 23);
+  --card-destructive: var(--card-danger);
+  --card-warning: oklch(var(--l-card) var(--c-card-intent) 92);
+  --card-success: oklch(var(--l-card) var(--c-card-intent) 154);
+  --card-info: oklch(var(--l-card) var(--c-card-intent) 214);
+  --card-review: oklch(var(--l-card) var(--c-card-intent) 302);
+  --card-uploading: oklch(var(--l-card) var(--c-card-intent) 214);
+  --card-cancelled: oklch(var(--l-card) var(--c-card-intent) 49);
+  --card-notification: var(--card-danger);
+  --card-current-bg: var(--card);
+  --card-current-accent: var(--foreground);
+  --card-current-border: var(--border);
+  --card-current-foreground: var(--foreground);
+  --card-current-muted-foreground: var(--muted-foreground);
+  --card-current-on-accent: var(--foreground);
+  --item-current-bg: var(--muted);
+  --item-current-accent: var(--foreground);
+  --item-current-border: var(--border);
+  --item-current-foreground: var(--foreground);
+  --item-current-muted-foreground: var(--muted-foreground);
+  --item-current-on-accent: var(--foreground);
+  --surface-bg: var(--background);
+  --surface-foreground: var(--foreground);
+  --surface-muted-foreground: var(--muted-foreground);
+  --surface-border: var(--border);
+  --surface-accent: var(--accent);
+  --surface-on-accent: var(--on-accent);
+  --surface-padding: 0px;
+  --surface-padding-panel: 1rem;
+  --surface-padding-popover: 0.75rem;
+  --surface-padding-menu: 0.375rem;
+  --alpha-grid-size-2xs: 2px;
+  --alpha-grid-size-xs: 4px;
+  --alpha-grid-size-sm: 6px;
+  --alpha-grid-size-md: 8px;
+  --alpha-grid-size-lg: 10px;
+  --alpha-grid-size-xl: 12px;
+  --alpha-grid-size-2xl: 14px;
+  --alpha-grid-lightness-a-delta: -0.03;
+  --alpha-grid-lightness-b-delta: 0.0025;
+
+  /* @tokens Sidebar | Workspace navigation tokens wired to the shared sidebar primitives. */
+  --sidebar: var(--card);
+  --on-sidebar: var(--foreground);
+  --sidebar-primary: var(--primary);
+  --on-sidebar-primary: var(--on-primary);
+  --sidebar-accent: oklch(0.2 0 0);
+  --on-sidebar-accent: oklch(1 0 0);
+  --sidebar-border: var(--border);
+  --sidebar-ring: var(--ring);
+  --stark: var(--sidebar-accent);
+  --on-stark: var(--on-sidebar-accent);
+
+  /* @tokens Charts | Chart palette tokens exposed through the shared Tailwind theme. */
+  --chart-1: oklch(0.789 0.154 211.53);
+  --chart-2: oklch(0.792 0.209 151.711);
+  --chart-3: oklch(0.777 0.152 181.912);
+  --chart-4: oklch(0.673 0.182 276.935);
+  --chart-5: oklch(0.714 0.203 305.504);
+
+  /* @tokens Extras | Overlay, code, and accent helper tokens used by specialised chrome. */
+  --overlay: oklch(0 0 0 / 30%);
+  --scrollbar-thumb: oklch(0 0 0 / 40%);
+  --scrollbar-thumb-hover: oklch(0 0 0 / 55%);
+  --scrollbar-track: oklch(0 0 0 / 0%);
+  --scrollbar-track-hover: oklch(0 0 0 / 5%);
+  --code-foreground: oklch(0.510 0.187 33.1);
+  --code-border: oklch(from var(--border) l c h / 5%);
+  --accent-secondary: oklch(0.714 0.203 305.504);
+  --accent-gradient: linear-gradient(135deg, var(--accent) 0%, var(--accent-secondary) 100%);
+  --accent-glow: var(--primary);
+  --danger-glow: var(--danger);
+  --brand-sirv: #327bba;
+
+  /* @tokens Specular | Rim light colours for the specular Button variant. */
+  --specular-line: var(--foreground);
+  --specular-base: var(--muted-foreground);
+
+  /* @tokens Shadows | Elevation tokens, semantic edge chrome, and composed surface shadows. */
+  --app-shadow-xs: 0px 3px 8px -4px rgb(0 0 0 / var(--a-shadow-xs));
+  --app-shadow-sm: 0px 10px 14px -4px rgb(0 0 0 / var(--a-shadow-sm));
+  --app-shadow-md: 0px 14px 20px -6px rgb(0 0 0 / var(--a-shadow-md));
+  --app-shadow-lg: 0px 18px 28px -8px rgb(0 0 0 / var(--a-shadow-lg));
+  --app-shadow-xl: 0px 24px 40px -10px rgb(0 0 0 / var(--a-shadow-xl));
+  --app-shadow-2xl: 0px 32px 56px -12px rgb(0 0 0 / var(--a-shadow-2xl));
+  --app-shadow-hairline-neutral: var(--shadow-hairline-ring) oklch(from var(--neutral) l c h / var(--a-shadow-hairline)), 0 0 0.75px 0.25px oklch(1 0 0 / var(--a-shadow-hairline-inset)) inset;
+  --app-shadow-hairline-primary: var(--shadow-hairline-ring) oklch(from var(--primary) l c h / var(--a-shadow-hairline)), 0 0 0.75px 0.25px oklch(1 0 0 / var(--a-shadow-hairline-inset)) inset;
+  --app-shadow-hairline-accent: var(--app-shadow-hairline-primary);
+  --app-shadow-hairline-danger: var(--shadow-hairline-ring) oklch(from var(--danger) l c h / var(--a-shadow-hairline)), 0 0 0.75px 0.25px oklch(1 0 0 / var(--a-shadow-hairline-inset)) inset;
+  --app-shadow-hairline-destructive: var(--app-shadow-hairline-danger);
+  --app-shadow-hairline-warning: var(--shadow-hairline-ring) oklch(from var(--warning) l c h / var(--a-shadow-hairline)), 0 0 0.75px 0.25px oklch(1 0 0 / var(--a-shadow-hairline-inset)) inset;
+  --app-shadow-hairline-success: var(--shadow-hairline-ring) oklch(from var(--success) l c h / var(--a-shadow-hairline)), 0 0 0.75px 0.25px oklch(1 0 0 / var(--a-shadow-hairline-inset)) inset;
+  --app-shadow-hairline-info: var(--shadow-hairline-ring) oklch(from var(--info) l c h / var(--a-shadow-hairline)), 0 0 0.75px 0.25px oklch(1 0 0 / var(--a-shadow-hairline-inset)) inset;
+  --app-shadow-hairline-review: var(--shadow-hairline-ring) oklch(from var(--review) l c h / var(--a-shadow-hairline)), 0 0 0.75px 0.25px oklch(1 0 0 / var(--a-shadow-hairline-inset)) inset;
+  --app-shadow-hairline-uploading: var(--app-shadow-hairline-success);
+  --app-shadow-hairline-cancelled: var(--app-shadow-hairline-neutral);
+  --app-shadow-hairline-notification: var(--app-shadow-hairline-danger);
+  --app-shadow-hairline: var(--app-shadow-hairline-neutral);
+  /* Card edge: bezel by default, a dark outer ring and a light inner line. */
+  --app-card-edge-ring: 0 0 0 1px oklch(0 0 0 / 10%);
+  --app-card-edge-inner: oklch(1 0 0 / 70%);
+  --app-card-edge-faint: var(--shadow-hairline-ring) oklch(from var(--neutral) l c h / 15%);
+  --l-card-edge-fill-lift: 0;
+  --app-shadow-hairline-current: var(--shadow-hairline-ring) oklch(from var(--card-current-accent) l c h / var(--a-shadow-hairline)), 0 0 0.75px 0.25px oklch(1 0 0 / var(--a-shadow-hairline-inset)) inset;
+  --app-shadow-surface: var(--app-shadow-hairline), var(--app-shadow-sm);
+  --app-shadow-popover: var(--app-shadow-hairline), var(--app-shadow-lg);
+  --app-shadow-toast: var(--app-shadow-hairline), var(--app-shadow-sm);
+  --app-shadow-drag: var(--app-shadow-hairline-primary), var(--app-shadow-lg);
+  --text-shadow-legible: 0 0 2px var(--surface-bg);
+  --shadow-xs: var(--app-shadow-xs);
+  --shadow-sm: var(--app-shadow-sm);
+  --shadow-md: var(--app-shadow-md);
+  --shadow-lg: var(--app-shadow-lg);
+  --shadow-xl: var(--app-shadow-xl);
+  --shadow-2xl: var(--app-shadow-2xl);
+  --shadow-glow: 0 0 40px var(--accent-glow);
+
+  /* @tokens Motion | Shared easing curves and durations for app chrome. */
+  --ease-out: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-out-quick: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --ease-sidebar-panel: cubic-bezier(.35, 1, .66, 1.07);
+  --duration-sidebar-panel: 0.35s;
+
+  /* @tokens Radius | Base radius scale exposed through Tailwind defaults. */
+  --radius: 0.5rem;
+}
+
+.dark {
+  color-scheme: dark;
+  /* shadcn/ui base-nova dark palette (oklch) */
+  --background: oklch(0.18 0 0);
+  --foreground: oklch(0.98 0 0);
+  --alpha-grid-lightness-a-delta: 0.01;
+  --alpha-grid-lightness-b-delta: -0.01;
+  --muted: oklch(0.269 0 0);
+  --muted-foreground: oklch(var(--l-muted-foreground) 0 0);
+  --on-muted: var(--on-neutral);
+  --input: oklch(1 0 0 / 15%);
+  --ring: var(--primary);
+  --accent: var(--primary);
+  --accent-foreground: var(--primary-foreground);
+  --muted-accent-foreground: oklch(from var(--accent-foreground) var(--l-muted-foreground) calc(c * var(--c-factor-muted-foreground)) h);
+  --on-accent: var(--on-primary);
+  --l-intent: 0.56;
+  --l-intent-foreground: 0.8;
+  --c-intent-foreground: 0.18;
+  --l-muted-foreground: 0.708;
+  --c-factor-muted-foreground: 0.5;
+  --k-intent-hover-l: 1.1;
+  --k-intent-hover-c: 0.9;
+  --a-border: 30%;
+  --opacity-disabled: 0.4;
+  --l-card: 0.21;
+  --c-card-intent: 0.023;
+  --a-shadow-xs: 35%;
+  --a-shadow-sm: 40%;
+  --a-shadow-md: 50%;
+  --a-shadow-lg: 60%;
+  --a-shadow-xl: 65%;
+  --a-shadow-2xl: 72%;
+  --a-shadow-hairline: 60%;
+  --a-shadow-hairline-inset: 50%;
+  /* Dark surfaces sit close to the page background, so the sub-pixel ring the
+     light theme uses all but vanishes; dark keeps the same alpha but draws a
+     crisp 1px ring. */
+  --shadow-hairline-ring: 0 0 0 1px;
+  --neutral: oklch(0.50 0 0);
+  --neutral-hover: oklch(from var(--neutral) calc(l * var(--k-intent-hover-l)) calc(c * var(--k-intent-hover-c)) h);
+  --neutral-foreground: oklch(var(--l-intent-foreground) 0 0);
+  --muted-neutral-foreground: oklch(from var(--neutral-foreground) var(--l-muted-foreground) calc(c * var(--c-factor-muted-foreground)) h);
+  --on-neutral: oklch(1 0 0);
+  --primary: oklch(var(--l-intent) 0.21 258);
+  --primary-hover: oklch(from var(--primary) calc(l * var(--k-intent-hover-l)) calc(c * var(--k-intent-hover-c)) h);
+  --primary-foreground: oklch(var(--l-intent-foreground) var(--c-intent-foreground) 265);
+  --muted-primary-foreground: oklch(from var(--primary-foreground) var(--l-muted-foreground) calc(c * var(--c-factor-muted-foreground)) h);
+  --on-primary: oklch(1 0 0);
+  --danger: oklch(var(--l-intent) 0.22 23);
+  --danger-hover: oklch(from var(--danger) calc(l * var(--k-intent-hover-l)) calc(c * var(--k-intent-hover-c)) h);
+  --danger-foreground: oklch(var(--l-intent-foreground) 0.22 23);
+  --muted-danger-foreground: oklch(from var(--danger-foreground) var(--l-muted-foreground) calc(c * var(--c-factor-muted-foreground)) h);
+  --on-danger: oklch(1 0 0);
+  --destructive: var(--danger);
+  --destructive-foreground: var(--danger-foreground);
+  --muted-destructive-foreground: var(--muted-danger-foreground);
+  --on-destructive: var(--on-danger);
+  --warning: oklch(var(--l-intent) 0.36 92);
+  --warning-hover: oklch(from var(--warning) calc(l * var(--k-intent-hover-l)) calc(c * var(--k-intent-hover-c)) h);
+  --warning-foreground: oklch(var(--l-intent-foreground) 0.33 92);
+  --muted-warning-foreground: oklch(from var(--warning-foreground) var(--l-muted-foreground) calc(c * var(--c-factor-muted-foreground)) h);
+  --on-warning: oklch(1 0 0);
+  /* WCAG AA: dark --l-intent (0.56) left white on-success copy short;
+     0.530 (#008735) measures 4.65:1 and still reads as a fill against the page. */
+  --success: oklch(0.530 0.18 154);
+  --success-hover: oklch(from var(--success) calc(l * var(--k-intent-hover-l)) calc(c * var(--k-intent-hover-c)) h);
+  --success-foreground: oklch(var(--l-intent-foreground) 0.21 156);
+  --muted-success-foreground: oklch(from var(--success-foreground) var(--l-muted-foreground) calc(c * var(--c-factor-muted-foreground)) h);
+  --on-success: oklch(1 0 0);
+  /* WCAG AA: dark --l-intent (0.56) left white on-info copy short;
+     0.520 (#007ea7) measures 4.62:1 and still reads as a fill against the page. */
+  --info: oklch(0.520 0.18 214);
+  --info-hover: oklch(from var(--info) calc(l * var(--k-intent-hover-l)) calc(c * var(--k-intent-hover-c)) h);
+  --info-foreground: oklch(var(--l-intent-foreground) 0.16 214);
+  --muted-info-foreground: oklch(from var(--info-foreground) var(--l-muted-foreground) calc(c * var(--c-factor-muted-foreground)) h);
+  --on-info: oklch(1 0 0);
+  --review: oklch(var(--l-intent) 0.23 302);
+  --review-hover: oklch(from var(--review) calc(l * var(--k-intent-hover-l)) calc(c * var(--k-intent-hover-c)) h);
+  --review-foreground: oklch(var(--l-intent-foreground) 0.18 302);
+  --muted-review-foreground: oklch(from var(--review-foreground) var(--l-muted-foreground) calc(c * var(--c-factor-muted-foreground)) h);
+  --on-review: oklch(1 0 0);
+  --uploading: var(--success);
+  --uploading-foreground: var(--success-foreground);
+  --muted-uploading-foreground: var(--muted-success-foreground);
+  --on-uploading: var(--on-success);
+  --cancelled: var(--neutral);
+  --cancelled-foreground: var(--neutral-foreground);
+  --muted-cancelled-foreground: var(--muted-neutral-foreground);
+  --on-cancelled: var(--on-neutral);
+  --notification: var(--danger);
+  --notification-foreground: var(--danger-foreground);
+  --muted-notification-foreground: var(--muted-danger-foreground);
+  --on-notification: var(--on-danger);
+  --border-neutral: oklch(from var(--neutral) l c h / var(--a-border));
+  --border-primary: oklch(from var(--primary) l c h / var(--a-border));
+  --border-accent: oklch(from var(--accent) l c h / var(--a-border));
+  --border-danger: oklch(from var(--danger) l c h / var(--a-border));
+  --border-destructive: var(--border-danger);
+  --border-warning: oklch(from var(--warning) l c h / var(--a-border));
+  --border-success: oklch(from var(--success) l c h / var(--a-border));
+  --border-info: oklch(from var(--info) l c h / var(--a-border));
+  --border-review: oklch(from var(--review) l c h / var(--a-border));
+  --border-uploading: var(--border-success);
+  --border-cancelled: var(--border-neutral);
+  --border-notification: var(--border-danger);
+  --border: var(--border-neutral);
+  --popover: oklch(0.22 0 0);
+  --card: oklch(var(--l-card) 0 0);
+  --card-neutral: oklch(var(--l-card) 0 0);
+  --card-primary: oklch(var(--l-card) var(--c-card-intent) 258);
+  --card-danger: oklch(var(--l-card) var(--c-card-intent) 23);
+  --card-destructive: var(--card-danger);
+  --card-warning: oklch(var(--l-card) var(--c-card-intent) 92);
+  --card-success: oklch(var(--l-card) var(--c-card-intent) 154);
+  --card-info: oklch(var(--l-card) var(--c-card-intent) 214);
+  --card-review: oklch(var(--l-card) var(--c-card-intent) 302);
+  --card-uploading: oklch(var(--l-card) var(--c-card-intent) 214);
+  --card-cancelled: oklch(var(--l-card) var(--c-card-intent) 49);
+  --card-notification: var(--card-danger);
+  --sidebar: var(--card);
+  --on-sidebar: var(--foreground);
+  --sidebar-primary: var(--primary);
+  --on-sidebar-primary: var(--on-primary);
+  --sidebar-accent: oklch(0.95 0 0);
+  --on-sidebar-accent: oklch(0 0 0);
+  --sidebar-border: var(--border);
+  --sidebar-ring: var(--ring);
+  --stark: var(--sidebar-accent);
+  --on-stark: var(--on-sidebar-accent);
+  --chart-1: oklch(0.609 0.126 221.723);
+  --chart-2: oklch(0.627 0.194 149.214);
+  --chart-3: oklch(0.6 0.118 184.704);
+  --chart-4: oklch(0.511 0.262 276.966);
+  --chart-5: oklch(0.558 0.288 302.321);
+  --overlay: oklch(0 0 0 / 60%);
+  --scrollbar-thumb: oklch(1 0 0 / 40%);
+  --scrollbar-thumb-hover: oklch(1 0 0 / 55%);
+  --scrollbar-track: oklch(1 0 0 / 0%);
+  --scrollbar-track-hover: oklch(1 0 0 / 5%);
+  --code-foreground: oklch(0.779 0.169 65.5);
+  --accent-secondary: oklch(0.558 0.288 302.321);
+  --accent-glow: var(--primary);
+  --danger-glow: var(--danger);
+  --app-shadow-xs: 0 1px 2px 0 rgb(0 0 0 / var(--a-shadow-xs));
+  --app-shadow-sm: 0 2px 8px rgb(0 0 0 / var(--a-shadow-sm));
+  --app-shadow-md: 0 4px 20px rgb(0 0 0 / var(--a-shadow-md));
+  --app-shadow-lg: 0 8px 40px rgb(0 0 0 / var(--a-shadow-lg));
+  --app-shadow-xl: 0 16px 48px rgb(0 0 0 / var(--a-shadow-xl));
+  --app-shadow-2xl: 0 24px 70px rgb(0 0 0 / var(--a-shadow-2xl));
+  --app-shadow-hairline-neutral: var(--shadow-hairline-ring) oklch(from var(--neutral) l c h / var(--a-shadow-hairline)), 0 0 0.75px 0.25px oklch(0 0 0 / var(--a-shadow-hairline-inset)) inset;
+  --app-shadow-hairline-primary: var(--shadow-hairline-ring) oklch(from var(--primary) l c h / var(--a-shadow-hairline)), 0 0 0.75px 0.25px oklch(0 0 0 / var(--a-shadow-hairline-inset)) inset;
+  --app-shadow-hairline-accent: var(--app-shadow-hairline-primary);
+  --app-shadow-hairline-danger: var(--shadow-hairline-ring) oklch(from var(--danger) l c h / var(--a-shadow-hairline)), 0 0 0.75px 0.25px oklch(0 0 0 / var(--a-shadow-hairline-inset)) inset;
+  --app-shadow-hairline-destructive: var(--app-shadow-hairline-danger);
+  --app-shadow-hairline-warning: var(--shadow-hairline-ring) oklch(from var(--warning) l c h / var(--a-shadow-hairline)), 0 0 0.75px 0.25px oklch(0 0 0 / var(--a-shadow-hairline-inset)) inset;
+  --app-shadow-hairline-success: var(--shadow-hairline-ring) oklch(from var(--success) l c h / var(--a-shadow-hairline)), 0 0 0.75px 0.25px oklch(0 0 0 / var(--a-shadow-hairline-inset)) inset;
+  --app-shadow-hairline-info: var(--shadow-hairline-ring) oklch(from var(--info) l c h / var(--a-shadow-hairline)), 0 0 0.75px 0.25px oklch(0 0 0 / var(--a-shadow-hairline-inset)) inset;
+  --app-shadow-hairline-review: var(--shadow-hairline-ring) oklch(from var(--review) l c h / var(--a-shadow-hairline)), 0 0 0.75px 0.25px oklch(0 0 0 / var(--a-shadow-hairline-inset)) inset;
+  --app-shadow-hairline-uploading: var(--app-shadow-hairline-success);
+  --app-shadow-hairline-cancelled: var(--app-shadow-hairline-neutral);
+  --app-shadow-hairline-notification: var(--app-shadow-hairline-danger);
+  --app-shadow-hairline: var(--app-shadow-hairline-neutral);
+  --app-card-edge-ring: 0 0 0 1px oklch(0 0 0 / 70%);
+  --app-card-edge-inner: oklch(1 0 0 / 6%);
+  --app-card-edge-faint: var(--shadow-hairline-ring) oklch(from var(--neutral) l c h / 15%);
+  --l-card-edge-fill-lift: 0.025;
+  --app-shadow-hairline-current: var(--shadow-hairline-ring) oklch(from var(--card-current-accent) l c h / var(--a-shadow-hairline)), 0 0 0.75px 0.25px oklch(0 0 0 / var(--a-shadow-hairline-inset)) inset;
+  --app-shadow-surface: var(--app-shadow-hairline), var(--app-shadow-sm);
+  --app-shadow-popover: var(--app-shadow-hairline), var(--app-shadow-lg);
+  --app-shadow-toast: var(--app-shadow-hairline), var(--app-shadow-sm);
+  --app-shadow-drag: var(--app-shadow-hairline-primary), var(--app-shadow-lg);
+  --text-shadow-legible: 0 0 2px var(--surface-bg);
+  --shadow-xs: var(--app-shadow-xs);
+  --shadow-sm: var(--app-shadow-sm);
+  --shadow-md: var(--app-shadow-md);
+  --shadow-lg: var(--app-shadow-lg);
+  --shadow-xl: var(--app-shadow-xl);
+  --shadow-2xl: var(--app-shadow-2xl);
+}

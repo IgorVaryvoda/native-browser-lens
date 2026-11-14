@@ -1,32 +1,85 @@
 .editor {
-  padding: 16px;
+  display: grid;
+  grid-template-rows: auto 1fr;
+  min-height: 100vh;
 }
 .toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 2;
   display: grid;
-  gap: 8px;
-  margin-bottom: 12px;
+  gap: 10px;
+  padding: 14px 32px 12px;
+  background: oklch(from var(--background) l c h / 94%);
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--border-subtle);
 }
-[role='toolbar'] {
+.toolbar-title {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  min-width: 0;
+}
+.toolbar-title h1 {
+  overflow: hidden;
+  font-size: 15px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.tools {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
   align-items: center;
+  gap: 10px;
 }
-[role='toolbar'] button {
-  padding: 6px 10px;
+.segmented {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: var(--radius);
+  background: var(--muted);
 }
-[role='toolbar'] button[aria-pressed='true'] {
-  outline: 2px solid currentColor;
-  outline-offset: 1px;
+.segmented .btn[aria-pressed='true'] {
+  background: var(--background);
+  box-shadow: var(--app-shadow-hairline), var(--app-shadow-xs);
+}
+@media (max-width: 640px) {
+  .tool-label {
+    display: none;
+  }
+}
+.swatches {
+  display: inline-flex;
+  gap: 6px;
 }
 .swatch {
-  width: 28px;
-  height: 28px;
-  padding: 0 !important;
-  border: 1px solid var(--line);
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 2px solid var(--background);
   border-radius: 50%;
+  box-shadow: 0 0 0 1px var(--border);
+  cursor: pointer;
 }
-.konvajs-content {
-  border: 1px solid var(--line);
+.swatch[aria-pressed='true'] {
+  box-shadow: 0 0 0 2px var(--foreground);
+}
+.spacer {
+  flex: 1;
+}
+.hint {
+  margin-left: auto;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.well {
+  display: grid;
+  place-items: start center;
+  padding: 24px 32px 48px;
+  background: var(--muted);
+}
+.well > div {
+  box-shadow: var(--app-shadow-lg);
   cursor: crosshair;
 }

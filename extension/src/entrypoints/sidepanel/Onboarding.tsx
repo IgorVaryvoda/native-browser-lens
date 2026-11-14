@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { LensClient } from '@/lens-client';
 import type { SetupStatus } from '@/protocol/SetupStatus';
+import { AlertIcon, CopyIcon, DoneIcon } from '@/ui/icons';
 
 const RELEASES = 'https://github.com/VKrachun/native-browser-lens/releases/latest/download';
 
@@ -24,34 +25,33 @@ export function InstallApp({ reason }: { reason: string }) {
   const missing = /not found/i.test(reason);
   const { shell, command } = installCommand(os);
   return (
-    <section className="onboarding" aria-label="Install the Lens app">
+    <section className="card onboarding" aria-label="Install the Lens app">
+      <h2>{missing ? 'One more step: the Lens app' : 'Lens did not start'}</h2>
       {missing ? (
-        <>
-          <h2>One more step: the Lens app</h2>
-          <p>
-            The extension collects evidence; the Lens app on this computer keeps your notebook, its screenshots and
-            your VibeQ filings. Open {shell}, paste this line and press Enter:
-          </p>
-        </>
+        <p className="muted">
+          The extension collects evidence. The Lens app on this computer keeps your notebook, its screenshots and your
+          filings. Open {shell}, paste this line and press Enter.
+        </p>
       ) : (
-        <>
-          <h2>Lens did not start</h2>
-          <p>
-            The app is installed but stopped with: <em>{reason}</em>. Running this line again repairs it; <code>lens doctor</code>{' '}
-            shows what is wrong.
-          </p>
-        </>
+        <p className="muted">
+          The app is installed but stopped: <em>{reason}</em>. Running the line again repairs it; <code>lens doctor</code>{' '}
+          shows what is wrong.
+        </p>
       )}
-      <pre className="command">{command}</pre>
-      <button
-        type="button"
-        className="primary"
-        onClick={() => void navigator.clipboard.writeText(command).then(() => setCopied(true))}
-      >
-        {copied ? 'Copied' : 'Copy the line'}
-      </button>
-      <p className="mode" role="status" aria-label="Waiting for the app">
-        Waiting for the Lens app… this panel continues by itself.
+      <div className="command">
+        <code>{command}</code>
+        <button
+          type="button"
+          className="btn btn-sm btn-secondary"
+          onClick={() => void navigator.clipboard.writeText(command).then(() => setCopied(true))}
+        >
+          {copied ? <DoneIcon size={14} /> : <CopyIcon size={14} />}
+          {copied ? 'Copied' : 'Copy'}
+        </button>
+      </div>
+      <p className="waiting small muted" role="status" aria-label="Waiting for the app">
+        <span className="spinner" aria-hidden="true" />
+        Waiting for the app; this panel continues by itself.
       </p>
     </section>
   );
@@ -75,20 +75,30 @@ export function SetupCard({ client, refresh }: { client: LensClient; refresh: nu
     };
   }, [client, refresh]);
   if (!status) return null;
-  const open = status.steps.filter((s) => s.mark === 'todo');
-  if (open.length === 0) return null;
-  const done = status.steps.filter((s) => s.mark === 'done').length;
+  const required = status.steps.filter((s) => s.mark !== 'optional');
+  if (!required.some((s) => s.mark === 'todo')) return null;
+  const done = required.filter((s) => s.mark === 'done').length;
   return (
-    <section className="setup" aria-label="Setup">
-      <h2>
-        Setup: {done} of {status.steps.filter((s) => s.mark !== 'optional').length} done
-      </h2>
+    <section className="card setup" aria-label="Setup">
+      <div className="setup-head">
+        <h2>Finish setting up</h2>
+        <span className="small muted num">
+          {done} of {required.length}
+        </span>
+      </div>
+      <div className="meter" aria-hidden="true">
+        <span style={{ width: `${(done / required.length) * 100}%` }} />
+      </div>
       <ul>
-        {status.steps.map((step) => (
+        {status.steps.filter((step) => step.mark !== 'done').map((step) => (
           <li key={step.name} data-mark={step.mark}>
-            <span aria-hidden="true">{step.mark === 'done' ? '✓' : step.mark === 'todo' ? '•' : '○'}</span>{' '}
-            <strong>{step.name}</strong>
-            {step.mark !== 'done' && <span className="url"> {step.detail}</span>}
+            <span className="step-mark" aria-hidden="true">
+              {step.mark === 'done' ? <DoneIcon size={16} /> : step.mark === 'todo' ? <AlertIcon size={16} /> : null}
+            </span>
+            <span>
+              <strong>{step.name}</strong>
+              {step.mark !== 'done' && <span className="step-detail small muted">{step.detail}</span>}
+            </span>
           </li>
         ))}
       </ul>

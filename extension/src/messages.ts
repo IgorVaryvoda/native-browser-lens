@@ -17,6 +17,8 @@ export interface TabStatus {
   permitted: boolean;
   /** Null when Lens is not collecting on this tab. */
   mode: CaptureMode | null;
+  /** Collection is paused from the Lens menu. */
+  paused: boolean;
 }
 
 /** Background → every extension page. */

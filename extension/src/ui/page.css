@@ -1,0 +1,37 @@
+/* Full-tab Lens pages (review, annotate, replay, settings): one column, generous margins. */
+.page {
+  display: grid;
+  gap: 20px;
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 32px 24px 0;
+}
+.page-head {
+  display: grid;
+  gap: 8px;
+  justify-items: start;
+}
+.page-head h1 {
+  font-size: 22px;
+}
+.section {
+  display: grid;
+  gap: 4px;
+}
+.spacer {
+  flex: 1;
+}
+.action-bar {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 0 -24px;
+  padding: 12px 24px;
+  background: oklch(from var(--background) l c h / 94%);
+  backdrop-filter: blur(8px);
+  border-top: 1px solid var(--border-subtle);
+}

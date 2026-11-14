@@ -1,25 +1,18 @@
+@import '@/ui/page.css';
+
 .settings {
-  padding: 16px;
-  max-width: 560px;
+  max-width: 640px;
 }
-.settings form {
+.settings-section {
   display: grid;
-  gap: 6px;
+  gap: 12px;
+  padding: 16px;
 }
-.settings input {
-  font: inherit;
-  padding: 6px 8px;
+.settings-section form {
+  display: grid;
+  gap: 12px;
 }
-.settings .actions {
+.actions {
   display: flex;
   gap: 8px;
-  margin-top: 8px;
-}
-.updates {
-  display: grid;
-  gap: 6px;
-  margin-bottom: 24px;
-}
-.updates p {
-  margin: 0;
 }

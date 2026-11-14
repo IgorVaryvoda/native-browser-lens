@@ -101,6 +101,11 @@ const context = await chromium.launchPersistentContext(profile, {
   env,
   args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`],
 });
+const consoleErrors = [];
+context.on('page', (page) => {
+  page.on('console', (m) => m.type() === 'error' && consoleErrors.push(`${page.url().slice(0, 60)}: ${m.text()}`));
+  page.on('pageerror', (e) => consoleErrors.push(`${page.url().slice(0, 60)}: ${e.message}`));
+});
 try {
   const worker = context.serviceWorkers()[0] ?? (await context.waitForEvent('serviceworker', { timeout: 15_000 }));
   if (!worker.url().startsWith(`chrome-extension://${extensionId}/`)) {
@@ -131,11 +136,11 @@ try {
     throw new Error(`side panel: ${await status.textContent()}\nlensd.log: ${read('lensd.log')}\nhost.log: ${read('host.log')}`);
   }
 
-  // The setup card shows the app's checklist; the background script announced the extension.
-  await panel
-    .getByRole('region', { name: 'Setup' })
-    .locator('li[data-mark="done"]', { hasText: 'Browser extension' })
-    .waitFor({ timeout: 15_000 });
+  // The setup card lists only the open steps; the background script announced the extension, so its step leaves.
+  const setup = panel.getByRole('region', { name: 'Setup' });
+  await setup.waitFor({ timeout: 15_000 });
+  await setup.locator('li', { hasText: 'Browser extension' }).waitFor({ state: 'detached', timeout: 15_000 });
+  await setup.locator('li[data-mark="todo"]', { hasText: 'A site to collect on' }).waitFor({ timeout: 15_000 });
 
   // Track the site: a project for its origin, and the debugger attaches to the tab.
   await panel.getByRole('button', { name: 'Collect evidence on this site' }).click();
@@ -150,8 +155,9 @@ try {
   await panel.waitForTimeout(500);
   await panel.getByRole('button', { name: 'Capture to a new observation' }).click();
 
-  const observation = panel.getByRole('list', { name: 'Observations' }).getByRole('button', { name: /Checkout/ });
-  await observation.or(panel.getByRole('alert')).waitFor({ timeout: 15_000 });
+  // A capture opens its observation: the captures list appears in the detail view.
+  const captures = panel.getByRole('list', { name: 'Captures' });
+  await captures.or(panel.getByRole('alert')).first().waitFor({ timeout: 15_000 });
   if (await panel.getByRole('alert').isVisible()) throw new Error(await panel.getByRole('alert').textContent());
   const capture = panel.getByRole('list', { name: 'Captures' }).getByRole('listitem').first();
   await capture.getByText(/\d+ events · \d+ gaps · deep/).waitFor({ timeout: 15_000 });
@@ -212,6 +218,7 @@ try {
   await panel.getByRole('status', { name: 'Notes status' }).filter({ hasText: /^Saved$/ }).waitFor({ timeout: 15_000 });
   await panel.reload();
   await panel.getByRole('list', { name: 'Observations' }).getByRole('button', { name: /Checkout/ }).click();
+  await panel.getByRole('button', { name: 'Review and export' }).waitFor({ timeout: 15_000 });
   const reloaded = panel.getByLabel('Notes', { exact: true });
   await reloaded.waitFor({ timeout: 15_000 });
   if ((await reloaded.inputValue()) !== notes) throw new Error(`notes after reload: ${await reloaded.inputValue()}`);
@@ -305,7 +312,45 @@ try {
     mcp.kill();
   }
 
+  // Design review: every page with real content, light and dark, at the widths people use.
+  if (process.env.E2E_GALLERY) {
+    const gallery = process.env.E2E_GALLERY;
+    mkdirSync(gallery, { recursive: true });
+    const shots = [
+      ['panel-list', panel, 400],
+      ['review', review, 1280],
+      ['annotate', editor, 1280],
+      ['replay', replay, 1280],
+      ['settings', settings, 1280],
+    ];
+    await panel.reload();
+    await status.filter({ hasText: /^Connected/ }).waitFor();
+    for (const scheme of ['light', 'dark']) {
+      for (const [name, page, width] of shots) {
+        await page.emulateMedia({ colorScheme: scheme });
+        await page.setViewportSize({ width, height: name === 'panel-list' ? 820 : 900 });
+        await page.waitForTimeout(300);
+        await page.screenshot({ path: join(gallery, `${name}-${scheme}.png`) });
+      }
+      await panel.getByRole('list', { name: 'Observations' }).getByRole('button').first().click();
+      await panel.getByRole('button', { name: 'Review and export' }).waitFor();
+      await panel.waitForTimeout(500);
+      await panel.screenshot({ path: join(gallery, `panel-detail-${scheme}.png`) });
+      await panel.getByRole('button', { name: 'All observations' }).click();
+    }
+  }
+
   console.log(`e2e: ok (${evidence.events.length} events, screenshot ${imageWidth}px wide, 2 marks, replay, notes kept, reviewed, exported and filed once despite a lost reply, served over MCP)`);
+} catch (error) {
+  // Every open page as it was at the failure: the first thing to look at, locally and in CI.
+  const shots = process.env.E2E_SHOTS ?? join(tmpdir(), 'lens-e2e-shots');
+  mkdirSync(shots, { recursive: true });
+  for (const [index, page] of context.pages().entries()) {
+    await page.screenshot({ path: join(shots, `page-${index}.png`), fullPage: true }).catch(() => {});
+  }
+  console.error(`e2e: screenshots of every page are in ${shots}`);
+  if (consoleErrors.length) console.error(`e2e: browser console errors:\n${consoleErrors.join('\n')}`);
+  throw error;
 } finally {
   // Cleanup must not hide the failure above, and must not hang the job.
   await Promise.race([context.close(), new Promise((done) => setTimeout(done, 20_000))]).catch(() => {});

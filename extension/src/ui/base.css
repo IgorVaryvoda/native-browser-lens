@@ -1,0 +1,367 @@
+@import './tokens.css';
+
+/* Studio's own faces, served from the extension (no font host). */
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url('/fonts/inter-latin-400-700.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Outfit';
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url('/fonts/outfit-latin-400-700.woff2') format('woff2');
+}
+
+:root {
+  color-scheme: light;
+  --font-ui: 'Inter', system-ui, sans-serif;
+  --font-heading: 'Outfit', 'Inter', system-ui, sans-serif;
+  --font-code: ui-monospace, 'SF Mono', 'Cascadia Mono', 'JetBrains Mono', monospace;
+  --radius-card: 12px;
+  --ease: cubic-bezier(0.16, 1, 0.3, 1);
+}
+.dark {
+  color-scheme: dark;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  background: var(--background);
+  color: var(--foreground);
+}
+
+body {
+  font: 400 13px/1.45 var(--font-ui);
+  font-feature-settings: 'cv11', 'ss01';
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+h3 {
+  margin: 0;
+  font-family: var(--font-heading);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  text-wrap: balance;
+}
+h1 {
+  font-size: 17px;
+}
+h2 {
+  font-size: 14px;
+}
+h3 {
+  font-size: 13px;
+}
+p {
+  margin: 0;
+}
+
+::selection {
+  background: oklch(from var(--primary) l c h / 25%);
+}
+:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+}
+
+a {
+  color: var(--primary);
+  text-underline-offset: 2px;
+}
+
+code,
+.code {
+  font-family: var(--font-code);
+  font-size: 12px;
+}
+
+.muted {
+  color: var(--muted-foreground);
+}
+.small {
+  font-size: 12px;
+}
+.label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted-foreground);
+}
+.num {
+  font-variant-numeric: tabular-nums;
+}
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* ---------- Buttons: Studio's shapes (32px default, 8px radius, 1.5px icons) ---------- */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  font: 500 13px/1 var(--font-ui);
+  color: var(--foreground);
+  background: transparent;
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+  transition:
+    background-color 120ms var(--ease),
+    border-color 120ms var(--ease),
+    color 120ms var(--ease),
+    transform 100ms var(--ease);
+}
+.btn:active:not(:disabled) {
+  transform: scale(0.98);
+}
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.btn svg {
+  flex: none;
+}
+.btn-primary {
+  background: var(--primary);
+  color: var(--on-primary);
+}
+.btn-primary:hover:not(:disabled) {
+  background: var(--primary-hover);
+}
+.btn-secondary {
+  background: var(--background);
+  border-color: var(--border);
+  box-shadow: var(--app-shadow-xs);
+}
+.btn-secondary:hover:not(:disabled) {
+  background: var(--muted);
+}
+.btn-ghost:hover:not(:disabled) {
+  background: var(--muted);
+}
+.btn-danger {
+  background: var(--danger);
+  color: var(--on-danger);
+}
+.btn-sm {
+  height: 28px;
+  padding: 0 8px;
+  font-size: 12px;
+}
+.btn-lg {
+  height: 40px;
+  padding: 0 14px;
+  font-size: 14px;
+}
+.btn-icon {
+  width: 32px;
+  padding: 0;
+}
+.btn-icon.btn-sm {
+  width: 28px;
+}
+.btn-block {
+  width: 100%;
+}
+
+/* ---------- Form controls ---------- */
+.input,
+.textarea,
+.select {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--background);
+  color: var(--foreground);
+  font: 400 13px/1.45 var(--font-ui);
+  transition:
+    border-color 120ms var(--ease),
+    box-shadow 120ms var(--ease);
+}
+.input,
+.select {
+  height: 32px;
+  padding: 0 10px;
+}
+.textarea {
+  padding: 8px 10px;
+  resize: vertical;
+}
+.input::placeholder,
+.textarea::placeholder {
+  color: var(--muted-foreground);
+}
+.input:focus,
+.textarea:focus,
+.select:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px oklch(from var(--primary) l c h / 20%);
+}
+.input-quiet {
+  border-color: transparent;
+  background: transparent;
+  padding: 0 6px;
+  margin-left: -7px;
+}
+.input-quiet:hover {
+  border-color: var(--border);
+}
+.check {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  cursor: pointer;
+}
+.check input {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin: 1px 0 0;
+  accent-color: var(--primary);
+  cursor: pointer;
+}
+.field {
+  display: grid;
+  gap: 6px;
+}
+
+/* ---------- Status ---------- */
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  background: var(--muted);
+  color: var(--muted-foreground);
+}
+.pill::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.pill[data-tone='success'] {
+  background: var(--card-success);
+  color: var(--success-foreground);
+}
+.pill[data-tone='warning'] {
+  background: var(--card-warning);
+  color: var(--warning-foreground);
+}
+.pill[data-tone='danger'] {
+  background: var(--card-danger);
+  color: var(--danger-foreground);
+}
+.pill[data-tone='info'] {
+  background: var(--card-info);
+  color: var(--info-foreground);
+}
+.pill[data-tone='success']::before {
+  box-shadow: 0 0 0 3px oklch(from var(--success) l c h / 20%);
+}
+
+.kbd {
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  padding: 0 5px;
+  border: 1px solid oklch(from currentColor l c h / 30%);
+  border-radius: 4px;
+  font: 500 11px/1 var(--font-ui);
+  opacity: 0.85;
+}
+
+.notice {
+  display: flex;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  font-size: 12px;
+  background: var(--card-danger);
+  color: var(--danger-foreground);
+}
+.notice[data-tone='info'] {
+  background: var(--muted);
+  color: var(--foreground);
+}
+.notice[data-tone='info'] svg {
+  color: var(--success);
+}
+.notice[data-tone='warning'] {
+  background: var(--card-warning);
+  color: var(--warning-foreground);
+}
+.notice svg {
+  flex: none;
+  margin-top: 1px;
+}
+
+/* ---------- Surfaces ---------- */
+.card {
+  background: var(--card);
+  border-radius: var(--radius-card);
+  box-shadow: var(--app-shadow-hairline);
+}
+
+.thumb {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 10;
+  object-fit: cover;
+  object-position: top;
+  border-radius: var(--radius);
+  background: var(--muted);
+  box-shadow: var(--app-shadow-hairline);
+}
+.skeleton {
+  background: linear-gradient(90deg, var(--muted) 0%, oklch(from var(--muted) calc(l + 0.03) c h) 50%, var(--muted) 100%);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s linear infinite;
+}
+@keyframes shimmer {
+  to {
+    background-position: -200% 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .skeleton {
+    animation: none;
+  }
+  .btn {
+    transition: none;
+  }
+}

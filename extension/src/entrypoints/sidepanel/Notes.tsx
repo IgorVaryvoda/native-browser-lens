@@ -77,43 +77,55 @@ export function Notes({ client, id, onSaved }: { client: LensClient; id: number;
     };
   }, [save, dirty]);
 
-  if (!record) return state.kind === 'failed' ? <p role="alert">{state.message}</p> : null;
+  if (!record) return state.kind === 'failed' ? <p role="alert" className="notice">{state.message}</p> : null;
+  const editing = (s: SaveState) => (s.kind === 'conflict' ? s : ({ kind: 'editing' } as SaveState));
   return (
     <div className="notes">
-      <label htmlFor={`title-${id}`}>Title</label>
       <input
-        id={`title-${id}`}
+        className="input input-quiet title-input"
+        aria-label="Title"
         value={title}
-        onChange={(e) => (setTitle(e.target.value), setState((s) => (s.kind === 'conflict' ? s : { kind: 'editing' })))}
+        onChange={(e) => (setTitle(e.target.value), setState(editing))}
       />
-      <label htmlFor={`notes-${id}`}>Notes</label>
-      <textarea
-        id={`notes-${id}`}
-        rows={6}
-        value={notes}
-        placeholder="What did you do, what happened, what did you expect?"
-        onChange={(e) => (setNotes(e.target.value), setState((s) => (s.kind === 'conflict' ? s : { kind: 'editing' })))}
-      />
-      <p className="save-state" role="status" aria-label="Notes status">
-        {state.kind === 'saved' && 'Saved'}
-        {state.kind === 'editing' && (title.trim() ? 'Unsaved changes' : 'A title is required')}
-        {state.kind === 'saving' && 'Saving…'}
-      </p>
+      <div className="field">
+        <div className="notes-head">
+          <label htmlFor={`notes-${id}`} className="label">
+            Notes
+          </label>
+          <span className="small muted" role="status" aria-label="Notes status">
+            {state.kind === 'saved' && 'Saved'}
+            {state.kind === 'editing' && (title.trim() ? 'Unsaved changes' : 'A title is required')}
+            {state.kind === 'saving' && 'Saving…'}
+          </span>
+        </div>
+        <textarea
+          id={`notes-${id}`}
+          className="textarea"
+          rows={5}
+          value={notes}
+          placeholder="What did you do, what happened, and what did you expect?"
+          onChange={(e) => (setNotes(e.target.value), setState(editing))}
+        />
+      </div>
       {state.kind === 'failed' && (
-        <p role="alert">
-          Not saved: {state.message}. Your text is still here.{' '}
-          <button type="button" onClick={() => void save()}>
-            Try again
-          </button>
-        </p>
+        <div role="alert" className="notice">
+          <span>
+            Not saved: {state.message}. Your text is still here.{' '}
+            <button type="button" className="btn btn-sm btn-ghost" onClick={() => void save()}>
+              Try again
+            </button>
+          </span>
+        </div>
       )}
       {state.kind === 'conflict' && (
-        <p role="alert">
-          This observation changed in another window. Your text is still here.{' '}
-          <button type="button" onClick={() => void load()}>
-            Discard mine and load theirs
-          </button>
-        </p>
+        <div role="alert" className="notice" data-tone="warning">
+          <span>
+            This observation changed in another window. Your text is still here.{' '}
+            <button type="button" className="btn btn-sm btn-ghost" onClick={() => void load()}>
+              Discard mine and load theirs
+            </button>
+          </span>
+        </div>
       )}
     </div>
   );

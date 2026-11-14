@@ -38,6 +38,7 @@ type ReplyTo = {
   getUpdates: 'updates';
   setAutomaticUpdates: 'updates';
   updateNow: 'updates';
+  setPaused: 'done';
   shutdown: 'stopping';
 };
 // Every protocol method must name its reply here; a new Rust request fails this line first.

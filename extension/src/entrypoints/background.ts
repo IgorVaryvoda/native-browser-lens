@@ -19,6 +19,7 @@ export default defineBackground(() => {
   if (!deep) new LimitedCollector(buffer, (tabId) => buffer.mode(tabId) !== undefined).listen();
 
   let projects: Project[] = [];
+  let paused = false;
   let lens: LensClient | null = null;
   const client = () => (lens ??= new LensClient(() => (lens = null)));
 
@@ -43,7 +44,7 @@ export default defineBackground(() => {
 
   async function allowed(tabId: number) {
     const origin = originOf(urls.get(tabId));
-    return Boolean(projectFor(origin)) && (await permitted(origin));
+    return !paused && Boolean(projectFor(origin)) && (await permitted(origin));
   }
 
   async function syncNow(tabId: number) {
@@ -100,6 +101,7 @@ export default defineBackground(() => {
 
   async function loadProjects() {
     try {
+      paused = (await client().request({ method: 'hello' })).paused;
       projects = await client().request({ method: 'listProjects' });
       // Setup's checklist learns from this that the extension is installed, connected and current.
       await client().request({ method: 'announce', params: await clientInfo() });
@@ -112,9 +114,11 @@ export default defineBackground(() => {
   async function status(tabId: number): Promise<TabStatus> {
     const tab = await browser.tabs.get(tabId);
     const origin = originOf(tab.url);
+    const project = origin ? projects.find((p) => p.origins.includes(origin)) : undefined;
     return {
       origin,
-      projectId: projectFor(origin)?.id ?? null,
+      paused,
+      projectId: project?.id ?? null,
       permitted: await permitted(origin),
       mode: buffer.mode(tabId) ?? null,
     };
@@ -214,6 +218,13 @@ export default defineBackground(() => {
   }
 
   void loadProjects();
+  // Pause and resume come from the Lens menu, outside the browser: check for them regularly.
+  setInterval(() => {
+    const before = paused;
+    void loadProjects().then(() => {
+      if (before !== paused) void broadcast({ kind: 'tabChanged', tabId: -1 });
+    });
+  }, 15_000);
 });
 
 function broadcast(message: Broadcast) {

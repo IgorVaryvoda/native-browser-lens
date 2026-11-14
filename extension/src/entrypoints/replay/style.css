@@ -1,0 +1,36 @@
+.player {
+  padding-bottom: 48px;
+}
+.player .rr-player {
+  border-radius: var(--radius-card);
+  box-shadow: var(--app-shadow-hairline), var(--app-shadow-lg) !important;
+  background: var(--card) !important;
+}
+.player .rr-controller {
+  background: var(--card) !important;
+  color: var(--foreground);
+}
+/* rrweb-player hard-codes light colors with three-class selectors, so these need !important. */
+.player .rr-timeline__time {
+  color: var(--muted-foreground) !important;
+  font-variant-numeric: tabular-nums;
+}
+.player .rr-progress {
+  background: var(--muted) !important;
+  border-color: var(--card) !important;
+}
+.player .rr-progress__step {
+  background: color-mix(in oklch, var(--primary) 30%, transparent) !important;
+}
+.player .rr-progress__handler,
+.player .rr-controller__btns button.active,
+.player .switch input[type='checkbox']:checked + label::before {
+  background: var(--primary) !important;
+  color: var(--primary-foreground);
+}
+.player .rr-controller__btns button {
+  color: var(--foreground);
+}
+.player .rr-controller__btns button svg {
+  fill: currentColor;
+}

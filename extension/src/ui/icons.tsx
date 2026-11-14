@@ -1,0 +1,57 @@
+import { HugeiconsIcon } from '@hugeicons/react';
+import {
+  Alert02Icon,
+  ArrowLeft01Icon,
+  ArrowTurnBackwardIcon,
+  Camera01Icon,
+  CheckmarkCircle02Icon,
+  Copy01Icon,
+  Download04Icon,
+  EraserIcon,
+  FloppyDiskIcon,
+  ImageNotFound01Icon,
+  LinkSquare02Icon,
+  PencilEdit02Icon,
+  PlayCircleIcon,
+  Settings02Icon,
+  SquareIcon,
+  ArrowUpRight01Icon,
+  SparklesIcon,
+  TaskDone02Icon,
+  ViewOffSlashIcon,
+} from '@hugeicons/core-free-icons';
+
+/** Studio's icon set (Hugeicons) at Studio's 1.5px stroke. */
+function make(icon: typeof Camera01Icon) {
+  return function Icon({ size = 16, label }: { size?: number; label?: string }) {
+    return (
+      <HugeiconsIcon
+        icon={icon}
+        size={size}
+        strokeWidth={1.5}
+        aria-hidden={label ? undefined : true}
+        aria-label={label}
+      />
+    );
+  };
+}
+
+export const CameraIcon = make(Camera01Icon);
+export const SettingsIcon = make(Settings02Icon);
+export const BackIcon = make(ArrowLeft01Icon);
+export const AlertIcon = make(Alert02Icon);
+export const DoneIcon = make(CheckmarkCircle02Icon);
+export const CopyIcon = make(Copy01Icon);
+export const ExportIcon = make(Download04Icon);
+export const PenIcon = make(PencilEdit02Icon);
+export const PlayIcon = make(PlayCircleIcon);
+export const RectangleIcon = make(SquareIcon);
+export const ArrowIcon = make(ArrowUpRight01Icon);
+export const MaskIcon = make(ViewOffSlashIcon);
+export const UndoIcon = make(ArrowTurnBackwardIcon);
+export const SaveIcon = make(FloppyDiskIcon);
+export const DraftIcon = make(SparklesIcon);
+export const FileIcon = make(TaskDone02Icon);
+export const LinkIcon = make(LinkSquare02Icon);
+export const MissingImageIcon = make(ImageNotFound01Icon);
+export const EraseIcon = make(EraserIcon);

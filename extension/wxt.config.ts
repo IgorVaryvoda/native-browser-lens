@@ -16,7 +16,7 @@ export default defineConfig({
         'tabs',
         'scripting',
         'activeTab',
-        ...(firefox ? ['webRequest'] : ['sidePanel', 'debugger']),
+        ...(firefox ? ['webRequest'] : ['sidePanel', 'debugger', 'favicon']),
       ],
       // Lens reads a site only after the person grants that exact origin from the side panel.
       optional_host_permissions: ['http://*/*', 'https://*/*'],

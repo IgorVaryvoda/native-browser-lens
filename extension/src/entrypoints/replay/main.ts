@@ -1,8 +1,12 @@
 import rrwebPlayer from 'rrweb-player';
+import '@/ui/base.css';
+import { followSystemTheme } from '@/ui/theme';
 import 'rrweb-player/dist/style.css';
-import '../sidepanel/style.css';
+import '@/ui/page.css';
+import './style.css';
 import { LensClient } from '@/lens-client';
 
+followSystemTheme();
 const id = Number(new URLSearchParams(location.search).get('capture'));
 const status = document.getElementById('status')!;
 const client = new LensClient();
@@ -16,7 +20,7 @@ try {
   status.textContent = `${seconds} s before the capture · inputs masked`;
   new rrwebPlayer({
     target: document.getElementById('player')!,
-    props: { events, width: Math.min(1200, innerWidth - 32), autoPlay: false, showController: true },
+    props: { events, width: Math.min(1032, innerWidth - 48), autoPlay: false, showController: true },
   });
 } catch (error) {
   status.textContent = (error as Error).message;

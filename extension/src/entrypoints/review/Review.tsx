@@ -9,6 +9,7 @@ import type { Member } from '@/protocol/Member';
 import type { AgentInfo } from '@/protocol/AgentInfo';
 import type { Agent } from '@/protocol/Agent';
 import type { Suggestion } from '@/protocol/Suggestion';
+import { AlertIcon, DoneIcon, DraftIcon, ExportIcon, FileIcon, MaskIcon } from '@/ui/icons';
 
 /**
  * Chooses what may leave the notebook. The person confirms the screenshots, the daemon freezes the
@@ -134,41 +135,145 @@ export function Review({ observation: id }: { observation: number }) {
     }
   }
 
-  if (!observation) return <main className="review">{problem && <p role="alert">{problem}</p>}</main>;
+  if (!observation) {
+    return (
+      <main className="page review">
+        {problem ? <div role="alert" className="notice">{problem}</div> : <span className="thumb skeleton" />}
+      </main>
+    );
+  }
+  const readyAgents = agents.filter((a) => a.state === 'ready');
+  const name = (agent: Agent) => (agent === 'codex' ? 'Codex' : 'Claude');
   return (
-    <main className="review">
-      <h1>{observation.title}</h1>
-      {observation.notes && <p className="notes-text">{observation.notes}</p>}
+    <main className="page review">
+      <header className="page-head">
+        <span className="step-pill pill" data-tone={review ? 'success' : 'info'}>
+          {review ? 'Reviewed' : 'Review'}
+        </span>
+        <h1>{observation.title}</h1>
+        {observation.notes ? <p className="notes-text">{observation.notes}</p> : <p className="muted">No notes.</p>}
+      </header>
+
+      {notice && (
+        <div role="status" className="notice" data-tone="info">
+          <DoneIcon />
+          <span>{notice}</span>
+        </div>
+      )}
+
       {review ? (
         <>
-          <h2>Reviewed: this is what leaves your computer</h2>
-          <ol aria-label="Reviewed captures">
+          <section className="section">
+            <h2>What leaves your computer</h2>
+            <p className="muted small">
+              The screenshots below are rendered with your marks, and masks are burned in. Evidence is redacted.
+            </p>
+          </section>
+          <ol aria-label="Reviewed captures" className="review-list">
             {review.items.map((item, index) => (
-              <li key={item.capture}>
-                <p className="url">{item.pageUrl}</p>
+              <li key={item.capture} className="card review-item">
                 <BlobImage client={client} blob={item.screenshot} alt={`Reviewed capture ${item.capture}`} />
-                {item.findings.length > 0 && (
-                  <ul aria-label={`Findings of capture ${item.capture}`}>
-                    {item.findings.map((finding, n) => (
-                      <li key={n}>
-                        <code>{finding}</code>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-                <p className="facts" aria-label={`Files of capture ${item.capture}`}>
-                  Files: capture-{index + 1}.png, capture-{index + 1}-evidence.json (redacted network, console and
-                  errors)
-                  {item.recording && `, capture-${index + 1}-recording.json (DOM recording, typed input masked)`}
-                </p>
+                <div className="review-side">
+                  <a className="small url" href={item.pageUrl} target="_blank" rel="noreferrer">
+                    {item.pageUrl}
+                  </a>
+                  {item.findings.length > 0 ? (
+                    <ul aria-label={`Findings of capture ${item.capture}`} className="findings">
+                      {item.findings.map((finding, n) => (
+                        <li key={n}>
+                          <code>{finding}</code>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="small muted">No failed requests, console errors or exceptions.</p>
+                  )}
+                  <p className="small muted" aria-label={`Files of capture ${item.capture}`}>
+                    Files: capture-{index + 1}.png, capture-{index + 1}-evidence.json
+                    {item.recording && `, capture-${index + 1}-recording.json`}
+                  </p>
+                </div>
               </li>
             ))}
           </ol>
-          <div className="actions">
+
+          {suggestion && (
+            <section aria-label="Draft report" className="card draft">
+              <div className="draft-head">
+                <h2>
+                  <DraftIcon /> Draft from {name(suggestion.agent)}
+                </h2>
+                <span className="small muted">A suggestion; nothing is saved until you use it.</span>
+              </div>
+              <pre>{suggestion.markdown}</pre>
+              {suggestion.findings.length > 0 && (
+                <ul className="findings">
+                  {suggestion.findings.map((f, n) => (
+                    <li key={n}>
+                      <strong>{f.kind}:</strong> {f.text}
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <div>
+                <button type="button" className="btn btn-secondary" onClick={useDraft}>
+                  Use as my notes
+                </button>
+              </div>
+            </section>
+          )}
+
+          {filing?.taskUrl && (
+            <div role="status" aria-label="Filing" className="notice" data-tone="info">
+              <DoneIcon />
+              <span>
+                Filed:{' '}
+                <a href={filing.taskUrl} target="_blank" rel="noreferrer">
+                  {filing.taskUrl}
+                </a>
+              </span>
+            </div>
+          )}
+          {exported && (
+            <div role="status" aria-label="Export" className="notice" data-tone="info">
+              <DoneIcon />
+              <span>Exported to {exported}</span>
+            </div>
+          )}
+          {problem && (
+            <div role="alert" className="notice">
+              <AlertIcon />
+              <span>{problem}</span>
+            </div>
+          )}
+
+          <footer className="action-bar">
+            {readyAgents.map((a) => (
+              <button
+                key={a.agent}
+                type="button"
+                className="btn btn-ghost"
+                onClick={() => void draft(a.agent)}
+                disabled={drafting !== null}
+              >
+                <DraftIcon />
+                {drafting === a.agent ? 'Drafting…' : `Draft the report with ${name(a.agent)}`}
+              </button>
+            ))}
+            <span className="spacer" />
+            <button type="button" className="btn btn-secondary" onClick={exportReview} disabled={exported !== null}>
+              <ExportIcon />
+              Export to Downloads
+            </button>
             {members && members.length > 0 && (
-              <label>
-                Assign to{' '}
-                <select value={assignee} onChange={(e) => setAssignee(e.target.value)} disabled={filing !== null}>
+              <label className="assign">
+                <span className="small muted">Assign to</span>
+                <select
+                  className="select"
+                  value={assignee}
+                  onChange={(e) => setAssignee(e.target.value)}
+                  disabled={filing !== null}
+                >
                   <option value="">Nobody</option>
                   {members.map((m) => (
                     <option key={m.id} value={m.id}>
@@ -180,110 +285,97 @@ export function Review({ observation: id }: { observation: number }) {
             )}
             <button
               type="button"
-              className="primary"
+              className="btn btn-primary"
               onClick={file}
               disabled={sending || (filing !== null && filing.missingFiles === 0)}
             >
+              <FileIcon />
               {sending ? 'Filing…' : filing ? 'Filed' : 'File to VibeQ'}
             </button>
-            <button type="button" onClick={exportReview} disabled={exported !== null}>
-              Export to Downloads
-            </button>
-          </div>
-          {agents.some((a) => a.state === 'ready') && (
-            <div className="actions">
-              {agents
-                .filter((a) => a.state === 'ready')
-                .map((a) => (
-                  <button key={a.agent} type="button" onClick={() => void draft(a.agent)} disabled={drafting !== null}>
-                    {drafting === a.agent ? 'Drafting…' : `Draft the report with ${a.agent === 'codex' ? 'Codex' : 'Claude'}`}
-                  </button>
-                ))}
-            </div>
-          )}
-          {suggestion && (
-            <section aria-label="Draft report" className="draft">
-              <h2>Draft from {suggestion.agent === 'codex' ? 'Codex' : 'Claude'} (a suggestion; nothing is saved)</h2>
-              <pre>{suggestion.markdown}</pre>
-              {suggestion.findings.length > 0 && (
-                <ul>
-                  {suggestion.findings.map((f, n) => (
-                    <li key={n}>
-                      <strong>{f.kind}:</strong> {f.text}
-                    </li>
-                  ))}
-                </ul>
-              )}
-              <button type="button" onClick={useDraft}>
-                Use as my notes
-              </button>
-            </section>
-          )}
-          {filing?.taskUrl && (
-            <p role="status" aria-label="Filing">
-              Filed:{' '}
-              <a href={filing.taskUrl} target="_blank" rel="noreferrer">
-                {filing.taskUrl}
-              </a>
-            </p>
-          )}
-          {exported && (
-            <p role="status" aria-label="Export">
-              Exported to {exported}
-            </p>
-          )}
+          </footer>
         </>
       ) : (
         <>
-          <ol aria-label="Captures to review">
+          <section className="section">
+            <h2>Choose what to share</h2>
+            <p className="muted small">
+              Nothing leaves your computer until you create the review. Check every screenshot for private data; mask it
+              in the editor first.
+            </p>
+          </section>
+          <ol aria-label="Captures to review" className="review-list">
             {captures.map((c) => (
-              <li key={c.id}>
-                <label>
-                  <input
-                    type="checkbox"
-                    checked={chosen.has(c.id)}
-                    onChange={(e) => {
-                      const next = new Set(chosen);
-                      if (e.target.checked) next.add(c.id);
-                      else next.delete(c.id);
-                      setChosen(next);
-                    }}
-                  />{' '}
-                  Include capture {c.id} · {c.eventCount} events · {c.annotations.filter((s) => s.kind === 'mask').length} masks
-                </label>
+              <li key={c.id} className="card review-item" data-excluded={!chosen.has(c.id) || undefined}>
                 <BlobImage client={client} blob={c.screenshot} alt={`Capture ${c.id} before review`} />
-                {c.recording && (
-                  <label>
+                <div className="review-side">
+                  <label className="check">
                     <input
                       type="checkbox"
-                      checked={recordings.has(c.id)}
+                      checked={chosen.has(c.id)}
                       onChange={(e) => {
-                        const next = new Set(recordings);
+                        const next = new Set(chosen);
                         if (e.target.checked) next.add(c.id);
                         else next.delete(c.id);
-                        setRecordings(next);
+                        setChosen(next);
                       }}
-                    />{' '}
-                    Include the DOM recording of capture {c.id}. Masks do not apply to recordings; only typed input is
-                    masked.
+                    />
+                    <span>
+                      Include capture {c.id}
+                      <span className="small muted num" style={{ display: 'block' }}>
+                        {c.eventCount} events · {c.annotations.filter((s) => s.kind === 'mask').length} masks
+                      </span>
+                    </span>
                   </label>
-                )}
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-sm"
+                    onClick={() => void browser.tabs.create({ url: browser.runtime.getURL(`/annotate.html?capture=${c.id}`) })}
+                  >
+                    <MaskIcon />
+                    Mark up or mask
+                  </button>
+                  {c.recording && (
+                    <label className="check">
+                      <input
+                        type="checkbox"
+                        checked={recordings.has(c.id)}
+                        onChange={(e) => {
+                          const next = new Set(recordings);
+                          if (e.target.checked) next.add(c.id);
+                          else next.delete(c.id);
+                          setRecordings(next);
+                        }}
+                      />
+                      <span>
+                        Include the DOM recording of capture {c.id}.
+                        <span className="small muted" style={{ display: 'block' }}>
+                          Masks do not apply to recordings; only typed input is masked.
+                        </span>
+                      </span>
+                    </label>
+                  )}
+                </div>
               </li>
             ))}
           </ol>
-          <label className="confirm">
-            <input type="checkbox" checked={checked} onChange={(e) => setChecked(e.target.checked)} />I checked every
-            included screenshot and masked what is private.
-          </label>
-          <div className="actions">
-            <button type="button" className="primary" onClick={freeze} disabled={!checked || chosen.size === 0}>
+          {problem && (
+            <div role="alert" className="notice">
+              <AlertIcon />
+              <span>{problem}</span>
+            </div>
+          )}
+          <footer className="action-bar">
+            <label className="check confirm">
+              <input type="checkbox" checked={checked} onChange={(e) => setChecked(e.target.checked)} />
+              <span>I checked every included screenshot and masked what is private.</span>
+            </label>
+            <span className="spacer" />
+            <button type="button" className="btn btn-primary" onClick={freeze} disabled={!checked || chosen.size === 0}>
               Create review
             </button>
-          </div>
+          </footer>
         </>
       )}
-      {notice && <p role="status">{notice}</p>}
-      {problem && <p role="alert">{problem}</p>}
     </main>
   );
 }
@@ -297,5 +389,5 @@ function BlobImage({ client, blob, alt }: { client: LensClient; blob: BlobRef; a
       if (url) URL.revokeObjectURL(url);
     };
   }, [client, blob]);
-  return src ? <img src={src} alt={alt} /> : <div className="placeholder" />;
+  return src ? <img className="review-shot" src={src} alt={alt} /> : <span className="review-shot skeleton" />;
 }

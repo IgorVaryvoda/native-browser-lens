@@ -7,6 +7,7 @@ import type { Broadcast } from '@/messages';
 import type { Capture } from '@/protocol/Capture';
 import type { Point } from '@/protocol/Point';
 import type { Shape } from '@/protocol/Shape';
+import { ArrowIcon, MaskIcon, PenIcon, RectangleIcon, SaveIcon, UndoIcon } from '@/ui/icons';
 
 type Tool = 'rectangle' | 'arrow' | 'pen' | 'mask';
 const TOOLS: { tool: Tool; label: string; key: string }[] = [
@@ -15,6 +16,7 @@ const TOOLS: { tool: Tool; label: string; key: string }[] = [
   { tool: 'pen', label: 'Pen', key: 'p' },
   { tool: 'mask', label: 'Mask', key: 'm' },
 ];
+const TOOL_ICONS = { rectangle: RectangleIcon, arrow: ArrowIcon, pen: PenIcon, mask: MaskIcon };
 const COLORS = ['#ff3355', '#ffb000', '#2f7bff'];
 const MIN_SIZE = 4;
 
@@ -29,7 +31,7 @@ export function Editor({ capture: captureId }: { capture: number }) {
   const [color, setColor] = useState(COLORS[0]!);
   const [saved, setSaved] = useState<Shape[]>([]);
   const [problem, setProblem] = useState<string | null>(null);
-  const [width, setWidth] = useState(() => window.innerWidth - 32);
+  const [width, setWidth] = useState(() => window.innerWidth - 64);
   const shapes = history[history.length - 1]!;
   const dirty = JSON.stringify(shapes) !== JSON.stringify(saved);
 
@@ -47,7 +49,7 @@ export function Editor({ capture: captureId }: { capture: number }) {
         img.src = url;
       })
       .catch((error: Error) => setProblem(error.message));
-    const resize = () => setWidth(window.innerWidth - 32);
+    const resize = () => setWidth(window.innerWidth - 64);
     window.addEventListener('resize', resize);
     return () => {
       window.removeEventListener('resize', resize);
@@ -127,54 +129,87 @@ export function Editor({ capture: captureId }: { capture: number }) {
   return (
     <main className="editor">
       <header className="toolbar">
-        <h1>{capture ? capture.pageTitle || capture.pageUrl : 'Annotate'}</h1>
-        <div role="toolbar" aria-label="Tools">
-          {TOOLS.map((t) => (
-            <button key={t.tool} type="button" aria-pressed={tool === t.tool} onClick={() => setTool(t.tool)}>
-              {t.label}
-            </button>
-          ))}
-          {COLORS.map((c) => (
-            <button
-              key={c}
-              type="button"
-              className="swatch"
-              aria-label={`Color ${c}`}
-              aria-pressed={color === c}
-              style={{ background: c }}
-              onClick={() => setColor(c)}
-            />
-          ))}
-          <button type="button" onClick={undo} disabled={history.length < 2}>
+        <div className="toolbar-title">
+          <h1>{capture ? capture.pageTitle || capture.pageUrl : 'Annotate'}</h1>
+          <span role="status" className="small muted num">
+            {dirty ? 'Unsaved changes' : `Saved · ${shapes.length} marks`}
+          </span>
+          {/* In the title row, so switching tools never moves the canvas under the pointer. */}
+          {tool === 'mask' && (
+            <span className="small muted hint">Masks hide what is under them in every export and filing.</span>
+          )}
+        </div>
+        <div role="toolbar" aria-label="Tools" className="tools">
+          <div className="segmented">
+            {TOOLS.map((t) => {
+              const Icon = TOOL_ICONS[t.tool];
+              return (
+                <button
+                  key={t.tool}
+                  type="button"
+                  className="btn btn-sm"
+                  aria-pressed={tool === t.tool}
+                  aria-label={t.label}
+                  title={`${t.label} (${t.key.toUpperCase()})`}
+                  onClick={() => setTool(t.tool)}
+                >
+                  <Icon />
+                  <span className="tool-label">{t.label}</span>
+                </button>
+              );
+            })}
+          </div>
+          <div className="swatches">
+            {COLORS.map((c) => (
+              <button
+                key={c}
+                type="button"
+                className="swatch"
+                aria-label={`Color ${c}`}
+                aria-pressed={color === c}
+                style={{ background: c }}
+                onClick={() => setColor(c)}
+              />
+            ))}
+          </div>
+          <span className="spacer" />
+          <button type="button" className="btn btn-ghost btn-sm" onClick={undo} disabled={history.length < 2} title="Undo (Ctrl+Z)">
+            <UndoIcon />
             Undo
           </button>
-          <button type="button" className="primary" onClick={save} disabled={!dirty}>
+          <button type="button" className="btn btn-primary btn-sm" onClick={save} disabled={!dirty} title="Save (Ctrl+S)">
+            <SaveIcon />
             Save
           </button>
         </div>
-        <p role="status" className="mode">
-          {dirty ? 'Unsaved changes' : `Saved · ${shapes.length} marks`}
-        </p>
-        {problem && <p role="alert">{problem}</p>}
+        {problem && (
+          <div role="alert" className="notice">
+            {problem}
+          </div>
+        )}
       </header>
-      {image && (
-        <Stage
-          width={image.width * scale}
-          height={image.height * scale}
-          onPointerDown={begin}
-          onPointerMove={move}
-          onPointerUp={end}
-          onPointerLeave={end}
-          aria-label="Screenshot"
-        >
-          <Layer scaleX={scale} scaleY={scale}>
-            <KonvaImage image={image} />
-            {[...shapes, ...(draft ? [draft] : [])].map((shape, index) => (
-              <ShapeView key={index} shape={shape} scale={scale} />
-            ))}
-          </Layer>
-        </Stage>
-      )}
+      <div className="well">
+        {image ? (
+          <Stage
+            width={image.width * scale}
+            height={image.height * scale}
+            onPointerDown={begin}
+            onPointerMove={move}
+            onPointerUp={end}
+            onPointerLeave={end}
+            aria-label="Screenshot"
+          >
+            <Layer scaleX={scale} scaleY={scale}>
+              <KonvaImage image={image} />
+              {[...shapes, ...(draft ? [draft] : [])].map((shape, index) => (
+                <ShapeView key={index} shape={shape} scale={scale} />
+              ))}
+            </Layer>
+          </Stage>
+        ) : (
+          <span className="thumb skeleton" style={{ width: '100%' }} />
+        )}
+      </div>
     </main>
   );
 }
