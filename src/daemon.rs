@@ -29,6 +29,20 @@ const TOKEN_ACCOUNT: &str = "vibeq-token";
 /// keyring runs. People use Settings.
 const TOKEN_ENV: &str = "LENS_VIBEQ_TOKEN";
 
+fn vibeq_settings(store: &Store) -> Result<VibeQSettings, ProtocolError> {
+    let has_token = saved_token().ok().flatten().is_some();
+    Ok(VibeQSettings {
+        endpoint: store.setting("vibeq.endpoint").map_err(storage)?,
+        has_token,
+        account: store
+            .setting("vibeq.account")
+            .map_err(storage)?
+            .filter(|name| has_token && !name.is_empty()),
+        token_from_environment: std::env::var(TOKEN_ENV).is_ok_and(|t| !t.trim().is_empty()),
+        secret_store: secrets::status(),
+    })
+}
+
 fn saved_token() -> Result<Option<String>, ProtocolError> {
     match std::env::var(TOKEN_ENV) {
         Ok(token) if !token.trim().is_empty() => Ok(Some(token.trim().into())),
@@ -507,34 +521,46 @@ impl Daemon {
                     folder: folder.display().to_string(),
                 })
             }
-            Request::GetVibeQ => Reply::VibeQ(VibeQSettings {
-                endpoint: store.setting("vibeq.endpoint").map_err(storage)?,
-                has_token: saved_token().ok().flatten().is_some(),
-                token_from_environment: std::env::var(TOKEN_ENV)
-                    .is_ok_and(|t| !t.trim().is_empty()),
-                secret_store: secrets::status(),
-            }),
+            Request::GetVibeQ => Reply::VibeQ(vibeq_settings(&store)?),
             Request::SetVibeQ(input) => {
+                drop(store);
                 let endpoint = vibeq::validate_endpoint(&input.endpoint).map_err(bad)?;
-                match input.token.as_deref().map(str::trim) {
-                    None => {}
-                    Some("") => secrets::delete(TOKEN_ACCOUNT).map_err(storage)?,
-                    Some(token) => {
-                        Client::new(endpoint.as_str(), token).map_err(bad)?;
-                        secrets::set(TOKEN_ACCOUNT, token).map_err(storage)?;
+                let account = match input.token.as_deref().map(str::trim) {
+                    None => None,
+                    Some("") => {
+                        secrets::delete(TOKEN_ACCOUNT).map_err(storage)?;
+                        Some(String::new())
                     }
-                }
-                let endpoint = endpoint.as_str().trim_end_matches('/').to_string();
+                    Some(token) => {
+                        // A token that VibeQ does not accept is never saved.
+                        let me = Client::new(endpoint.as_str(), token)
+                            .map_err(bad)?
+                            .me()
+                            .map_err(remote)?;
+                        // LENS_VIBEQ_TOKEN wins over a saved token, so there is nothing to save.
+                        if std::env::var(TOKEN_ENV).is_ok_and(|t| !t.trim().is_empty()) {
+                            if saved_token()?.as_deref() != Some(token) {
+                                return Err(bad(
+                                    "LENS_VIBEQ_TOKEN is set and overrides this token",
+                                ));
+                            }
+                        } else {
+                            secrets::set(TOKEN_ACCOUNT, token).map_err(storage)?;
+                        }
+                        Some(me.name)
+                    }
+                };
+                let store = self.lock_store();
+                let endpoint = endpoint.as_str().trim_end_matches('/');
                 store
-                    .set_setting("vibeq.endpoint", &endpoint)
+                    .set_setting("vibeq.endpoint", endpoint)
                     .map_err(storage)?;
-                Reply::VibeQ(VibeQSettings {
-                    endpoint: Some(endpoint),
-                    has_token: saved_token().ok().flatten().is_some(),
-                    token_from_environment: std::env::var(TOKEN_ENV)
-                        .is_ok_and(|t| !t.trim().is_empty()),
-                    secret_store: secrets::status(),
-                })
+                if let Some(account) = account {
+                    store
+                        .set_setting("vibeq.account", &account)
+                        .map_err(storage)?;
+                }
+                Reply::VibeQ(vibeq_settings(&store)?)
             }
             Request::ListMembers => {
                 drop(store);
@@ -685,7 +711,7 @@ impl Daemon {
             .setting("vibeq.endpoint")
             .map_err(storage)?
             .ok_or_else(|| bad("add the VibeQ address in Settings first"))?;
-        let token = saved_token()?.ok_or_else(|| bad("add your VibeQ token in Settings first"))?;
+        let token = saved_token()?.ok_or_else(|| bad("sign in to VibeQ in Settings first"))?;
         Client::new(&endpoint, &token).map_err(bad)
     }
 

@@ -33,9 +33,14 @@ const fakeVibeq = createServer((request, response) => {
       response.writeHead(status, { 'content-type': 'application/json' });
       response.end(JSON.stringify(value));
     };
-    if (request.headers.authorization !== 'Bearer e2e-token') return json(403, { error: 'personal_token_required' });
     const url = request.url;
-    if (url === '/auth/me') return json(200, { id: 'member-1' });
+    // VibeQ mints a personal token for whoever its session cookie names.
+    if (url.startsWith('/auth/mcp-token')) {
+      const signedIn = /(^|;\s*)session=e2e-session(;|$)/.test(request.headers.cookie ?? '');
+      return signedIn ? json(200, { token: 'e2e-token', kind: 'mcp' }) : json(401, { error: 'Invalid session' });
+    }
+    if (request.headers.authorization !== 'Bearer e2e-token') return json(403, { error: 'personal_token_required' });
+    if (url === '/auth/me') return json(200, { id: 'member-1', name: 'Tess Tester' });
     if (url === '/api/members') return json(200, [{ id: 'member-2', name: 'Ana' }]);
     if (url === '/api/attachments/stage') return (vibeq.staged++, json(201, { stagedKey: `staged/member-1/${vibeq.staged}` }));
     const found = url.match(/^\/api\/capture\/v1\/submissions\/(.+)$/);
@@ -253,9 +258,18 @@ try {
   // File to VibeQ: the first reply is lost; filing again finishes without a second task.
   const settings = await context.newPage();
   await settings.goto(`chrome-extension://${extensionId}/options.html`);
-  await settings.getByLabel('VibeQ address').fill(`http://127.0.0.1:${fakeVibeq.address().port}`);
-  await settings.getByRole('button', { name: 'Save' }).click();
-  await settings.getByRole('status').filter({ hasText: 'Saved' }).or(settings.getByRole('alert')).waitFor({ timeout: 15_000 });
+  // Sign in through VibeQ: nobody is signed in yet, so Lens opens VibeQ and waits for the session.
+  const vibeqOrigin = `http://127.0.0.1:${fakeVibeq.address().port}`;
+  await settings.getByLabel('VibeQ address').fill(vibeqOrigin);
+  if (process.env.E2E_GALLERY) {
+    mkdirSync(process.env.E2E_GALLERY, { recursive: true });
+    await settings.screenshot({ path: join(process.env.E2E_GALLERY, 'settings-signed-out.png') });
+  }
+  await settings.getByRole('button', { name: 'Sign in with VibeQ' }).click();
+  await settings.getByRole('status', { name: 'Sign-in' }).or(settings.getByRole('alert')).waitFor({ timeout: 15_000 });
+  if (await settings.getByRole('alert').isVisible()) throw new Error(`settings: ${await settings.getByRole('alert').textContent()}`);
+  await context.addCookies([{ name: 'session', value: 'e2e-session', url: vibeqOrigin }]);
+  await settings.getByRole('status', { name: 'VibeQ account' }).filter({ hasText: 'Tess Tester' }).or(settings.getByRole('alert')).waitFor({ timeout: 15_000 });
   if (await settings.getByRole('alert').isVisible()) throw new Error(`settings: ${await settings.getByRole('alert').textContent()}`);
   await review.reload();
   await review.getByLabel(/I checked every/).check();
@@ -327,6 +341,8 @@ try {
     await status.filter({ hasText: /^Connected/ }).waitFor();
     for (const scheme of ['light', 'dark']) {
       for (const [name, page, width] of shots) {
+        // Chrome pauses transitions in a background tab; a page in front shows its settled colors.
+        await page.bringToFront();
         await page.emulateMedia({ colorScheme: scheme });
         await page.setViewportSize({ width, height: name === 'panel-list' ? 820 : 900 });
         await page.waitForTimeout(300);

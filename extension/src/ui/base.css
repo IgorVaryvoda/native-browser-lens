@@ -331,6 +331,14 @@ code,
 }
 
 /* ---------- Surfaces ---------- */
+.mark {
+  /* The Lens logo. */
+  width: 18px;
+  height: 18px;
+  color: var(--primary);
+  flex: none;
+}
+
 .card {
   background: var(--card);
   border-radius: var(--radius-card);

@@ -4,7 +4,7 @@ import { originOf, send, type Broadcast, type CaptureResult, type TabStatus } fr
 import type { Capture } from '@/protocol/Capture';
 import type { Hello } from '@/protocol/Hello';
 import type { ObservationSummary } from '@/protocol/ObservationSummary';
-import { AlertIcon, BackIcon, CameraIcon, ExportIcon, PenIcon, PlayIcon, SettingsIcon } from '@/ui/icons';
+import { AlertIcon, BackIcon, CameraIcon, ExportIcon, PenIcon, PlayIcon, SettingsIcon, LensMark } from '@/ui/icons';
 import { Notes } from './Notes';
 import { InstallApp, SetupCard } from './Onboarding';
 
@@ -41,15 +41,6 @@ function SiteIcon({ origin }: { origin: string }) {
   if (failed) return <span className="site-icon site-initial">{(hostOf(origin) ?? '?')[0]?.toUpperCase()}</span>;
   const src = browser.runtime.getURL(`/_favicon/?pageUrl=${encodeURIComponent(origin)}&size=32` as '/');
   return <img className="site-icon" src={src} alt="" onError={() => setFailed(true)} />;
-}
-
-function LensMark() {
-  return (
-    <svg className="mark" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeLinecap="round">
-      <path d="M3.5 8V5.5a2 2 0 0 1 2-2H8M16 3.5h2.5a2 2 0 0 1 2 2V8M20.5 16v2.5a2 2 0 0 1-2 2H16M8 20.5H5.5a2 2 0 0 1-2-2V16" strokeWidth="2" />
-      <circle cx="12" cy="12" r="3.6" strokeWidth="2" />
-    </svg>
-  );
 }
 
 export function App() {

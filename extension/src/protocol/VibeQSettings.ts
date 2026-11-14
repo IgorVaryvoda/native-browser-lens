@@ -7,6 +7,10 @@ export type VibeQSettings = { endpoint: string | null,
  */
 hasToken: boolean, 
 /**
+ * The VibeQ name of the member the saved token belongs to, recorded when it was saved.
+ */
+account: string | null, 
+/**
  * The token comes from LENS_VIBEQ_TOKEN, not the secret store.
  */
 tokenFromEnvironment: boolean, secretStore: SecretStoreStatus, };

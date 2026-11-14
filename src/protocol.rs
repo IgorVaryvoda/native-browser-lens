@@ -303,6 +303,8 @@ pub struct VibeQSettings {
     pub endpoint: Option<String>,
     /// Whether a token is saved. The token itself never leaves the daemon.
     pub has_token: bool,
+    /// The VibeQ name of the member the saved token belongs to, recorded when it was saved.
+    pub account: Option<String>,
     /// The token comes from LENS_VIBEQ_TOKEN, not the secret store.
     pub token_from_environment: bool,
     pub secret_store: SecretStoreStatus,

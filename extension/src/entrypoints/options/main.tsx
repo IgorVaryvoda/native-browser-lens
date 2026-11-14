@@ -1,58 +1,182 @@
-import { StrictMode, useEffect, useState, type FormEvent } from 'react';
+import { StrictMode, useCallback, useEffect, useState, type FormEvent } from 'react';
 import { createRoot } from 'react-dom/client';
 import { LensClient } from '@/lens-client';
 import type { VibeQSettings } from '@/protocol/VibeQSettings';
 import type { UpdateState } from '@/protocol/UpdateState';
+import { AlertIcon, DoneIcon, LensMark, LinkIcon } from '@/ui/icons';
 import '@/ui/base.css';
 import { followSystemTheme } from '@/ui/theme';
 import './style.css';
 
-/** VibeQ address and token. The token goes to the OS secret store and is never shown again. */
+const DEFAULT_VIBEQ = 'https://work.sirv.studio';
+/** How long Lens waits for the person to sign in to VibeQ in the other tab. */
+const SIGN_IN_WAIT_MS = 10 * 60_000;
+
 function Settings() {
   const [client] = useState(() => new LensClient());
+  const [version, setVersion] = useState<string | null>(null);
+  useEffect(() => {
+    client
+      .request({ method: 'hello' })
+      .then((hello) => setVersion(hello.version))
+      .catch(() => {});
+    return () => client.disconnect();
+  }, [client]);
+
+  return (
+    <main className="page settings">
+      <header className="settings-head">
+        <LensMark />
+        <h1>Settings</h1>
+        {version && <span className="small muted num">Lens {version}</span>}
+      </header>
+      <VibeQ client={client} />
+      <Updates client={client} />
+      <section className="card settings-section" aria-label="Privacy">
+        <h2>What Lens reads</h2>
+        <p className="small muted">
+          Lens reads a site only after you allow it from the side panel. While it collects network bodies and console
+          messages, Chrome shows a bar that says Lens started debugging this browser. That bar is how the debugger
+          permission looks, and it goes away when the tab closes. To stop collection everywhere, use Pause collection
+          in the Lens menu of your system tray.
+        </p>
+      </section>
+    </main>
+  );
+}
+
+/**
+ * Lens signs in with the VibeQ session this browser already has: VibeQ mints a personal token for
+ * a signed-in member, and the daemon keeps it in the system secret store.
+ */
+function VibeQ({ client }: { client: LensClient }) {
   const [settings, setSettings] = useState<VibeQSettings | null>(null);
-  const [endpoint, setEndpoint] = useState('');
-  const [token, setToken] = useState('');
-  const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
+  const [address, setAddress] = useState('');
+  const [waitingFor, setWaitingFor] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [problem, setProblem] = useState<string | null>(null);
 
   useEffect(() => {
     client
       .request({ method: 'getVibeQ' })
       .then((found) => {
         setSettings(found);
-        setEndpoint(found.endpoint ?? '');
+        setAddress(found.endpoint ?? DEFAULT_VIBEQ);
       })
-      .catch((error: Error) => setMessage({ ok: false, text: error.message }));
-    return () => client.disconnect();
+      .catch((error: Error) => setProblem(error.message));
   }, [client]);
 
-  async function save(event: FormEvent, removeToken = false) {
-    event.preventDefault();
+  const save = useCallback(
+    async (endpoint: string, token: string) => {
+      setSettings(await client.request({ method: 'setVibeQ', params: { endpoint, token } }));
+      setWaitingFor(null);
+      setProblem(null);
+    },
+    [client],
+  );
+
+  /** One attempt: true when VibeQ knew the person and Lens saved the token. */
+  const tryToken = useCallback(
+    async (origin: string) => {
+      const token = await mintToken(origin);
+      if (token === null) return false;
+      await save(origin, token);
+      return true;
+    },
+    [save],
+  );
+
+  async function signIn() {
+    let origin: string;
     try {
-      const saved = await client.request({
-        method: 'setVibeQ',
-        params: { endpoint, token: removeToken ? '' : token.trim() ? token : null },
-      });
-      setSettings(saved);
-      setToken('');
-      setMessage({ ok: true, text: 'Saved' });
+      origin = new URL(address.trim() || DEFAULT_VIBEQ).origin;
+    } catch {
+      return setProblem('Type the VibeQ address, for example https://work.sirv.studio');
+    }
+    // Chrome grants a permission only while the click is in progress, so Lens asks before anything else.
+    const granted = await browser.permissions.request({ origins: [`${origin}/*`] });
+    if (!granted) return setProblem('Lens needs access to VibeQ to sign in.');
+    setBusy(true);
+    setProblem(null);
+    try {
+      if (!(await tryToken(origin))) {
+        await browser.tabs.create({ url: `${origin}/` });
+        setWaitingFor(origin);
+      }
     } catch (error) {
-      setMessage({ ok: false, text: (error as Error).message });
+      setProblem((error as Error).message);
+    } finally {
+      setBusy(false);
     }
   }
 
+  // While the person signs in to VibeQ in the other tab, try again until VibeQ knows them.
+  useEffect(() => {
+    if (!waitingFor) return;
+    const started = Date.now();
+    let running = false;
+    const attempt = async () => {
+      if (running) return;
+      if (Date.now() - started > SIGN_IN_WAIT_MS) {
+        setWaitingFor(null);
+        return setProblem('Lens stopped waiting for the VibeQ sign-in. Try again.');
+      }
+      running = true;
+      try {
+        await tryToken(waitingFor);
+      } catch (error) {
+        setWaitingFor(null);
+        setProblem((error as Error).message);
+      } finally {
+        running = false;
+      }
+    };
+    const timer = setInterval(attempt, 2000);
+    window.addEventListener('focus', attempt);
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener('focus', attempt);
+    };
+  }, [waitingFor, tryToken]);
+
+  async function signOut() {
+    try {
+      setSettings(await client.request({ method: 'setVibeQ', params: { endpoint: settings!.endpoint!, token: '' } }));
+      setProblem(null);
+    } catch (error) {
+      setProblem((error as Error).message);
+    }
+  }
+
+  if (!settings) return problem ? <Problem text={problem} /> : null;
+  const signedIn = settings.hasToken && !!settings.endpoint;
+  const host = settings.endpoint ? new URL(settings.endpoint).host : '';
+
   return (
-    <main className="page settings">
-      <header className="page-head">
-        <h1>Lens settings</h1>
-      </header>
-      <Updates client={client} />
-      <section className="card settings-section" aria-label="VibeQ">
-        <div className="section">
-          <h2>VibeQ</h2>
-          <p className="small muted">Where Lens files reviewed defects. Leave empty if you only export.</p>
+    <section className="card settings-section" aria-label="VibeQ">
+      <div className="section">
+        <h2>VibeQ</h2>
+        <p className="small muted">Where Lens files the defects you review. Without it, you can still export them.</p>
+      </div>
+      {signedIn ? (
+        <div className="account" role="status" aria-label="VibeQ account">
+          <span className="avatar" aria-hidden="true">
+            {(settings.account ?? host).slice(0, 1).toUpperCase()}
+          </span>
+          <span className="account-text">
+            <strong>{settings.account ?? 'Signed in'}</strong>
+            <span className="small muted">
+              {settings.tokenFromEnvironment ? `${host} · token from LENS_VIBEQ_TOKEN` : host}
+            </span>
+          </span>
+          {!settings.tokenFromEnvironment && (
+            <button type="button" className="btn btn-secondary btn-sm" onClick={() => void signOut()}>
+              Sign out
+            </button>
+          )}
         </div>
-        <form onSubmit={save}>
+      ) : (
+        <>
           <div className="field">
             <label htmlFor="endpoint" className="label">
               VibeQ address
@@ -60,59 +184,94 @@ function Settings() {
             <input
               id="endpoint"
               className="input"
-              value={endpoint}
-              onChange={(e) => setEndpoint(e.target.value)}
-              placeholder="https://work.sirv.studio"
+              value={address}
+              onChange={(e) => setAddress(e.target.value)}
+              placeholder={DEFAULT_VIBEQ}
+              disabled={!!waitingFor}
             />
           </div>
-          <div className="field">
-            <label htmlFor="token" className="label">
-              Personal token
-            </label>
-            <input
-              id="token"
-              className="input"
-              type="password"
-              autoComplete="off"
-              value={token}
-              onChange={(e) => setToken(e.target.value)}
-              placeholder={settings?.hasToken ? 'Saved; type to replace it' : 'Paste your personal token'}
-            />
-            <p className="small muted">
-              {settings?.tokenFromEnvironment
-                ? 'The token comes from LENS_VIBEQ_TOKEN; it overrides the saved one.'
-                : settings?.secretStore.state === 'unavailable'
-                  ? `The system secret store is unavailable (${settings.secretStore.reason}); Lens cannot save a token.`
-                  : 'Lens keeps the token in the system secret store and never shows it again.'}
-            </p>
-          </div>
-          <div className="actions">
-            <button type="submit" className="btn btn-primary">
-              Save
-            </button>
-            {settings?.hasToken && !settings.tokenFromEnvironment && (
-              <button type="button" className="btn btn-ghost" onClick={(e) => void save(e, true)}>
-                Remove token
-              </button>
-            )}
-          </div>
-          {message && (
-            <div role={message.ok ? 'status' : 'alert'} className="notice" data-tone={message.ok ? 'info' : undefined}>
-              {message.text}
+          {settings.secretStore.state === 'unavailable' && !settings.tokenFromEnvironment && (
+            <div role="alert" className="notice" data-tone="warning">
+              <AlertIcon size={16} />
+              <span>
+                The system secret store is unavailable ({settings.secretStore.reason}). Lens cannot keep a VibeQ
+                sign-in.
+              </span>
             </div>
           )}
-        </form>
-      </section>
-      <section className="card settings-section" aria-label="About">
-        <h2>About collection</h2>
-        <p className="small muted">
-          Lens reads a site only after you allow it from the side panel. While it collects network bodies and console
-          messages, Chrome shows a notice that Lens started debugging the browser; that is how the debugger permission
-          looks, and it ends when the tab closes. Pause collection any time from the Lens menu in your system tray.
-        </p>
-      </section>
-    </main>
+          {waitingFor ? (
+            <div role="status" aria-label="Sign-in" className="notice waiting" data-tone="info">
+              <span className="spinner" aria-hidden="true" />
+              <span>
+                Sign in to VibeQ in the new tab. Lens continues here when you are signed in.
+                <button type="button" className="btn btn-ghost btn-sm" onClick={() => setWaitingFor(null)}>
+                  Cancel
+                </button>
+              </span>
+            </div>
+          ) : (
+            <div className="actions">
+              <button type="button" className="btn btn-primary" onClick={() => void signIn()} disabled={busy}>
+                <LinkIcon />
+                {busy ? 'Signing in…' : 'Sign in with VibeQ'}
+              </button>
+            </div>
+          )}
+          <TokenForm address={address} save={save} />
+        </>
+      )}
+      {problem && <Problem text={problem} />}
+    </section>
   );
+}
+
+/** For a browser without a VibeQ session: a personal token from VibeQ, pasted once. */
+function TokenForm({ address, save }: { address: string; save: (endpoint: string, token: string) => Promise<void> }) {
+  const [token, setToken] = useState('');
+  const [problem, setProblem] = useState<string | null>(null);
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    try {
+      await save(address.trim() || DEFAULT_VIBEQ, token.trim());
+      setToken('');
+    } catch (error) {
+      setProblem((error as Error).message);
+    }
+  }
+  return (
+    <details className="token-form">
+      <summary className="small muted">Use a personal token instead</summary>
+      <form onSubmit={submit}>
+        <input
+          aria-label="Personal token"
+          className="input"
+          type="password"
+          autoComplete="off"
+          value={token}
+          onChange={(e) => setToken(e.target.value)}
+          placeholder="Paste a personal token from VibeQ"
+        />
+        <button type="submit" className="btn btn-secondary" disabled={!token.trim()}>
+          Save token
+        </button>
+      </form>
+      {problem && <Problem text={problem} />}
+    </details>
+  );
+}
+
+/** A new personal token from VibeQ for the member signed in to it in this browser, or null when nobody is. */
+async function mintToken(origin: string): Promise<string | null> {
+  const response = await fetch(`${origin}/auth/mcp-token?label=${encodeURIComponent('Sirv Lens')}`, {
+    credentials: 'include',
+    cache: 'no-store',
+  });
+  if (response.status === 401) return null;
+  if (!response.ok) throw new Error(`VibeQ did not sign Lens in (HTTP ${response.status})`);
+  const body: unknown = await response.json().catch(() => null);
+  const token = (body as { token?: unknown } | null)?.token;
+  if (typeof token !== 'string' || !token) throw new Error('VibeQ sent no token');
+  return token;
 }
 
 /** Lens updates itself from signed releases, unless a package manager or the Store does. */
@@ -137,47 +296,58 @@ function Updates({ client }: { client: LensClient }) {
   };
   return (
     <section aria-label="Updates" className="card settings-section">
-      <h2>Updates</h2>
-      <p className="num">
-        Lens {state.current}
-        {state.available ? ` · ${state.available} is available` : state.checkedAt ? ' · up to date' : ''}
-        {state.checkedAt ? ` · checked ${new Date(state.checkedAt).toLocaleString()}` : ''}
-      </p>
+      <div className="section-row">
+        <div className="section">
+          <h2>Updates</h2>
+          <p className="small muted num">
+            {state.available
+              ? `Lens ${state.available} is available.`
+              : state.checkedAt
+                ? `Up to date. Checked ${new Date(state.checkedAt).toLocaleString()}.`
+                : `Lens ${state.current}`}
+          </p>
+        </div>
+        {!state.managedBy && (
+          <button
+            type="button"
+            className="btn btn-secondary btn-sm"
+            onClick={() => void act(client.request({ method: 'updateNow' }))}
+            disabled={busy}
+          >
+            {busy ? 'Checking…' : state.available ? 'Install now' : 'Check now'}
+          </button>
+        )}
+      </div>
       {state.managedBy ? (
         <p className="small muted">{state.managedBy} updates this copy of Lens.</p>
       ) : (
-        <>
-          <label className="check">
-            <input
-              type="checkbox"
-              checked={state.automatic}
-              onChange={(e) => void act(client.request({ method: 'setAutomaticUpdates', params: { enabled: e.target.checked } }))}
-            />
-            <span>
-              Install updates automatically
-              <span className="small muted" style={{ display: 'block' }}>
-                Signed releases only. Lens restarts in the background.
-              </span>
+        <label className="check">
+          <input
+            type="checkbox"
+            checked={state.automatic}
+            onChange={(e) =>
+              void act(client.request({ method: 'setAutomaticUpdates', params: { enabled: e.target.checked } }))
+            }
+          />
+          <span>
+            Install updates automatically
+            <span className="small muted" style={{ display: 'block' }}>
+              Signed releases only. Lens restarts in the background.
             </span>
-          </label>
-          <div className="actions">
-            <button
-              type="button"
-              className="btn btn-secondary"
-              onClick={() => void act(client.request({ method: 'updateNow' }))}
-              disabled={busy}
-            >
-              {busy ? 'Checking…' : 'Check and install now'}
-            </button>
-          </div>
-        </>
+          </span>
+        </label>
       )}
-      {(problem || state.lastError) && (
-        <div role="alert" className="notice">
-          {problem ?? state.lastError}
-        </div>
-      )}
+      {(problem || state.lastError) && <Problem text={(problem ?? state.lastError)!} />}
     </section>
+  );
+}
+
+function Problem({ text }: { text: string }) {
+  return (
+    <div role="alert" className="notice">
+      <AlertIcon size={16} />
+      <span>{text}</span>
+    </div>
   );
 }
 

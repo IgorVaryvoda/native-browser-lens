@@ -55,3 +55,13 @@ export const FileIcon = make(TaskDone02Icon);
 export const LinkIcon = make(LinkSquare02Icon);
 export const MissingImageIcon = make(ImageNotFound01Icon);
 export const EraseIcon = make(EraserIcon);
+
+/** The Lens logo: viewfinder corners around a lens. It takes the color of `.mark`. */
+export function LensMark() {
+  return (
+    <svg className="mark" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeLinecap="round">
+      <path d="M3.5 8V5.5a2 2 0 0 1 2-2H8M16 3.5h2.5a2 2 0 0 1 2 2V8M20.5 16v2.5a2 2 0 0 1-2 2H16M8 20.5H5.5a2 2 0 0 1-2-2V16" strokeWidth="2" />
+      <circle cx="12" cy="12" r="3.6" strokeWidth="2" />
+    </svg>
+  );
+}

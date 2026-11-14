@@ -94,8 +94,8 @@ impl Client {
         )
     }
 
-    /// The member the token belongs to.
-    pub fn member_id(&self) -> Result<String, String> {
+    /// The member the token belongs to, with the name VibeQ shows for it.
+    pub fn me(&self) -> Result<Member, String> {
         let (status, body) = Self::answer(
             self.agent
                 .get(&self.url("/auth/me")?)
@@ -103,12 +103,20 @@ impl Client {
                 .header("Cookie", &format!("session={}", self.token))
                 .call(),
         )?;
-        let id = serde_json::from_slice::<Value>(&body)
-            .ok()
-            .and_then(|v| v["id"].as_str().map(String::from))
-            .filter(|id| !id.is_empty());
-        match (status, id) {
-            (200, Some(id)) => Ok(id),
+        let found = serde_json::from_slice::<Value>(&body).ok();
+        let field = |key: &str| {
+            found
+                .as_ref()
+                .and_then(|v| v[key].as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(String::from)
+        };
+        match (status, field("id")) {
+            (200, Some(id)) => Ok(Member {
+                name: field("name").unwrap_or_else(|| id.clone()),
+                id,
+            }),
             _ => Err(format!(
                 "VibeQ did not confirm the token's member (HTTP {status})"
             )),

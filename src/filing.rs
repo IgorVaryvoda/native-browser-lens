@@ -136,7 +136,7 @@ pub fn deliver(
             attempt.endpoint
         ));
     }
-    let member = client.member_id()?;
+    let member = client.me()?.id;
     match &attempt.member_id {
         Some(original) if *original != member => {
             return Err("this filing belongs to another VibeQ member; nothing was sent".into());
