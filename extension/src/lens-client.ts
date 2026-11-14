@@ -14,6 +14,7 @@ type ReplyTo = {
   listObservations: 'observations';
   deleteObservation: 'deleted';
   splitObservation: 'observation';
+  startSirvant: 'sirvant';
   getObservation: 'observation';
   updateObservation: 'observation';
   listProjects: 'projects';

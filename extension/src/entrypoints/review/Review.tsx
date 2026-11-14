@@ -16,6 +16,8 @@ import type { ReviewVoice } from '@/protocol/ReviewVoice';
 import { AlertIcon, DoneIcon, DraftIcon, ExportIcon, FileIcon, MaskIcon } from '@/ui/icons';
 import { RecordingEditor } from './RecordingEditor';
 import { Notes } from '../sidepanel/Notes';
+import { useStored } from '../sidepanel/Record';
+import type { SirvantRun } from '@/protocol/SirvantRun';
 
 /**
  * What leaves the notebook: every capture with its recording, as the edits left it. The daemon freezes the
@@ -33,6 +35,10 @@ export function Review({ observation: id }: { observation: number }) {
   const [assignee, setAssignee] = useState('');
   const [filing, setFiling] = useState<Filing | null>(null);
   const [sending, setSending] = useState(false);
+  /** Put Sirvant, VibeQ's agent, to work right after filing; remembered for the next review. */
+  const [sirvantNext, setSirvantNext] = useStored('lens.sirvant', false);
+  const [sirvant, setSirvant] = useState<SirvantRun | null>(null);
+  const [starting, setStarting] = useState(false);
   const [agents, setAgents] = useState<AgentInfo[]>([]);
   const [drafting, setDrafting] = useState<Agent | null>(null);
   const [suggestion, setSuggestion] = useState<Suggestion | null>(null);
@@ -158,10 +164,23 @@ export function Review({ observation: id }: { observation: number }) {
       const done = await client.request({ method: 'fileReview', params: { review: review.id, assignee: assignee || null } });
       setFiling(done);
       setProblem(done.missingFiles ? `${done.missingFiles} files did not reach VibeQ; file again to send them.` : null);
+      if (done.taskUrl && sirvantNext && !sirvant) await startSirvant();
     } catch (error) {
       setProblem(`Not filed: ${(error as Error).message}. Filing again is safe: it never creates a second task.`);
     } finally {
       setSending(false);
+    }
+  }
+
+  async function startSirvant() {
+    if (!review) return;
+    setStarting(true);
+    try {
+      setSirvant(await client.request({ method: 'startSirvant', params: { review: review.id } }));
+    } catch (error) {
+      setProblem(`Filed, but Sirvant did not start: ${(error as Error).message}.`);
+    } finally {
+      setStarting(false);
     }
   }
 
@@ -348,6 +367,7 @@ export function Review({ observation: id }: { observation: number }) {
                 <a href={filing.taskUrl} target="_blank" rel="noreferrer">
                   {filing.taskUrl}
                 </a>
+                {sirvant && <>. {sirvant.alreadyRunning ? 'Sirvant already works on it.' : 'Sirvant works on it now.'}</>}
               </span>
             </div>
           )}
@@ -398,6 +418,18 @@ export function Review({ observation: id }: { observation: number }) {
                     </option>
                   ))}
                 </select>
+              </label>
+            )}
+            {filing?.taskUrl ? (
+              !sirvant && (
+                <button type="button" className="btn btn-secondary" onClick={() => void startSirvant()} disabled={starting}>
+                  {starting ? 'Starting Sirvant…' : 'Put Sirvant to work'}
+                </button>
+              )
+            ) : (
+              <label className="check" title="VibeQ's agent takes the task and starts on it. VibeQ operators only.">
+                <input type="checkbox" checked={sirvantNext} onChange={(e) => setSirvantNext(e.target.checked)} />
+                <span>Then put Sirvant to work</span>
               </label>
             )}
             <button

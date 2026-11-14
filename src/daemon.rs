@@ -822,6 +822,22 @@ impl Daemon {
                 delivered.map_err(remote)?;
                 Reply::Filing(filing_reply(&attempt))
             }
+            Request::StartSirvant { review } => {
+                let attempt = store.filing(review).map_err(storage)?;
+                drop(store);
+                let Some((endpoint, task)) =
+                    attempt.and_then(|a| a.receipt.map(|r| (a.endpoint, r.task_id)))
+                else {
+                    return Err(bad("file the review to VibeQ first"));
+                };
+                let client = self.vibeq_client()?;
+                if client.endpoint() != endpoint {
+                    return Err(bad(format!(
+                        "this review was filed to {endpoint}; restore that VibeQ address first"
+                    )));
+                }
+                Reply::Sirvant(client.start_sirvant(&task).map_err(remote)?)
+            }
             Request::UploadChunk(chunk) => {
                 drop(store);
                 Reply::Uploaded(self.upload(chunk)?)

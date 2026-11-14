@@ -24,7 +24,7 @@ const extensionId = 'cggibhoaigdeemmdlfcncfkmoknndbfd';
 const isolated = process.platform !== 'win32';
 
 // A VibeQ that commits the first submission and then loses its reply, as a dropped connection does.
-const vibeq = { submissions: new Map(), staged: 0, submits: 0, dropFirstReply: true };
+const vibeq = { submissions: new Map(), staged: 0, submits: 0, dropFirstReply: true, sirvant: [] };
 const fakeVibeq = createServer((request, response) => {
   const chunks = [];
   request.on('data', (chunk) => chunks.push(chunk));
@@ -42,6 +42,11 @@ const fakeVibeq = createServer((request, response) => {
     if (request.headers.authorization !== 'Bearer e2e-token') return json(403, { error: 'personal_token_required' });
     if (url === '/auth/me') return json(200, { id: 'member-1', name: 'Tess Tester' });
     if (url === '/api/members') return json(200, [{ id: 'member-2', name: 'Ana' }]);
+    // Sirvant, VibeQ's agent: the task page's "put to work" call. A second call finds the live run.
+    if (url === '/api/agent/tasks/task-1/river-work' && request.method === 'POST') {
+      vibeq.sirvant.push(JSON.parse(Buffer.concat(chunks).toString('utf8')));
+      return json(vibeq.sirvant.length === 1 ? 201 : 409, { session: { id: 'session-1' } });
+    }
     if (url === '/api/attachments/stage') return (vibeq.staged++, json(201, { stagedKey: `staged/member-1/${vibeq.staged}` }));
     const found = url.match(/^\/api\/capture\/v1\/submissions\/(.+)$/);
     if (found) return vibeq.submissions.has(found[1]) ? json(200, vibeq.submissions.get(found[1]).receipt) : json(404, {});
@@ -395,10 +400,16 @@ try {
   await review.getByRole('button', { name: 'Create review' }).click();
   await review.getByRole('list', { name: 'Reviewed captures' }).getByRole('img').first().waitFor({ timeout: 15_000 });
   await review.getByLabel('Assign to').selectOption({ label: 'Ana' });
+  await review.getByLabel('Then put Sirvant to work').check();
   await review.getByRole('button', { name: 'File to VibeQ' }).click();
   await review.getByRole('alert').filter({ hasText: /Filing again is safe/ }).waitFor({ timeout: 30_000 });
   await review.getByRole('button', { name: 'File to VibeQ' }).click();
   await review.getByRole('status', { name: 'Filing' }).getByRole('link', { name: 'http://vibeq.test/?task=task-1' }).waitFor({ timeout: 30_000 });
+  // Filed, then Sirvant was put to work on the task, once, as the VibeQ task page does it.
+  await review.getByRole('status', { name: 'Filing' }).filter({ hasText: 'Sirvant works on it now.' }).waitFor({ timeout: 15_000 });
+  if (vibeq.sirvant.length !== 1 || vibeq.sirvant[0].mode !== 'work' || vibeq.sirvant[0].invoked_from !== 'lens') {
+    throw new Error(`Sirvant was asked: ${JSON.stringify(vibeq.sirvant)}`);
+  }
   const [submitted] = [...vibeq.submissions.values()];
   if (vibeq.submits !== 1 || vibeq.submissions.size !== 1) throw new Error(`VibeQ got ${vibeq.submits} submits`);
   // The task is tagged: `lens` for the source, then the observation's tags.

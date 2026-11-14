@@ -52,6 +52,11 @@ pub enum Request {
         findings: Vec<u32>,
         title: String,
     },
+    /// Puts Sirvant, VibeQ's agent, to work on the task this review was filed as.
+    StartSirvant {
+        #[ts(type = "number")]
+        review: i64,
+    },
     ListProjects,
     /// Creates a project when `id` is null, else replaces that project.
     SaveProject(ProjectInput),
@@ -326,6 +331,7 @@ pub enum Reply {
     VibeQ(VibeQSettings),
     Members(Vec<crate::vibeq::Member>),
     Filing(Filing),
+    Sirvant(crate::vibeq::SirvantRun),
     Agents(Vec<crate::investigate::AgentInfo>),
     Done,
     Setup(Box<SetupStatus>),

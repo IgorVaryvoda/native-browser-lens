@@ -12,6 +12,16 @@ pub struct Member {
     pub name: String,
 }
 
+/// Sirvant's run on a task, as VibeQ started it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct SirvantRun {
+    pub session_id: String,
+    /// Sirvant already worked on the task; VibeQ started nothing new.
+    pub already_running: bool,
+}
+
 /// VibeQ's durable record of one submission.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -171,6 +181,42 @@ impl Client {
             (true, Some(key)) => Ok(key),
             _ => Err(format!(
                 "the upload of {filename} failed (HTTP {status}); filing can retry"
+            )),
+        }
+    }
+
+    /// Puts Sirvant, VibeQ's agent, to work on a task, as the task page's button does. VibeQ then
+    /// assigns the task to Sirvant. Only VibeQ operators may do this.
+    pub fn start_sirvant(&self, task_id: &str) -> Result<SirvantRun, String> {
+        if task_id.is_empty()
+            || !task_id
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-')
+        {
+            return Err("VibeQ's task ID is not valid".into());
+        }
+        let body = serde_json::json!({ "mode": "work", "invoked_from": "lens", "extra_args": [] });
+        let (status, answer) = self.post(
+            &format!("/api/agent/tasks/{task_id}/river-work"),
+            "application/json",
+            &serde_json::to_vec(&body).expect("JSON serializes"),
+        )?;
+        let answer = serde_json::from_slice::<Value>(&answer).unwrap_or_default();
+        let session = answer["session"]["id"].as_str().map(String::from);
+        match (status, session) {
+            (200..=299, Some(session_id)) => Ok(SirvantRun {
+                session_id,
+                already_running: false,
+            }),
+            // A live run exists: VibeQ names it instead of starting a second one.
+            (409, Some(session_id)) => Ok(SirvantRun {
+                session_id,
+                already_running: true,
+            }),
+            (403, _) => Err("only VibeQ operators can put Sirvant to work".into()),
+            _ => Err(format!(
+                "VibeQ did not start Sirvant (HTTP {status} {})",
+                answer["error"].as_str().unwrap_or_default()
             )),
         }
     }
