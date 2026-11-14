@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { LensClient } from '@/lens-client';
-import { send, type CaptureResult, type TabStatus } from '@/messages';
+import { send, type CaptureResult, type SessionStart, type TabStatus } from '@/messages';
 import { MicIcon, StopIcon } from '@/ui/icons';
 import { MicrophoneBlocked, record, type Recording } from '@/voice';
 
@@ -50,13 +50,15 @@ export function RecordControls({
     return () => clearInterval(timer);
   }, [running]);
 
-  // Closing the panel ends the microphone; the session itself keeps running in the tab.
+  // Firefox only: closing the panel ends its microphone; the session keeps running in the tab.
+  // Chrome records the voice in the background, so it survives the panel.
   useEffect(() => () => microphone.current?.cancel(), []);
+  const inBackground = !import.meta.env.FIREFOX;
 
   async function start() {
     if (tabId === null) return;
     onProblem(null);
-    if (voice) {
+    if (voice && !inBackground) {
       try {
         microphone.current = await record();
       } catch (error) {
@@ -67,10 +69,14 @@ export function RecordControls({
         return onProblem(`The microphone did not start: ${(error as Error).message}`);
       }
     }
-    const started = await send<{ ok: true; startedAt: number } | { ok: false; error: string }>({ kind: 'startSession', tabId });
+    const started = await send<SessionStart>({ kind: 'startSession', tabId, voice: voice && inBackground });
     if (!started.ok) {
       microphone.current?.cancel();
       microphone.current = null;
+      if (started.microphoneBlocked) {
+        await browser.tabs.create({ url: browser.runtime.getURL('/microphone.html') });
+        return onProblem('Allow the microphone in the tab that opened, then press Record again.');
+      }
       return onProblem(started.error);
     }
     setNow(Date.now());
@@ -111,7 +117,7 @@ export function RecordControls({
         <span className="rec-dot" aria-hidden="true" />
         <span className="record-time num">{clock(now - running)}</span>
         <span className="small muted record-what">
-          {microphone.current ? 'Screen, steps and your voice' : 'Screen and steps'}
+          {microphone.current || site?.voice ? 'Screen, steps and your voice' : 'Screen and steps'}
         </span>
         <button type="button" className="btn btn-danger" onClick={() => void stop()} disabled={busy}>
           <StopIcon />

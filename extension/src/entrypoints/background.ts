@@ -1,10 +1,19 @@
 import { ActionLog, EvidenceBuffer, ReplayBuffer, ShotBuffer, WINDOW_MS } from '@/collector/buffer';
 import { DeepCollector } from '@/collector/deep';
-import { LimitedCollector } from '@/collector/limited';
+import { LimitedCollector, visibleShot } from '@/collector/limited';
 import { sanitize, sanitizeUrl } from '@/collector/sanitize';
 import { LensClient } from '@/lens-client';
 import { clientInfo } from '@/identity';
-import { originOf, type BackgroundRequest, type Broadcast, type CaptureResult, type TabStatus } from '@/messages';
+import {
+  originOf,
+  type BackgroundRequest,
+  type Broadcast,
+  type CaptureResult,
+  type OffscreenReply,
+  type OffscreenRequest,
+  type SessionStart,
+  type TabStatus,
+} from '@/messages';
 import type { Project } from '@/protocol/Project';
 import type { JsonValue } from '@/protocol/serde_json/JsonValue';
 import type { CoverageGap } from '@/protocol/CoverageGap';
@@ -25,14 +34,16 @@ export default defineBackground(() => {
   const SHOT_DELAY_MS = 700;
   const SHOT_STEPS = new Set(['click', 'press', 'select', 'check', 'uncheck']);
   function scheduleShot(tabId: number) {
-    if (!deep?.isAttached(tabId)) return;
+    if (deep && !deep.isAttached(tabId)) return;
     clearTimeout(shotTimers.get(tabId));
     shotTimers.set(
       tabId,
       setTimeout(() => {
         shotTimers.delete(tabId);
         const at = Date.now();
-        void deep.shot(tabId).then((data) => data && buffer.mode(tabId) !== undefined && shots.add(tabId, at, data));
+        void (deep ? deep.shot(tabId) : visibleShot(tabId)).then(
+          (data) => data && buffer.mode(tabId) !== undefined && shots.add(tabId, at, data),
+        );
       }, SHOT_DELAY_MS),
     );
   }
@@ -100,6 +111,7 @@ export default defineBackground(() => {
     shots.clear(tabId);
     clearTimeout(shotTimers.get(tabId));
     sessions.delete(tabId);
+    void endMicrophone(tabId, 'mic-cancel');
   }
 
   /** The rrweb recorder, in collected tabs only. Idempotent: the script guards against a second run. */
@@ -156,6 +168,7 @@ export default defineBackground(() => {
       origin,
       paused,
       session: sessions.get(tabId) ?? null,
+      voice: voiced.has(tabId),
       projectId: project?.id ?? null,
       permitted: await permitted(origin),
       mode: buffer.mode(tabId) ?? null,
@@ -220,8 +233,35 @@ export default defineBackground(() => {
     }
   }
 
-  async function startSession(tabId: number): Promise<{ ok: true; startedAt: number } | { ok: false; error: string }> {
+  /** Chrome: tabs whose session records the microphone in the offscreen page. One at a time. */
+  const voiced = new Set<number>();
+  async function microphone(kind: OffscreenRequest['kind']): Promise<OffscreenReply> {
+    if (kind === 'mic-start' && !(await browser.offscreen.hasDocument())) {
+      await browser.offscreen.createDocument({
+        url: browser.runtime.getURL('/offscreen.html'),
+        reasons: ['USER_MEDIA'],
+        justification: 'Records the voice of a Record mode session while the side panel is closed.',
+      });
+    }
+    return browser.runtime.sendMessage({ target: 'offscreen', kind } satisfies OffscreenRequest);
+  }
+  async function endMicrophone(tabId: number, kind: 'mic-stop' | 'mic-cancel'): Promise<OffscreenReply | null> {
+    if (!voiced.delete(tabId)) return null;
+    const reply = await microphone(kind).catch((error: Error) => ({ ok: false as const, error: error.message }));
+    if (voiced.size === 0) await browser.offscreen.closeDocument().catch(() => {});
+    return reply;
+  }
+
+  async function startSession(tabId: number, voice = false): Promise<SessionStart> {
     if (buffer.mode(tabId) === undefined) return { ok: false, error: 'Lens does not collect on this site yet.' };
+    if (voice && !voiced.has(tabId)) {
+      if (voiced.size > 0) return { ok: false, error: 'The microphone already records a session in another tab.' };
+      const started = await microphone('mic-start').catch((error: Error) => ({ ok: false as const, error: error.message }));
+      if (!started.ok) {
+        return { ok: false, error: `The microphone did not start: ${started.error}`, microphoneBlocked: 'blocked' in started && started.blocked };
+      }
+      voiced.add(tabId);
+    }
     const startedAt = sessions.get(tabId) ?? Date.now();
     sessions.set(tabId, startedAt);
     buffer.hold(tabId, startedAt);
@@ -236,13 +276,25 @@ export default defineBackground(() => {
   async function stopSession(tabId: number): Promise<CaptureResult> {
     const startedAt = sessions.get(tabId);
     if (startedAt === undefined) return { ok: false, error: 'No recording runs in this tab.' };
-    const result = await capture(tabId, null, startedAt);
+    const [result, spoken] = await Promise.all([capture(tabId, null, startedAt), endMicrophone(tabId, 'mic-stop')]);
     sessions.delete(tabId);
     buffer.hold(tabId, null);
     actions.hold(tabId, null);
     replay.hold(tabId, null);
     shots.hold(tabId, null);
     void broadcast({ kind: 'tabChanged', tabId });
+    if (!result.ok || !spoken) return result;
+    try {
+      if (!spoken.ok || !spoken.wav) throw new Error(spoken.ok ? 'it is empty' : spoken.error);
+      const bytes = Uint8Array.from(atob(spoken.wav), (c) => c.charCodeAt(0));
+      const audio = await client().upload(new Blob([bytes], { type: 'audio/wav' }), 'audio/wav');
+      await client().request({
+        method: 'addVoiceNote',
+        params: { observation: result.capture.observation, startedAt: spoken.startedAt, audio },
+      });
+    } catch (error) {
+      return { ok: false, error: `The recording was saved, but not the voice: ${(error as Error).message}` };
+    }
     return result;
   }
 
@@ -266,7 +318,7 @@ export default defineBackground(() => {
       return;
     }
     if (message.kind === 'startSession' || message.kind === 'stopSession') {
-      (message.kind === 'startSession' ? startSession(message.tabId) : stopSession(message.tabId)).then(reply, (error: Error) =>
+      (message.kind === 'startSession' ? startSession(message.tabId, message.voice) : stopSession(message.tabId)).then(reply, (error: Error) =>
         reply({ ok: false, error: error.message }),
       );
       return true;

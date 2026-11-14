@@ -29,6 +29,52 @@ pub fn render(png: &[u8], shapes: &[Shape]) -> Result<Vec<u8>, String> {
         .map_err(|e| format!("the screenshot cannot be written: {e}"))
 }
 
+/// A WebP shot with `areas` (fractions of its size) burned in as opaque black, written again as lossless WebP.
+pub fn mask_webp(webp: &[u8], areas: &[crate::protocol::Area]) -> Result<Vec<u8>, String> {
+    let mut decoder = image_webp::WebPDecoder::new(std::io::Cursor::new(webp))
+        .map_err(|e| format!("the shot cannot be read: {e}"))?;
+    let (width, height) = decoder.dimensions();
+    let channels = if decoder.has_alpha() { 4 } else { 3 };
+    let mut pixels = vec![0u8; width as usize * height as usize * channels];
+    decoder
+        .read_image(&mut pixels)
+        .map_err(|e| format!("the shot cannot be read: {e}"))?;
+    for a in areas {
+        // Whole pixels, rounded outwards, as in `burn`.
+        let (w, h) = (f64::from(width), f64::from(height));
+        let (x, y, aw, ah) = (a.x * w, a.y * h, a.width * w, a.height * h);
+        let clamp = |v: f64, max: f64| v.clamp(0.0, max) as usize;
+        let (left, right) = (
+            clamp(x.min(x + aw).floor(), w),
+            clamp(x.max(x + aw).ceil(), w),
+        );
+        let (top, bottom) = (
+            clamp(y.min(y + ah).floor(), h),
+            clamp(y.max(y + ah).ceil(), h),
+        );
+        for y in top..bottom {
+            let row = y * width as usize * channels;
+            for x in left..right {
+                let at = row + x * channels;
+                pixels[at..at + 3].fill(0);
+                if channels == 4 {
+                    pixels[at + 3] = 255;
+                }
+            }
+        }
+    }
+    let mut out = Vec::new();
+    let color = if channels == 4 {
+        image_webp::ColorType::Rgba8
+    } else {
+        image_webp::ColorType::Rgb8
+    };
+    image_webp::WebPEncoder::new(&mut out)
+        .encode(&pixels, width, height, color)
+        .map_err(|e| format!("the shot cannot be written: {e}"))?;
+    Ok(out)
+}
+
 /// Opaque black on whole pixels, without anti-aliasing: a partly covered edge pixel could still
 /// show part of what is under it.
 fn burn(pixmap: &mut Pixmap, x: f64, y: f64, width: f64, height: f64) {
@@ -138,6 +184,29 @@ fn paint(color: &str) -> Paint<'static> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_masked_shot_is_black_under_the_mask_only() {
+        let (width, height) = (8u32, 4u32);
+        let pixels = vec![200u8; (width * height * 3) as usize];
+        let mut webp = Vec::new();
+        image_webp::WebPEncoder::new(&mut webp)
+            .encode(&pixels, width, height, image_webp::ColorType::Rgb8)
+            .unwrap();
+        let area = crate::protocol::Area {
+            x: 1.5 / 8.0,
+            y: 0.0,
+            width: 0.25,
+            height: 2.0,
+        };
+        let masked = mask_webp(&webp, &[area]).unwrap();
+        let mut decoder = image_webp::WebPDecoder::new(std::io::Cursor::new(&masked)).unwrap();
+        let mut out = vec![0u8; pixels.len()];
+        decoder.read_image(&mut out).unwrap();
+        let at = |x: usize, y: usize| out[(y * width as usize + x) * 3];
+        assert_eq!((at(0, 0), at(1, 0), at(3, 3), at(4, 0)), (200, 0, 0, 200));
+        assert!(mask_webp(b"not webp", &[area]).is_err());
+    }
 
     fn white(width: u32, height: u32) -> Vec<u8> {
         let mut pixmap = Pixmap::new(width, height).unwrap();

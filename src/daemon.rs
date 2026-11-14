@@ -281,6 +281,68 @@ impl Daemon {
                     Updated::Missing => return Err(not_found("no such observation")),
                 }
             }
+            Request::SplitObservation {
+                observation,
+                revision,
+                findings,
+                title,
+            } => {
+                let title = plain(&title);
+                if title.is_empty() || title.len() > 200 {
+                    return Err(bad(
+                        "the new observation needs a title of at most 200 characters",
+                    ));
+                }
+                let found = store
+                    .get_observation(observation)
+                    .map_err(storage)?
+                    .ok_or_else(|| not_found("no such observation"))?;
+                let (all, own) = split_findings(&found.notes);
+                let chosen: std::collections::BTreeSet<usize> =
+                    findings.iter().map(|i| *i as usize).collect();
+                if chosen.is_empty() || chosen.iter().any(|i| *i >= all.len()) {
+                    return Err(bad("choose findings from the notes to move"));
+                }
+                let block = |pick: &dyn Fn(usize) -> bool| {
+                    let lines: Vec<&str> = all
+                        .iter()
+                        .enumerate()
+                        .filter(|(i, _)| pick(*i))
+                        .map(|(_, l)| l.as_str())
+                        .collect();
+                    let head = if lines.is_empty() {
+                        String::new()
+                    } else {
+                        format!("{FINDINGS_HEADER}\n{}", lines.join("\n"))
+                    };
+                    [head, own.clone()]
+                        .into_iter()
+                        .filter(|p| !p.is_empty())
+                        .collect::<Vec<_>>()
+                        .join("\n\n")
+                };
+                let kept = block(&|i| !chosen.contains(&i));
+                let moved = block(&|i| chosen.contains(&i));
+                let outcome = store
+                    .split_observation(observation, revision, &kept, &title, &moved, now_ms())
+                    .map_err(storage)?;
+                match outcome {
+                    Updated::Saved(copy) => {
+                        // Both are the person's now: a later summary must not put every finding back.
+                        store
+                            .set_setting(&format!("title.auto.{observation}"), "")
+                            .map_err(storage)?;
+                        Reply::Observation(copy)
+                    }
+                    Updated::Conflict(_) => {
+                        return Err(ProtocolError::new(
+                            ErrorCode::Conflict,
+                            "the notes changed after you chose; choose again",
+                        ));
+                    }
+                    Updated::Missing => return Err(not_found("no such observation")),
+                }
+            }
             Request::DeleteObservation { id } => {
                 if !store.delete_observation(id).map_err(storage)? {
                     return Err(not_found("no such observation"));
@@ -412,6 +474,13 @@ impl Daemon {
                 {
                     return Err(bad("these trims and cuts leave nothing of the recording"));
                 }
+                if edits
+                    .shot_masks
+                    .iter()
+                    .any(|m| !found.shots.iter().any(|s| s.at == m.at))
+                {
+                    return Err(bad("a mask names a shot this capture does not have"));
+                }
                 if !store.save_edits(capture, &edits).map_err(storage)? {
                     return Err(not_found("no such capture"));
                 }
@@ -498,16 +567,14 @@ impl Daemon {
                     let cut =
                         before.saturating_sub(shared.actions.len() + shared.events.len()) as u32;
                     // Step shots show what was typed, as pixels: they leave only with typed values.
-                    let shots: Vec<Shot> = capture
-                        .shots
-                        .iter()
-                        .filter(|s| {
-                            request.typed_values
-                                && inside(s.at)
-                                && !capture.edits.hidden_shots.contains(&s.at)
-                        })
-                        .cloned()
-                        .collect();
+                    let mut shots = Vec::new();
+                    for shot in capture.shots.iter().filter(|s| {
+                        request.typed_values
+                            && inside(s.at)
+                            && !capture.edits.hidden_shots.contains(&s.at)
+                    }) {
+                        shots.push(self.masked_shot(shot, &capture.edits)?);
+                    }
                     let shared = serde_json::to_vec(&shared).expect("evidence serializes");
                     items.push(ReviewItem {
                         capture: capture.id,
@@ -519,11 +586,12 @@ impl Daemon {
                             .blobs
                             .put(&shared, "application/json")
                             .map_err(storage)?,
-                        // A recording replays everything, cut parts included: until Lens can trim
-                        // it to the kept parts, an edited recording stays on this computer.
-                        recording: capture
-                            .recording
-                            .filter(|_| request.recordings.contains(id) && kept.is_empty()),
+                        recording: match &capture.recording {
+                            Some(recording) if request.recordings.contains(id) => {
+                                Some(self.kept_recording(recording, &kept)?)
+                            }
+                            _ => None,
+                        },
                         findings: export::findings(
                             &serde_json::from_slice(&shared).unwrap_or_default(),
                         ),
@@ -961,6 +1029,46 @@ impl Daemon {
     }
 
     /// What the screen showed in a capture's DOM recording, inside the kept time.
+    /// The shot with the person's masks burned in; the unmasked one never leaves.
+    fn masked_shot(&self, shot: &Shot, edits: &Edits) -> Result<Shot, ProtocolError> {
+        let Some(mask) = edits
+            .shot_masks
+            .iter()
+            .find(|m| m.at == shot.at && !m.areas.is_empty())
+        else {
+            return Ok(shot.clone());
+        };
+        let original = self.blobs.read_all(&shot.image.sha256).map_err(storage)?;
+        let masked = render::mask_webp(&original, &mask.areas).map_err(storage)?;
+        Ok(Shot {
+            image: self.blobs.put(&masked, "image/webp").map_err(storage)?,
+            ..shot.clone()
+        })
+    }
+
+    /// The recording as the edits left it: an unedited one as it is, an edited one rebuilt from
+    /// the kept parts only, so no frame of a cut part leaves.
+    fn kept_recording(
+        &self,
+        recording: &BlobRef,
+        kept: &[TimeRange],
+    ) -> Result<BlobRef, ProtocolError> {
+        if kept.is_empty() {
+            return Ok(recording.clone());
+        }
+        let events: Vec<serde_json::Value> = self
+            .blobs
+            .read_all(&recording.sha256)
+            .ok()
+            .and_then(|b| serde_json::from_slice(&b).ok())
+            .ok_or_else(|| storage("the capture's recording is not readable"))?;
+        let trimmed = crate::digest::trim(&events, kept);
+        let bytes = serde_json::to_vec(&trimmed).expect("events serialize");
+        self.blobs
+            .put(&bytes, &recording.media_type)
+            .map_err(storage)
+    }
+
     fn screen_notes(&self, capture: &Capture, kept: &[TimeRange]) -> Vec<ScreenNote> {
         let Some(recording) = &capture.recording else {
             return Vec::new();
@@ -1381,22 +1489,28 @@ fn plain(text: &str) -> String {
         .to_string()
 }
 
-/// The notes without an earlier findings block at their top.
-fn strip_findings(notes: &str) -> String {
+/// The findings lines (`- ...`) of the block at the top of the notes, and the rest of the notes.
+fn split_findings(notes: &str) -> (Vec<String>, String) {
     let mut lines = notes.lines().peekable();
+    let mut found = Vec::new();
     if lines
         .peek()
         .is_some_and(|l| l.trim() == "Findings:" || l.trim() == FINDINGS_HEADER)
     {
         lines.next();
-        while lines
-            .peek()
-            .is_some_and(|l| l.trim_start().starts_with("- "))
-        {
-            lines.next();
+        while let Some(line) = lines.next_if(|l| l.trim_start().starts_with("- ")) {
+            found.push(line.trim().to_string());
         }
     }
-    lines.collect::<Vec<_>>().join("\n").trim().to_string()
+    (
+        found,
+        lines.collect::<Vec<_>>().join("\n").trim().to_string(),
+    )
+}
+
+/// The notes without an earlier findings block at their top.
+fn strip_findings(notes: &str) -> String {
+    split_findings(notes).1
 }
 
 /// One worker transcribes voice notes in order; a GPU runs one model at a time anyway.

@@ -74,7 +74,7 @@ writeFileSync(
 if (process.argv.includes('auth')) { console.log(JSON.stringify({ loggedIn: true, authMethod: 'claude.ai' })); process.exit(0); }
 process.stdin.resume();
 process.stdin.on('end', () => console.log(JSON.stringify({ type: 'result', is_error: false,
-  structured_output: { title: 'Checkout: total shows NaN after Pay', findings: ['The total shows NaN after Pay'] } })));
+  structured_output: { title: 'Checkout: total shows NaN after Pay', findings: ['The total shows NaN after Pay', 'The coupon field accepts expired codes'] } })));
 `,
   { mode: 0o755 },
 );
@@ -299,9 +299,23 @@ try {
     .waitFor({ timeout: 30_000 });
   if (summaries) {
     if ((await review.getByLabel('Title', { exact: true }).inputValue()) !== 'Checkout: total shows NaN after Pay') throw new Error('the title was not written');
-    if (!(await review.getByLabel('Notes', { exact: true }).inputValue()).startsWith('Findings (written by Claude Haiku from the recording; check them):\n- The total shows NaN after Pay\n\n')) {
+    if (!(await review.getByLabel('Notes', { exact: true }).inputValue()).startsWith('Findings (written by Claude Haiku from the recording; check them):\n- The total shows NaN after Pay\n- The coupon field')) {
       throw new Error(`the findings are not first: ${await review.getByLabel('Notes', { exact: true }).inputValue()}`);
     }
+    // Two unrelated defects: the coupon one moves to a task of its own, with a copy of the capture.
+    await review.getByRole('button', { name: 'Split into two tasks' }).click();
+    await review.getByRole('checkbox', { name: 'The coupon field accepts expired codes' }).check();
+    if ((await review.getByLabel('Title of the new task').inputValue()) !== 'The coupon field accepts expired codes') throw new Error('the new task has no title');
+    const [split] = await Promise.all([context.waitForEvent('page'), review.getByRole('button', { name: 'Move 1 to a new task' }).click()]);
+    const splitNotes = split.getByLabel('Notes', { exact: true });
+    await splitNotes.waitFor({ timeout: 15_000 });
+    const moved = await splitNotes.inputValue();
+    if (!moved.includes('- The coupon field accepts expired codes') || moved.includes('- The total shows NaN')) throw new Error(`the new task's notes: ${moved}`);
+    await split.getByRole('img', { name: /before review/ }).first().waitFor({ timeout: 15_000 });
+    await split.close();
+    await review.getByRole('status', { name: 'Split' }).waitFor();
+    const left = await review.getByLabel('Notes', { exact: true }).inputValue();
+    if (left.includes('coupon field accepts') || !left.includes('NaN after Pay')) throw new Error(`the split left: ${left}`);
   }
   await freeze.click();
   await review.getByRole('list', { name: 'Reviewed captures' }).getByRole('img').first().waitFor({ timeout: 15_000 });
@@ -458,7 +472,11 @@ try {
   await panel.getByRole('status', { name: 'Recording' }).waitFor({ timeout: 15_000 });
   await shop.getByLabel('Coupon').fill('SAVE20');
   await shop.getByRole('button', { name: 'Pay' }).click();
+  // The person closes the panel while talking: the voice keeps recording in the background.
+  await panel.goto('about:blank');
   await panel.waitForTimeout(11_500);
+  await panel.goto(`chrome-extension://${extensionId}/sidepanel.html?tab=${tabId}`);
+  await panel.getByRole('status', { name: 'Recording' }).filter({ hasText: 'Screen, steps and your voice' }).waitFor({ timeout: 15_000 });
   const [studio] = await Promise.all([context.waitForEvent('page'), panel.getByRole('button', { name: /^Stop/ }).click()]);
   const editorRegion = studio.getByRole('region', { name: 'Recording editor' });
   await editorRegion.waitFor({ timeout: 30_000 });
@@ -528,7 +546,18 @@ try {
   const strip = studio.getByRole('region', { name: 'Shots' });
   await strip.waitFor({ timeout: 10_000 });
   const shotCount = await strip.getByRole('listitem').count();
-  await strip.getByRole('button', { name: /^Remove the shot/ }).first().click();
+  // The person blacks out the top-left of the last shot, and removes the first when there are two.
+  await strip.getByRole('button', { name: /^Mask parts of the shot/ }).last().click();
+  const masker = studio.getByRole('dialog', { name: /^Mask the shot/ });
+  const shotBox = await masker.getByLabel('Shot to mask').boundingBox();
+  await studio.mouse.move(shotBox.x + 1, shotBox.y + 1);
+  await studio.mouse.down();
+  await studio.mouse.move(shotBox.x + shotBox.width * 0.4, shotBox.y + shotBox.height * 0.4, { steps: 4 });
+  await studio.mouse.up();
+  await masker.getByRole('button', { name: 'Save masks' }).click();
+  if ((await strip.locator('.mask-box').count()) !== 1) throw new Error('the masked shot does not show its mask');
+  const removedOne = shotCount > 1;
+  if (removedOne) await strip.getByRole('button', { name: /^Remove the shot/ }).first().click();
   await studio.getByRole('status', { name: 'Edits' }).filter({ hasText: /2 notes · Saved/ }).waitFor({ timeout: 15_000 });
   await studio.getByRole('status', { name: 'Summary' }).filter({ hasText: summaries ? /wrote the title/ : /No title was written/ }).waitFor({ timeout: 30_000 });
   await studio.getByRole('button', { name: 'Create review' }).click();
@@ -558,10 +587,29 @@ try {
   const noteKinds = lens.annotations.map((a) => `${a.kind}:${a.elements.map((e) => e.name).join(',')}`).sort();
   if (noteKinds.join(' ') !== 'drawing:Pay highlight:Coupon') throw new Error(`the record's notes: ${noteKinds}`);
   if (summaries && lens.findings.writtenBy !== 'model') throw new Error(`the record's findings: ${JSON.stringify(lens.findings)}`);
-  if (lens.shots.filter((shot) => shot.reason === 'step').length !== shotCount - 1) {
-    throw new Error(`the record kept ${lens.shots.length} shots of ${shotCount} after one was removed`);
+  const stepShots = lens.shots.filter((shot) => shot.reason === 'step');
+  if (stepShots.length !== shotCount - (removedOne ? 1 : 0)) {
+    throw new Error(`the record kept ${lens.shots.length} shots of ${shotCount} (one removed: ${removedOne})`);
   }
+  // The mask is burned into the shot that leaves: its top-left pixel is black.
+  const maskedFile = readFileSync(join(sessionFolder, stepShots.at(-1).file)).toString('base64');
+  const pixel = await studio.evaluate(async (data) => {
+    const image = new Image();
+    image.src = `data:image/webp;base64,${data}`;
+    await image.decode();
+    const canvas = new OffscreenCanvas(image.width, image.height);
+    const context = canvas.getContext('2d');
+    context.drawImage(image, 0, 0);
+    return [...context.getImageData(5, 5, 1, 1).data];
+  }, maskedFile);
+  if (pixel.slice(0, 3).some((v) => v !== 0)) throw new Error(`the shared shot is not masked: ${pixel}`);
   if (!lens.shots.some((shot) => shot.reason === 'end') || typeof lens.dropped.cut !== 'number') throw new Error('the record lacks its end shot or its cut count');
+  // The cut recording leaves now, rebuilt from the kept part only (before, it stayed here).
+  const trimmed = JSON.parse(readFileSync(join(sessionFolder, 'capture-1.rrweb.json'), 'utf8'));
+  const last = trimmed.at(-1);
+  if (!lens.recording || last?.data?.tag !== 'lens-end') {
+    throw new Error(`the cut recording: ${JSON.stringify(lens.recording)} ends with ${JSON.stringify(last)}`);
+  }
 
   // Design review: every page with real content, light and dark, at the widths people use.
   if (process.env.E2E_GALLERY) {

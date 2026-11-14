@@ -240,6 +240,7 @@ export function Review({ observation: id }: { observation: number }) {
               </button>
             )}
           </p>
+          <Split client={client} id={id} onSplit={() => setNotesVersion((v) => v + 1)} />
         </section>
       )}
 
@@ -293,9 +294,10 @@ export function Review({ observation: id }: { observation: number }) {
                     </ul>
                   )}
                   <p className="small muted" aria-label={`Files of capture ${item.capture}`}>
-                    Files: {item.kind !== 'session' && `capture-${index + 1}.png, `}capture-{index + 1}-timeline.txt, capture-
-                    {index + 1}.spec.ts, capture-{index + 1}.har, capture-{index + 1}-evidence.json
-                    {item.recording && `, capture-${index + 1}-recording.json`}
+                    Files: capture-{index + 1}.lens.json, capture-{index + 1}.png
+                    {item.shots.length > 0 && `, ${item.shots.length} shots`}
+                    {item.shotsDropped > 0 && ` (${item.shotsDropped} left out to fit the filing)`}
+                    {item.recording && `, capture-${index + 1}.rrweb.json`}
                   </p>
                 </div>
               </li>
@@ -567,6 +569,111 @@ function describeStep(a: Action, hideValues: boolean) {
     default:
       return `Scroll to ${a.value}`;
   }
+}
+
+/** The findings lines at the top of the notes, as the person reads them. */
+function findingsOf(notes: string): string[] {
+  const lines = notes.split('\n');
+  if (lines[0]?.trim() !== FINDINGS_HEADER && lines[0]?.trim() !== 'Findings:') return [];
+  const out: string[] = [];
+  for (const line of lines.slice(1)) {
+    if (!line.trimStart().startsWith('- ')) break;
+    out.push(line.trim().slice(2).replace(/\\(.)/g, '$1'));
+  }
+  return out;
+}
+
+/**
+ * One recording with unrelated defects becomes two tasks: the chosen findings move to a new
+ * observation that has copies of every capture and voice note, and each is trimmed and filed alone.
+ */
+function Split({ client, id, onSplit }: { client: LensClient; id: number; onSplit: () => void }) {
+  const [open, setOpen] = useState<{ revision: number; findings: string[] } | null>(null);
+  const [chosen, setChosen] = useState<number[]>([]);
+  const [title, setTitle] = useState('');
+  const [message, setMessage] = useState<string | null>(null);
+  async function start() {
+    setMessage(null);
+    const found = await client.request({ method: 'getObservation', params: { id } });
+    const findings = findingsOf(found.notes);
+    if (findings.length < 2) {
+      setMessage('Split needs two or more findings at the top of the notes.');
+      return;
+    }
+    setOpen({ revision: found.revision, findings });
+    setChosen([]);
+    setTitle('');
+  }
+  async function split() {
+    if (!open) return;
+    try {
+      const copy = await client.request({
+        method: 'splitObservation',
+        params: { observation: id, revision: open.revision, findings: chosen, title },
+      });
+      setOpen(null);
+      setMessage(`Moved to “${copy.title}”. It opened in a new tab; trim each recording to its own defect.`);
+      onSplit();
+      void browser.tabs.create({ url: browser.runtime.getURL(`/review.html?observation=${copy.id}`) });
+    } catch (error) {
+      setMessage((error as Error).message);
+    }
+  }
+  if (!open) {
+    return (
+      <div className="split">
+        <button type="button" className="btn btn-ghost btn-sm" onClick={() => void start().catch((e: Error) => setMessage(e.message))}>
+          Split into two tasks
+        </button>
+        {message && (
+          <span className="small muted" role="status" aria-label="Split">
+            {message}
+          </span>
+        )}
+      </div>
+    );
+  }
+  return (
+    <fieldset className="split card">
+      <legend className="label">Move these findings to a new task</legend>
+      {open.findings.map((f, i) => (
+        <label key={i} className="check">
+          <input
+            type="checkbox"
+            checked={chosen.includes(i)}
+            onChange={(e) => {
+              const next = e.target.checked ? [...chosen, i] : chosen.filter((c) => c !== i);
+              setChosen(next);
+              if (!title.trim() || open.findings.some((g) => g.slice(0, 80) === title)) setTitle(open.findings[next[0] ?? -1]?.slice(0, 80) ?? '');
+            }}
+          />
+          <span>{f}</span>
+        </label>
+      ))}
+      <label className="field">
+        <span className="label">Title of the new task</span>
+        <input className="input" value={title} maxLength={200} onChange={(e) => setTitle(e.target.value)} />
+      </label>
+      <div className="note-actions">
+        <button type="button" className="btn btn-ghost btn-sm" onClick={() => setOpen(null)}>
+          Cancel
+        </button>
+        <button
+          type="button"
+          className="btn btn-primary btn-sm"
+          disabled={chosen.length === 0 || chosen.length === open.findings.length || !title.trim()}
+          onClick={() => void split()}
+        >
+          Move {chosen.length || ''} to a new task
+        </button>
+      </div>
+      {message && (
+        <span role="alert" className="small">
+          {message}
+        </span>
+      )}
+    </fieldset>
+  );
 }
 
 function BlobImage({ client, blob, alt }: { client: LensClient; blob: BlobRef; alt: string }) {

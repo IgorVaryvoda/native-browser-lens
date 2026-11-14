@@ -13,6 +13,7 @@ type ReplyTo = {
   createObservation: 'observation';
   listObservations: 'observations';
   deleteObservation: 'deleted';
+  splitObservation: 'observation';
   getObservation: 'observation';
   updateObservation: 'observation';
   listProjects: 'projects';

@@ -1,8 +1,8 @@
 //! What a DOM recording showed, as text an agent can read without a player. The rrweb events are
 //! applied to a map of serialized nodes (no browser): after each click, what appeared on the
 //! screen and what went away; after each page load, what the page showed.
-use crate::protocol::ScreenNote;
-use serde_json::{Map, Value};
+use crate::protocol::{ScreenNote, TimeRange};
+use serde_json::{Map, Value, json};
 use std::collections::{HashMap, HashSet};
 
 /// Changes this long after a click still count as its result.
@@ -20,6 +20,8 @@ struct Node {
     attributes: Map<String, Value>,
     text: Option<String>,
     children: Vec<i64>,
+    /// The other serialized fields (doctype names, `isSVG`, `rootId`, ...), kept for `serialize`.
+    rest: Map<String, Value>,
 }
 
 #[derive(Default)]
@@ -37,6 +39,17 @@ impl Dom {
             attributes: value["attributes"].as_object().cloned().unwrap_or_default(),
             text: value["textContent"].as_str().map(String::from),
             children: Vec::new(),
+            rest: value
+                .as_object()
+                .map(|o| {
+                    o.iter()
+                        .filter(|(k, _)| {
+                            !["childNodes", "attributes", "textContent"].contains(&k.as_str())
+                        })
+                        .map(|(k, v)| (k.clone(), v.clone()))
+                        .collect()
+                })
+                .unwrap_or_default(),
         };
         for child in value["childNodes"]
             .as_array()
@@ -103,6 +116,10 @@ impl Dom {
             for (k, v) in a["attributes"].as_object().into_iter().flatten() {
                 if v.is_null() {
                     n.attributes.remove(k);
+                } else if let Some(changes) = v.as_object() {
+                    let old = n.attributes.get(k).and_then(Value::as_str).unwrap_or("");
+                    n.attributes
+                        .insert(k.clone(), Value::String(restyle(old, changes)));
                 } else {
                     n.attributes.insert(k.clone(), v.clone());
                 }
@@ -140,6 +157,28 @@ impl Dom {
             stack.extend(n.children.iter().rev());
         }
         out
+    }
+
+    /// The node and its subtree as rrweb serialized it, with the changes applied.
+    fn serialize(&self, id: i64) -> Option<Value> {
+        let n = self.nodes.get(&id)?;
+        let mut out = n.rest.clone();
+        out.insert("id".into(), id.into());
+        if n.kind == 2 {
+            out.insert("attributes".into(), Value::Object(n.attributes.clone()));
+        }
+        if let Some(text) = &n.text {
+            out.insert("textContent".into(), text.clone().into());
+        }
+        if n.kind == 0 || n.kind == 2 {
+            let children: Vec<Value> = n
+                .children
+                .iter()
+                .filter_map(|c| self.serialize(*c))
+                .collect();
+            out.insert("childNodes".into(), children.into());
+        }
+        Some(Value::Object(out))
     }
 
     fn describe(&self, id: i64) -> String {
@@ -184,6 +223,91 @@ fn control(n: &Node) -> Option<String> {
         ""
     };
     Some(format!("[{kind}: {label}{disabled}]"))
+}
+
+/// rrweb sends a style change as `{ property: value | [value, priority] | false }`.
+fn restyle(old: &str, changes: &Map<String, Value>) -> String {
+    let mut declarations: Vec<(String, String)> = old
+        .split(';')
+        .filter_map(|d| d.split_once(':'))
+        .map(|(k, v)| (k.trim().to_string(), v.trim().to_string()))
+        .collect();
+    for (property, change) in changes {
+        declarations.retain(|(k, _)| k != property);
+        let value = match change {
+            Value::String(v) => v.clone(),
+            Value::Array(parts) => parts
+                .iter()
+                .filter_map(Value::as_str)
+                .filter(|p| !p.is_empty())
+                .collect::<Vec<_>>()
+                .join(" !"),
+            _ => continue,
+        };
+        declarations.push((property.clone(), value));
+    }
+    declarations
+        .iter()
+        .map(|(k, v)| format!("{k}: {v};"))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// The recording with only the kept time ranges. Each range starts with a fresh full snapshot of
+/// the page as it was at that moment, so the replay shows no frame from a cut part. Times stay as
+/// recorded, so they still match the record's steps.
+// ponytail: scroll positions, stylesheet rule changes and canvas data from before a range are not
+// carried into its snapshot; the replay shows the page unscrolled until the next change.
+pub fn trim(events: &[Value], kept: &[TimeRange]) -> Vec<Value> {
+    let mut dom = Dom::default();
+    let mut meta: Option<Value> = None;
+    let mut out = Vec::new();
+    let mut entered: Option<usize> = None;
+    for event in events {
+        let at = event["timestamp"].as_i64().unwrap_or(0);
+        let kind = event["type"].as_u64();
+        let range = kept.iter().position(|r| at >= r.from && at <= r.to);
+        if let Some(index) = range
+            && entered != Some(index)
+        {
+            entered = Some(index);
+            // A range that opens with the page's own meta and snapshot needs no made-up one.
+            if kind != Some(4)
+                && kind != Some(2)
+                && let (Some(meta), Some(root)) = (&meta, dom.root.and_then(|r| dom.serialize(r)))
+            {
+                let from = kept[index].from;
+                out.push(json!({ "type": 4, "timestamp": from, "data": meta["data"] }));
+                out.push(json!({ "type": 2, "timestamp": from, "data": {
+                    "node": root, "initialOffset": { "top": 0, "left": 0 } } }));
+            }
+        }
+        match (kind, event["data"]["source"].as_u64()) {
+            (Some(4), _) => meta = Some(event.clone()),
+            (Some(2), _) => {
+                dom = Dom::default();
+                dom.add(&event["data"]["node"]);
+            }
+            (Some(3), Some(0)) => dom.mutate(&event["data"]),
+            (Some(3), Some(4)) => {
+                if let Some(meta) = meta.as_mut() {
+                    meta["data"]["width"] = event["data"]["width"].clone();
+                    meta["data"]["height"] = event["data"]["height"].clone();
+                }
+            }
+            _ => {}
+        }
+        if range.is_some() {
+            out.push(event.clone());
+        }
+    }
+    // The replay lasts to the end of the last range, as the person kept it.
+    if let (Some(last), Some(range)) = (out.last(), kept.last())
+        && last["timestamp"].as_i64().unwrap_or(0) < range.to
+    {
+        out.push(json!({ "type": 5, "timestamp": range.to, "data": { "tag": "lens-end", "payload": {} } }));
+    }
+    out
 }
 
 fn clean(text: &str) -> String {
@@ -301,7 +425,6 @@ pub fn digest(events: &[Value]) -> Vec<ScreenNote> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
 
     fn page() -> Value {
         json!({ "type": 2, "timestamp": 1000, "data": { "node": { "type": 0, "id": 1, "childNodes": [
@@ -340,7 +463,63 @@ mod tests {
     }
 
     #[test]
+    fn a_trimmed_recording_starts_each_range_from_the_page_as_it_was() {
+        let meta = json!({ "type": 4, "timestamp": 999, "data": { "href": "https://s.test/", "width": 800, "height": 600 } });
+        let events = vec![
+            meta,
+            page(),
+            // Cut: the button text becomes a secret, then the style changes.
+            json!({ "type": 3, "timestamp": 1500, "data": { "source": 0, "removes": [], "adds": [],
+                "texts": [{ "id": 8, "value": "secret 1234" }],
+                "attributes": [{ "id": 7, "attributes": { "style": { "color": "red", "margin": ["0", "important"] } } }] } }),
+            json!({ "type": 3, "timestamp": 1600, "data": { "source": 0, "removes": [], "adds": [], "attributes": [],
+                "texts": [{ "id": 8, "value": "Enhance again" }] } }),
+            // Kept from 2000.
+            json!({ "type": 3, "timestamp": 2100, "data": { "source": 2, "type": 2, "id": 7 } }),
+            json!({ "type": 3, "timestamp": 2600, "data": { "source": 0, "removes": [], "adds": [], "attributes": [],
+                "texts": [{ "id": 8, "value": "Done" }] } }),
+        ];
+        let out = trim(
+            &events,
+            &[TimeRange {
+                from: 2000,
+                to: 3000,
+            }],
+        );
+        let text = serde_json::to_string(&out).unwrap();
+        assert!(!text.contains("secret"), "{text}");
+        assert_eq!(out[0]["type"], 4);
+        assert_eq!(out[0]["timestamp"], 2000);
+        assert_eq!(out[1]["type"], 2);
+        let snapshot = serde_json::to_string(&out[1]).unwrap();
+        assert!(snapshot.contains("Enhance again"), "{snapshot}");
+        assert!(
+            snapshot.contains("color: red; margin: 0 !important;"),
+            "{snapshot}"
+        );
+        assert!(
+            snapshot.contains("Secret head"),
+            "the head comes back: {snapshot}"
+        );
+        assert_eq!(out[2]["timestamp"], 2100);
+        assert_eq!(out.last().unwrap()["data"]["tag"], "lens-end");
+        assert_eq!(out.last().unwrap()["timestamp"], 3000);
+        // The rebuilt page reads like the original one.
+        let notes = digest(&out);
+        assert!(
+            notes[0].text.contains("Enhance again"),
+            "{:?}",
+            notes[0].text
+        );
+    }
+
+    #[test]
     fn junk_does_not_panic() {
+        let kept = trim(
+            &[json!({}), json!({ "type": 3, "data": { "source": 0 } })],
+            &[TimeRange { from: 0, to: 9 }],
+        );
+        assert_eq!(kept.len(), 3, "both events and the end marker");
         assert!(
             digest(&[
                 json!({}),

@@ -42,6 +42,16 @@ pub enum Request {
         #[ts(type = "number")]
         id: i64,
     },
+    /// Moves the chosen findings to a new observation with copies of every capture and voice
+    /// note, so unrelated defects become separate tasks. Each side is then edited on its own.
+    SplitObservation {
+        #[ts(type = "number")]
+        observation: i64,
+        revision: u32,
+        /// Indexes into the findings block at the top of the notes.
+        findings: Vec<u32>,
+        title: String,
+    },
     ListProjects,
     /// Creates a project when `id` is null, else replaces that project.
     SaveProject(ProjectInput),
@@ -660,6 +670,28 @@ pub struct Edits {
     /// Shots the person removed, by their time.
     #[ts(type = "Array<number>")]
     pub hidden_shots: Vec<i64>,
+    /// Parts of shots the person blacked out, burned in before a shot leaves.
+    pub shot_masks: Vec<ShotMask>,
+}
+
+/// Black boxes over one shot, as fractions (0 to 1) of its width and height.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ShotMask {
+    /// The shot's time.
+    #[ts(type = "number")]
+    pub at: i64,
+    pub areas: Vec<Area>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct Area {
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, TS)]
@@ -714,6 +746,16 @@ impl Edits {
         }
         if self.cuts.iter().any(|c| c.to < c.from) {
             return Err("a cut ends before it starts".into());
+        }
+        if self.shot_masks.len() > MAX_SHOTS
+            || self.shot_masks.iter().any(|m| {
+                m.areas.len() > MAX_ANNOTATIONS
+                    || m.areas
+                        .iter()
+                        .any(|a| ![a.x, a.y, a.width, a.height].iter().all(|v| v.is_finite()))
+            })
+        {
+            return Err("too many masks, or a mask that is not finite".into());
         }
         Ok(())
     }
@@ -1123,8 +1165,7 @@ mod tests {
             trim_start: Some(10),
             trim_end: Some(90),
             cuts: vec![r(40, 50), r(0, 15), r(85, 120)],
-            annotations: vec![],
-            hidden_shots: vec![],
+            ..Edits::default()
         };
         assert_eq!(edits.kept(0, 100), [r(15, 40), r(50, 85)]);
         assert_eq!(Edits::default().kept(0, 100), [r(0, 100)]);

@@ -367,6 +367,61 @@ impl Store {
         })
     }
 
+    /// Saves `kept_notes` on `id` (when `revision` is still current) and makes a new observation
+    /// with `title`, `notes` and a copy of each capture and voice note of `id`, in one transaction.
+    pub fn split_observation(
+        &mut self,
+        id: i64,
+        revision: u32,
+        kept_notes: &str,
+        title: &str,
+        notes: &str,
+        now: i64,
+    ) -> rusqlite::Result<Updated> {
+        let tx = self.db.transaction()?;
+        let changed = tx.execute(
+            "UPDATE observations SET notes = ?3, revision = revision + 1, updated_at = ?4
+             WHERE id = ?1 AND revision = ?2",
+            params![id, revision, kept_notes, now],
+        )?;
+        if changed != 1 {
+            drop(tx);
+            return Ok(match self.get_observation(id)? {
+                Some(current) => Updated::Conflict(current),
+                None => Updated::Missing,
+            });
+        }
+        tx.execute(
+            "INSERT INTO observations (title, url, notes, created_at, updated_at)
+             SELECT ?2, url, ?3, ?4, ?4 FROM observations WHERE id = ?1",
+            params![id, title, notes, now],
+        )?;
+        let copy = tx.last_insert_rowid();
+        for table in ["captures", "voice_notes"] {
+            // Every column but the row ID and the owner, so a later migration is copied too.
+            let columns: Vec<String> = tx
+                .prepare(&format!("SELECT name FROM pragma_table_info('{table}')"))?
+                .query_map([], |row| row.get(0))?
+                .collect::<rusqlite::Result<Vec<String>>>()?
+                .into_iter()
+                .filter(|c| c != "id" && c != "observation_id")
+                .collect();
+            let columns = columns.join(", ");
+            tx.execute(
+                &format!(
+                    "INSERT INTO {table} (observation_id, {columns})
+                     SELECT ?2, {columns} FROM {table} WHERE observation_id = ?1 ORDER BY id"
+                ),
+                params![id, copy],
+            )?;
+        }
+        tx.commit()?;
+        Ok(Updated::Saved(
+            self.get_observation(copy)?
+                .expect("the row was just inserted"),
+        ))
+    }
+
     /// Stores a review; `review.id` is replaced by the new row's ID.
     pub fn create_review(&self, mut review: Review) -> rusqlite::Result<Review> {
         self.db.execute(
@@ -820,6 +875,54 @@ mod tests {
         assert_eq!(captures[1].mode, CaptureMode::Deep);
 
         assert!(store.create_capture(Some(999), row("x")).unwrap().is_none());
+
+        // A split copies the captures (with their edits) and voice notes to a new observation.
+        let edits = Edits {
+            hidden_shots: vec![7],
+            ..Edits::default()
+        };
+        assert!(store.save_edits(second.id, &edits).unwrap());
+        store
+            .add_voice_note(first.observation, 6, 900, &blob('v'))
+            .unwrap();
+        let revision = store
+            .get_observation(first.observation)
+            .unwrap()
+            .unwrap()
+            .revision;
+        let Updated::Saved(copy) = store
+            .split_observation(first.observation, revision, "kept", "Comments", "moved", 20)
+            .unwrap()
+        else {
+            panic!("the split did not save");
+        };
+        assert_eq!(
+            (copy.title.as_str(), copy.notes.as_str()),
+            ("Comments", "moved")
+        );
+        let copied = store.list_captures(copy.id).unwrap();
+        assert_eq!(copied.len(), 2);
+        assert_eq!(copied[1].edits, edits);
+        assert!(
+            copied
+                .iter()
+                .all(|c| ![first.id, second.id].contains(&c.id))
+        );
+        assert_eq!(store.list_voice_notes(copy.id).unwrap().len(), 1);
+        assert_eq!(
+            store
+                .get_observation(first.observation)
+                .unwrap()
+                .unwrap()
+                .notes,
+            "kept"
+        );
+        assert!(matches!(
+            store
+                .split_observation(first.observation, revision, "x", "y", "z", 30)
+                .unwrap(),
+            Updated::Conflict(_)
+        ));
 
         let mask = Shape::Mask {
             x: 1.0,

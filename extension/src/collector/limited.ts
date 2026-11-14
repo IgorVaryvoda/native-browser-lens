@@ -44,3 +44,29 @@ export class LimitedCollector {
     if (tabId >= 0 && this.collected(tabId)) this.buffer.record(tabId, kind, { ...data, source: 'webRequest' });
   }
 }
+
+/**
+ * Firefox has no debugger: a WebP shot of the visible tab, about 1280 px wide, base64. Only when
+ * the tab is in front (the visible tab is what can be shot) and the grant allows it; else none.
+ */
+export async function visibleShot(tabId: number): Promise<string | null> {
+  try {
+    const tab = await browser.tabs.get(tabId);
+    if (!tab.active) return null;
+    const png = await browser.tabs.captureVisibleTab(tab.windowId, { format: 'png' });
+    const bitmap = await createImageBitmap(await (await fetch(png)).blob());
+    const scale = Math.min(1, 1280 / Math.max(1, bitmap.width));
+    const canvas = new OffscreenCanvas(Math.round(bitmap.width * scale), Math.round(bitmap.height * scale));
+    canvas.getContext('2d')!.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    bitmap.close();
+    const webp = await canvas.convertToBlob({ type: 'image/webp', quality: 0.7 });
+    // A browser without a WebP encoder gives PNG: the daemon keeps WebP shots only.
+    if (webp.type !== 'image/webp') return null;
+    const bytes = new Uint8Array(await webp.arrayBuffer());
+    let binary = '';
+    for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+    return btoa(binary);
+  } catch {
+    return null;
+  }
+}

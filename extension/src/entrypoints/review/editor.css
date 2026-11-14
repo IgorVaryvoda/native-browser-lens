@@ -384,14 +384,78 @@
   font: 500 11px var(--font-ui);
   cursor: pointer;
 }
+.shot-frame {
+  position: relative;
+  display: block;
+  overflow: hidden;
+  border-radius: 6px;
+  box-shadow: var(--app-shadow-hairline);
+}
+/* Natural aspect, so the mask boxes (fractions of the shot) sit where they burn in. */
 .shot-thumb img {
   display: block;
   width: 128px;
-  height: 80px;
-  object-fit: cover;
-  object-position: top left;
+  height: auto;
+}
+.mask-box {
+  position: absolute;
+  background: #000;
+  outline: 1px solid oklch(1 0 0 / 35%);
+  pointer-events: none;
+}
+.shot-mask {
+  position: absolute;
+  top: 4px;
+  right: 28px;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: oklch(0 0 0 / 65%);
+  color: #fff;
+  cursor: pointer;
+}
+.shot-mask svg {
+  width: 12px;
+  height: 12px;
+}
+.mask-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: oklch(0 0 0 / 55%);
+}
+.mask-dialog {
+  display: grid;
+  gap: 10px;
+  width: min(1100px, 100%);
+  max-height: 100%;
+  padding: 12px;
+}
+.mask-stage {
+  position: relative;
+  justify-self: center;
+  max-width: 100%;
+  overflow: hidden;
   border-radius: 6px;
-  box-shadow: var(--app-shadow-hairline);
+  cursor: crosshair;
+  touch-action: none;
+  user-select: none;
+}
+/* The stage is exactly the image's size, so a box's fractions match the shot. */
+.mask-stage img {
+  display: block;
+  max-width: 100%;
+  max-height: calc(100vh - 140px);
+}
+.mask-dialog .note-actions {
+  align-items: center;
 }
 .filmstrip li[data-removed] img {
   opacity: 0.3;

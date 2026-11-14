@@ -5,12 +5,24 @@ import type { CaptureMode } from './protocol/CaptureMode';
 export type BackgroundRequest =
   | { kind: 'capture'; tabId: number; observation: number | null }
   /** Record mode: everything from now until stopSession becomes one recording. */
-  | { kind: 'startSession'; tabId: number }
+  /** `voice`: Chrome records the microphone in the background's offscreen page. */
+  | { kind: 'startSession'; tabId: number; voice?: boolean }
   | { kind: 'stopSession'; tabId: number }
   | { kind: 'tabStatus'; tabId: number }
   | { kind: 'projectsChanged' };
 
 export type CaptureResult = { ok: true; capture: Capture } | { ok: false; error: string };
+
+export type SessionStart =
+  | { ok: true; startedAt: number }
+  /** `microphoneBlocked`: the person must allow the microphone in a tab first. */
+  | { ok: false; error: string; microphoneBlocked?: boolean };
+
+/** Background → the offscreen page (Chrome), which holds a session's microphone. */
+export type OffscreenRequest = { target: 'offscreen'; kind: 'mic-start' | 'mic-stop' | 'mic-cancel' };
+export type OffscreenReply =
+  | { ok: true; startedAt: number; wav?: string }
+  | { ok: false; error: string; blocked?: boolean };
 
 export interface TabStatus {
   /** The origin when the tab shows an http(s) page. */
@@ -24,6 +36,8 @@ export interface TabStatus {
   paused: boolean;
   /** When a Record mode session started in this tab, if one runs. */
   session: number | null;
+  /** The session records the microphone in the background (Chrome). */
+  voice: boolean;
 }
 
 /** Background → every extension page. */

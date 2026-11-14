@@ -161,3 +161,22 @@
   align-items: baseline;
   justify-content: space-between;
 }
+
+/* Split: unrelated findings move to a task of their own. */
+.split {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+}
+fieldset.split {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 0;
+}
+fieldset.split legend {
+  float: left;
+  margin-bottom: 4px;
+}
