@@ -175,15 +175,17 @@ try {
   const freeze = review.getByRole('button', { name: 'Create review' });
   await freeze.waitFor({ timeout: 15_000 });
   if (await freeze.isEnabled()) throw new Error('a review was possible without the screenshot confirmation');
+  await review.getByLabel(/Include the DOM recording/).check();
   await review.getByLabel(/I checked every/).check();
   await freeze.click();
   await review.getByRole('list', { name: 'Reviewed captures' }).getByRole('img').first().waitFor({ timeout: 15_000 });
   await review.getByRole('button', { name: 'Export to Downloads' }).click();
   const exportStatus = review.getByRole('status', { name: 'Export' });
   await exportStatus.waitFor({ timeout: 15_000 });
+  await review.getByRole('list', { name: /Findings of capture/ }).getByText(/HTTP 500 from/).waitFor();
   const folder = (await exportStatus.textContent()).replace(/^Exported to /, '');
   const report = readFileSync(join(folder, 'report.md'), 'utf8');
-  for (const expected of ['HTTP 500 from', 'Console error: total is NaN', notes, '![Capture 1](capture-1.png)']) {
+  for (const expected of ['HTTP 500 from', '` Console error: total is NaN `', notes, '![Capture 1](capture-1.png)']) {
     if (!report.includes(expected)) throw new Error(`report.md lacks ${expected}:\n${report}`);
   }
   for (const file of ['capture-1.png', 'capture-1-evidence.json', 'capture-1-recording.json', 'review.json']) {

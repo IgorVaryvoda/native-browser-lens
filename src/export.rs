@@ -13,7 +13,10 @@ pub fn export(review: &Review, blobs: &Blobs, root: &Path) -> io::Result<PathBuf
         root,
         &format!("lens-review-{}-{}", review.id, slug(&review.title)),
     )?;
-    let mut report = format!("# {}\n\n", review.title);
+    // Titles, URLs and console text come from web pages: they are escaped or fenced, so a page
+    // cannot add links, images or HTML to a report someone opens later. The person's notes stay
+    // Markdown.
+    let mut report = format!("# {}\n\n", escape(&review.title));
     if !review.notes.trim().is_empty() {
         let _ = write!(report, "{}\n\n", review.notes.trim());
     }
@@ -38,14 +41,14 @@ pub fn export(review: &Review, blobs: &Blobs, root: &Path) -> io::Result<PathBuf
         };
         let _ = write!(
             report,
-            "## Capture {n}: {title}\n\n{}\n\n![Capture {n}](capture-{n}.png)\n\n",
-            item.page_url
+            "## Capture {n}: {}\n\nPage: {}\n\n![Capture {n}](capture-{n}.png)\n\n",
+            escape(title),
+            code(&item.page_url)
         );
-        let findings = findings(&serde_json::from_slice(&evidence).unwrap_or(Value::Null));
-        if !findings.is_empty() {
+        if !item.findings.is_empty() {
             report.push_str("What the browser recorded:\n\n");
-            for finding in findings {
-                let _ = writeln!(report, "- {finding}");
+            for finding in &item.findings {
+                let _ = writeln!(report, "- {}", code(finding));
             }
             report.push('\n');
         }
@@ -58,8 +61,37 @@ pub fn export(review: &Review, blobs: &Blobs, root: &Path) -> io::Result<PathBuf
     Ok(folder)
 }
 
+/// Backslash-escapes Markdown and HTML punctuation, on one line.
+pub fn escape(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for c in text.chars().take(500) {
+        match c {
+            '\n' | '\r' => out.push(' '),
+            '\\' | '`' | '*' | '_' | '{' | '}' | '[' | ']' | '(' | ')' | '#' | '+' | '-' | '.'
+            | '!' | '|' | '<' | '>' | '~' | '&' => {
+                out.push('\\');
+                out.push(c);
+            }
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+/// An inline code span whose fence is longer than any backtick run inside, so nothing in it renders.
+pub fn code(text: &str) -> String {
+    let flat: String = text
+        .chars()
+        .take(500)
+        .map(|c| if c == '\n' || c == '\r' { ' ' } else { c })
+        .collect();
+    let longest = flat.split(|c| c != '`').map(str::len).max().unwrap_or(0);
+    let fence = "`".repeat(longest + 1);
+    format!("{fence} {flat} {fence}")
+}
+
 /// Failed requests, console errors and exceptions, in the order they happened.
-fn findings(evidence: &Value) -> Vec<String> {
+pub fn findings(evidence: &Value) -> Vec<String> {
     let events = evidence["events"]
         .as_array()
         .map(Vec::as_slice)
@@ -136,6 +168,16 @@ mod tests {
         assert_eq!(slug("Cart: total shows NaN!"), "cart-total-shows-nan");
         assert_eq!(slug("../../etc/passwd"), "etc-passwd");
         assert_eq!(slug("   "), "observation");
+    }
+
+    #[test]
+    fn page_text_cannot_add_markdown() {
+        assert_eq!(code("a ``b`` c"), "``` a ``b`` c ```");
+        assert_eq!(
+            code("x\n![t](https://evil.test/p.png)"),
+            "` x ![t](https://evil.test/p.png) `"
+        );
+        assert_eq!(escape("![t](u) <img>"), "\\!\\[t\\]\\(u\\) \\<img\\>");
     }
 
     #[test]

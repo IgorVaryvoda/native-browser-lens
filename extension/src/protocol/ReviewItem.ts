@@ -6,4 +6,8 @@ export type ReviewItem = { capture: number, pageUrl: string, pageTitle: string, 
 /**
  * The screenshot with its marks drawn and its masks burned in.
  */
-screenshot: BlobRef, evidence: BlobRef, recording: BlobRef | null, };
+screenshot: BlobRef, evidence: BlobRef, recording: BlobRef | null, 
+/**
+ * What failed, as the report states it: HTTP errors, failed requests, console errors.
+ */
+findings: Array<string>, };

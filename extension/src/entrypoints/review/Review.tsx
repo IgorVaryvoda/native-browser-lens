@@ -14,6 +14,7 @@ export function Review({ observation: id }: { observation: number }) {
   const [observation, setObservation] = useState<Observation | null>(null);
   const [captures, setCaptures] = useState<Capture[]>([]);
   const [chosen, setChosen] = useState<Set<number>>(new Set());
+  const [recordings, setRecordings] = useState<Set<number>>(new Set());
   const [checked, setChecked] = useState(false);
   const [review, setReview] = useState<FrozenReview | null>(null);
   const [exported, setExported] = useState<string | null>(null);
@@ -42,6 +43,7 @@ export function Review({ observation: id }: { observation: number }) {
           observation: observation.id,
           revision: observation.revision,
           captures: captures.filter((c) => chosen.has(c.id)).map((c) => c.id),
+          recordings: captures.filter((c) => chosen.has(c.id) && recordings.has(c.id)).map((c) => c.id),
           screenshotsChecked: checked,
         },
       });
@@ -71,10 +73,24 @@ export function Review({ observation: id }: { observation: number }) {
         <>
           <h2>Reviewed: this is what leaves your computer</h2>
           <ol aria-label="Reviewed captures">
-            {review.items.map((item) => (
+            {review.items.map((item, index) => (
               <li key={item.capture}>
                 <p className="url">{item.pageUrl}</p>
                 <BlobImage client={client} blob={item.screenshot} alt={`Reviewed capture ${item.capture}`} />
+                {item.findings.length > 0 && (
+                  <ul aria-label={`Findings of capture ${item.capture}`}>
+                    {item.findings.map((finding, n) => (
+                      <li key={n}>
+                        <code>{finding}</code>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                <p className="facts" aria-label={`Files of capture ${item.capture}`}>
+                  Files: capture-{index + 1}.png, capture-{index + 1}-evidence.json (redacted network, console and
+                  errors)
+                  {item.recording && `, capture-${index + 1}-recording.json (DOM recording, typed input masked)`}
+                </p>
               </li>
             ))}
           </ol>
@@ -108,6 +124,22 @@ export function Review({ observation: id }: { observation: number }) {
                   Include capture {c.id} · {c.eventCount} events · {c.annotations.filter((s) => s.kind === 'mask').length} masks
                 </label>
                 <BlobImage client={client} blob={c.screenshot} alt={`Capture ${c.id} before review`} />
+                {c.recording && (
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={recordings.has(c.id)}
+                      onChange={(e) => {
+                        const next = new Set(recordings);
+                        if (e.target.checked) next.add(c.id);
+                        else next.delete(c.id);
+                        setRecordings(next);
+                      }}
+                    />{' '}
+                    Include the DOM recording of capture {c.id}. Masks do not apply to recordings; only typed input is
+                    masked.
+                  </label>
+                )}
               </li>
             ))}
           </ol>

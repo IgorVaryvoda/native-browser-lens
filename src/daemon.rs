@@ -331,6 +331,10 @@ impl Daemon {
                         .map_err(storage)?;
                     let rendered =
                         render::render(&original, &capture.annotations).map_err(storage)?;
+                    let evidence = self
+                        .blobs
+                        .read_all(&capture.evidence.sha256)
+                        .map_err(storage)?;
                     items.push(ReviewItem {
                         capture: capture.id,
                         page_url: capture.page_url,
@@ -338,7 +342,12 @@ impl Daemon {
                         mode: capture.mode,
                         screenshot: self.blobs.put(&rendered, "image/png").map_err(storage)?,
                         evidence: capture.evidence,
-                        recording: capture.recording,
+                        recording: capture
+                            .recording
+                            .filter(|_| request.recordings.contains(id)),
+                        findings: export::findings(
+                            &serde_json::from_slice(&evidence).unwrap_or_default(),
+                        ),
                     });
                 }
                 Reply::Review(

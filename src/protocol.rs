@@ -121,6 +121,10 @@ pub struct ReviewRequest {
     pub revision: u32,
     #[ts(type = "Array<number>")]
     pub captures: Vec<i64>,
+    /// Captures whose DOM recording leaves too. Masks do not apply to recordings, so each one is
+    /// an explicit choice.
+    #[ts(type = "Array<number>")]
+    pub recordings: Vec<i64>,
     pub screenshots_checked: bool,
 }
 
@@ -154,6 +158,8 @@ pub struct ReviewItem {
     pub screenshot: BlobRef,
     pub evidence: BlobRef,
     pub recording: Option<BlobRef>,
+    /// What failed, as the report states it: HTTP errors, failed requests, console errors.
+    pub findings: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, TS)]

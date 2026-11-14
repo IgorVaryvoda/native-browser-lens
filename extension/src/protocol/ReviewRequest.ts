@@ -4,4 +4,9 @@ export type ReviewRequest = { observation: number,
 /**
  * The revision the person reviewed; a newer one means they did not see the latest notes.
  */
-revision: number, captures: Array<number>, screenshotsChecked: boolean, };
+revision: number, captures: Array<number>, 
+/**
+ * Captures whose DOM recording leaves too. Masks do not apply to recordings, so each one is
+ * an explicit choice.
+ */
+recordings: Array<number>, screenshotsChecked: boolean, };
