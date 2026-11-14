@@ -175,6 +175,8 @@ try {
     shop.getByRole('button', { name: 'Pay' }).click(),
   ]);
   await panel.waitForTimeout(500);
+  // Record is the default mode; this part uses Capture, which saves the last ten minutes.
+  await panel.getByRole('tab', { name: 'Capture' }).click();
   await panel.getByRole('button', { name: 'Capture to a new observation' }).click();
 
   // A capture opens its observation: the captures list appears in the detail view.
@@ -410,6 +412,61 @@ try {
     mcp.kill();
   }
 
+  // Record mode: a session with the voice, then the editor: a drawing on Pay with a note, a cut,
+  // and a review whose timeline and test carry the note and leave out the cut part.
+  await panel.goto(`chrome-extension://${extensionId}/sidepanel.html?tab=${tabId}`);
+  await status.filter({ hasText: /^Connected/ }).waitFor({ timeout: 15_000 });
+  await panel.getByRole('tab', { name: 'Record' }).click();
+  await panel.getByLabel('Record my voice').check();
+  await panel.getByRole('button', { name: 'Record', exact: true }).click();
+  await panel.getByRole('status', { name: 'Recording' }).waitFor({ timeout: 15_000 });
+  await shop.getByLabel('Coupon').fill('SAVE20');
+  await shop.getByRole('button', { name: 'Pay' }).click();
+  await panel.waitForTimeout(11_500);
+  const [studio] = await Promise.all([context.waitForEvent('page'), panel.getByRole('button', { name: /^Stop/ }).click()]);
+  const editorRegion = studio.getByRole('region', { name: 'Recording editor' });
+  await editorRegion.waitFor({ timeout: 30_000 });
+  await studio.getByRole('status', { name: 'Edits' }).filter({ hasText: /kept/ }).waitFor({ timeout: 15_000 });
+  if (speech) await studio.getByRole('region', { name: 'Transcript' }).getByText(/fellow Americans/i).first().waitFor({ timeout: 180_000 });
+  // Draw a circle around Pay in the replay.
+  // Measure after Draw: the click may scroll the page.
+  await studio.getByRole('button', { name: 'Draw' }).click();
+  await studio.evaluate(() => scrollTo(0, 0));
+  const pay = await studio.frameLocator('.stage iframe').getByRole('button', { name: 'Pay' }).boundingBox();
+  if (!pay) throw new Error('the replay does not show the Pay button');
+  const cx = pay.x + pay.width / 2;
+  const cy = pay.y + pay.height / 2;
+  await studio.mouse.move(cx - 3, cy - 3);
+  await studio.mouse.down();
+  for (const [dx, dy] of [[3, -3], [3, 3], [-3, 3], [-3, -3], [0, 0]]) await studio.mouse.move(cx + dx, cy + dy, { steps: 3 });
+  await studio.mouse.up();
+  await studio.getByRole('button', { name: 'Done drawing' }).click();
+  const draft = studio.getByRole('dialog', { name: 'New note' });
+  await draft.getByText(/marks button “Pay”/).waitFor({ timeout: 10_000 });
+  await draft.getByLabel('Note').fill('Total turns into NaN after Pay');
+  await draft.getByRole('button', { name: 'Add note' }).click();
+  // Cut the last fifth of the timeline.
+  const line = await studio.getByLabel('Timeline').boundingBox();
+  await studio.mouse.move(line.x + line.width * 0.8, line.y + line.height / 2);
+  await studio.mouse.down();
+  await studio.mouse.move(line.x + line.width * 0.99, line.y + line.height / 2, { steps: 5 });
+  await studio.mouse.up();
+  await studio.getByRole('button', { name: /^Cut .* out$/ }).click();
+  await studio.getByRole('status', { name: 'Edits' }).filter({ hasText: /1 notes · Saved/ }).waitFor({ timeout: 15_000 });
+  await studio.getByLabel(/I checked the recording/).check();
+  await studio.getByRole('button', { name: 'Create review' }).click();
+  await studio.getByRole('button', { name: 'Export to Downloads' }).click();
+  const recorded = studio.getByRole('status', { name: 'Export' });
+  await recorded.waitFor({ timeout: 15_000 });
+  const sessionFolder = (await recorded.textContent()).replace(/^Exported to /, '');
+  if (existsSync(join(sessionFolder, 'capture-1.png'))) throw new Error('a recording exported a screenshot');
+  const sessionTimeline = readFileSync(join(sessionFolder, 'capture-1-timeline.txt'), 'utf8');
+  const sessionSpec = readFileSync(join(sessionFolder, 'capture-1.spec.ts'), 'utf8');
+  for (const [file, text] of [['timeline', sessionTimeline], ['spec', sessionSpec]]) {
+    if (!/noted: Total turns into NaN after Pay \(marked button "Pay"\)/.test(text)) throw new Error(`the ${file} lacks the note:\n${text}`);
+  }
+  if (!sessionSpec.includes('.fill("SAVE20")')) throw new Error(`the recording's test lacks its steps:\n${sessionSpec}`);
+
   // Design review: every page with real content, light and dark, at the widths people use.
   if (process.env.E2E_GALLERY) {
     const gallery = process.env.E2E_GALLERY;
@@ -420,6 +477,7 @@ try {
       ['annotate', editor, 1280],
       ['replay', replay, 1280],
       ['settings', settings, 1280],
+      ['editor', studio, 1280],
     ];
     await panel.reload();
     await status.filter({ hasText: /^Connected/ }).waitFor();
@@ -464,7 +522,8 @@ try {
     }
   }
   try {
-    rmSync(work, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 });
+    if (process.env.E2E_KEEP) console.log(`e2e: kept ${work}`);
+    else rmSync(work, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 });
   } catch (error) {
     console.error(`cleanup: ${error.message}`);
   }

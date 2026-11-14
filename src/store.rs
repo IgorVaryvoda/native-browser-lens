@@ -1,7 +1,7 @@
 use crate::filing::Attempt;
 use crate::protocol::{
-    BlobRef, Capture, CaptureMode, ClientInfo, ClientSeen, Observation, ObservationSummary,
-    Project, Review, ReviewSummary, Shape, VoiceNote, VoiceSegment, VoiceState,
+    BlobRef, Capture, CaptureKind, CaptureMode, ClientInfo, ClientSeen, Edits, Observation,
+    ObservationSummary, Project, Review, ReviewSummary, Shape, VoiceNote, VoiceSegment, VoiceState,
 };
 use rusqlite::{Connection, params};
 use std::path::Path;
@@ -71,6 +71,9 @@ const MIGRATIONS: &[&str] = &[
         detail TEXT
     );
     CREATE INDEX voice_notes_by_observation ON voice_notes(observation_id);",
+    "ALTER TABLE captures ADD COLUMN kind TEXT NOT NULL DEFAULT 'moment';
+    ALTER TABLE captures ADD COLUMN started_at INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE captures ADD COLUMN edits TEXT NOT NULL DEFAULT '{}';",
 ];
 
 /// What an update found.
@@ -97,11 +100,13 @@ fn observation_from_row(row: &rusqlite::Row) -> rusqlite::Result<Observation> {
 
 const CAPTURE_COLUMNS: &str = "id, observation_id, created_at, page_url, page_title, mode,
     screenshot_sha256, screenshot_size, evidence_sha256, evidence_size, event_count, gap_count,
-    annotations, recording_sha256, recording_size";
+    annotations, recording_sha256, recording_size, kind, started_at, edits";
 
 fn capture_from_row(row: &rusqlite::Row) -> rusqlite::Result<Capture> {
     let mode: String = row.get(5)?;
     let annotations: String = row.get(12)?;
+    let kind: String = row.get(15)?;
+    let edits: String = row.get(17)?;
     Ok(Capture {
         id: row.get(0)?,
         observation: row.get(1)?,
@@ -133,6 +138,13 @@ fn capture_from_row(row: &rusqlite::Row) -> rusqlite::Result<Capture> {
             }),
             _ => None,
         },
+        kind: if kind == "session" {
+            CaptureKind::Session
+        } else {
+            CaptureKind::Moment
+        },
+        started_at: row.get(16)?,
+        edits: serde_json::from_str(&edits).unwrap_or_default(),
     })
 }
 
@@ -175,6 +187,8 @@ pub struct CaptureRow {
     pub event_count: u32,
     pub gap_count: u32,
     pub recording: Option<BlobRef>,
+    pub kind: CaptureKind,
+    pub started_at: i64,
 }
 
 fn mode_name(mode: CaptureMode) -> &'static str {
@@ -520,8 +534,8 @@ impl Store {
         tx.execute(
             "INSERT INTO captures (observation_id, created_at, page_url, page_title, mode,
                 screenshot_sha256, screenshot_size, evidence_sha256, evidence_size, event_count, gap_count,
-                recording_sha256, recording_size)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+                recording_sha256, recording_size, kind, started_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
             params![
                 observation,
                 row.created_at,
@@ -535,7 +549,12 @@ impl Store {
                 row.event_count,
                 row.gap_count,
                 row.recording.as_ref().map(|r| r.sha256.clone()),
-                row.recording.as_ref().map(|r| r.size as i64)
+                row.recording.as_ref().map(|r| r.size as i64),
+                match row.kind {
+                    CaptureKind::Moment => "moment",
+                    CaptureKind::Session => "session",
+                },
+                row.started_at
             ],
         )?;
         let id = tx.last_insert_rowid();
@@ -557,6 +576,9 @@ impl Store {
             gap_count: row.gap_count,
             annotations: Vec::new(),
             recording: row.recording,
+            kind: row.kind,
+            started_at: row.started_at,
+            edits: Edits::default(),
         }))
     }
 
@@ -655,6 +677,15 @@ impl Store {
     }
 
     /// Returns false when the capture does not exist.
+    pub fn save_edits(&self, capture: i64, edits: &Edits) -> rusqlite::Result<bool> {
+        let encoded = serde_json::to_string(edits).expect("edits serialize");
+        Ok(self.db.execute(
+            "UPDATE captures SET edits = ?2 WHERE id = ?1",
+            params![capture, encoded],
+        )? > 0)
+    }
+
+    /// Returns false when the capture does not exist.
     pub fn save_annotations(&self, capture: i64, shapes: &[Shape]) -> rusqlite::Result<bool> {
         let encoded = serde_json::to_string(shapes).expect("shapes serialize");
         Ok(self.db.execute(
@@ -702,6 +733,8 @@ mod tests {
             evidence: blob('b'),
             event_count: 4,
             gap_count: 1,
+            kind: CaptureKind::Moment,
+            started_at: 5,
             recording: None,
         };
 

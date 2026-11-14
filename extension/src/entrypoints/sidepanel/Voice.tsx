@@ -3,7 +3,7 @@ import type { LensClient } from '@/lens-client';
 import type { SpeechStatus } from '@/protocol/SpeechStatus';
 import type { VoiceNote } from '@/protocol/VoiceNote';
 import { AddNoteIcon, DeleteIcon, MicIcon, PlayIcon, StopIcon } from '@/ui/icons';
-import { MicrophoneBlocked, record, upload, type Recording } from '@/voice';
+import { MicrophoneBlocked, record, type Recording } from '@/voice';
 
 const clock = (ms: number) => {
   const s = Math.max(0, Math.round(ms / 1000));
@@ -88,7 +88,7 @@ export function VoiceNotes({
     setSaving(true);
     try {
       const wav = await recording.stop();
-      const audio = await upload(client, wav, 'audio/wav');
+      const audio = await client.upload(wav, 'audio/wav');
       await client.request({ method: 'addVoiceNote', params: { observation, startedAt: started, audio } });
       await load();
     } catch (error) {

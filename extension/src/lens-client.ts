@@ -21,6 +21,7 @@ type ReplyTo = {
   listCaptures: 'captures';
   getCapture: 'capture';
   saveAnnotations: 'capture';
+  saveEdits: 'capture';
   readBlob: 'blob';
   listReviews: 'reviews';
   getReview: 'review';
@@ -97,6 +98,26 @@ export class LensClient {
 
   disconnect() {
     this.port.disconnect();
+  }
+
+  /** Sends a file in chunks (requests stay under 16 MiB); the last reply names the stored blob. */
+  async upload(file: Blob, mediaType: 'audio/wav' | 'application/json'): Promise<BlobRef> {
+    const CHUNK = 3 * 1024 * 1024;
+    const id = crypto.randomUUID();
+    for (let offset = 0; ; offset += CHUNK) {
+      const done = offset + CHUNK >= file.size;
+      const bytes = new Uint8Array(await file.slice(offset, offset + CHUNK).arrayBuffer());
+      let binary = '';
+      for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+      const stored = await this.request({
+        method: 'uploadChunk',
+        params: { upload: id, offset, data: btoa(binary), done, mediaType },
+      });
+      if (done) {
+        if (!stored) throw new Error('Lens did not store the upload');
+        return stored;
+      }
+    }
   }
 
   /** A stored blob, read in chunks because host replies stay under 1 MiB. */

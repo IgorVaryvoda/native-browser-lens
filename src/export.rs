@@ -1,7 +1,7 @@
 //! A review as a folder anyone can open: a Markdown report, the rendered screenshots, the evidence
 //! and the recordings, and the review itself as JSON.
 use crate::blobs::Blobs;
-use crate::protocol::{Evidence, Review, ReviewItem, ReviewVoice};
+use crate::protocol::{CaptureKind, Evidence, Review, ReviewItem, ReviewVoice};
 use crate::repro;
 use serde_json::Value;
 use std::fmt::Write as _;
@@ -23,10 +23,14 @@ pub fn export(review: &Review, blobs: &Blobs, root: &Path) -> io::Result<PathBuf
     }
     for (index, item) in review.items.iter().enumerate() {
         let n = index + 1;
-        std::fs::write(
-            folder.join(format!("capture-{n}.png")),
-            blobs.read_all(&item.screenshot.sha256)?,
-        )?;
+        let session = item.kind == CaptureKind::Session;
+        // A recording speaks through its steps, the person's words and notes; no screenshot.
+        if !session {
+            std::fs::write(
+                folder.join(format!("capture-{n}.png")),
+                blobs.read_all(&item.screenshot.sha256)?,
+            )?;
+        }
         let evidence = blobs.read_all(&item.evidence.sha256)?;
         std::fs::write(folder.join(format!("capture-{n}-evidence.json")), &evidence)?;
         let parsed = repro::parse(&evidence);
@@ -44,12 +48,38 @@ pub fn export(review: &Review, blobs: &Blobs, root: &Path) -> io::Result<PathBuf
         } else {
             &item.page_title
         };
-        let _ = write!(
-            report,
-            "## Capture {n}: {}\n\nPage: {}\n\n![Capture {n}](capture-{n}.png)\n\n",
-            escape(title),
-            code(&item.page_url)
-        );
+        if session {
+            let _ = write!(
+                report,
+                "## Recording {n}: {}\n\nPage: {}\n\n",
+                escape(title),
+                code(&item.page_url)
+            );
+        } else {
+            let _ = write!(
+                report,
+                "## Capture {n}: {}\n\nPage: {}\n\n![Capture {n}](capture-{n}.png)\n\n",
+                escape(title),
+                code(&item.page_url)
+            );
+        }
+        if !item.annotations.is_empty() {
+            report.push_str("The person's notes on the recording:\n\n");
+            for note in &item.annotations {
+                let on: Vec<String> = note.elements.iter().map(|l| code(&l.css)).collect();
+                let _ = writeln!(
+                    report,
+                    "- {}{}",
+                    note.text.trim().replace('\n', " "),
+                    if on.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" (marked {})", on.join(", "))
+                    }
+                );
+            }
+            report.push('\n');
+        }
         if !item.findings.is_empty() {
             report.push_str("What the browser recorded:\n\n");
             for finding in &item.findings {
@@ -62,7 +92,7 @@ pub fn export(review: &Review, blobs: &Blobs, root: &Path) -> io::Result<PathBuf
                 report,
                 "Steps and events, oldest first. To repeat the steps: \
                  `npx playwright test capture-{n}.spec.ts`\n\n{}\n",
-                fenced(&repro::timeline(evidence, &review.voice))
+                fenced(&repro::timeline(evidence, &context(item, &review.voice)))
             );
         }
     }
@@ -83,6 +113,14 @@ pub fn export(review: &Review, blobs: &Blobs, root: &Path) -> io::Result<PathBuf
         serde_json::to_vec_pretty(review)?,
     )?;
     Ok(folder)
+}
+
+fn context<'a>(item: &'a ReviewItem, voice: &'a [ReviewVoice]) -> repro::Context<'a> {
+    repro::Context {
+        voice,
+        notes: &item.annotations,
+        kept: &item.kept,
+    }
 }
 
 /// A voice note as text: `[mm:ss] words`, one line per stretch of speech.
@@ -113,11 +151,12 @@ pub fn reproduction(
     vec![
         (
             format!("capture-{n}-timeline.txt"),
-            repro::timeline(evidence, voice).into_bytes(),
+            repro::timeline(evidence, &context(item, voice)).into_bytes(),
         ),
         (
             format!("capture-{n}.spec.ts"),
-            repro::playwright(evidence, voice, n, title, &item.page_url).into_bytes(),
+            repro::playwright(evidence, &context(item, voice), n, title, &item.page_url)
+                .into_bytes(),
         ),
         (
             format!("capture-{n}.har"),

@@ -14,6 +14,7 @@ import type { Locator } from '@/protocol/Locator';
 import type { VoiceNote } from '@/protocol/VoiceNote';
 import type { ReviewVoice } from '@/protocol/ReviewVoice';
 import { AlertIcon, DoneIcon, DraftIcon, ExportIcon, FileIcon, MaskIcon } from '@/ui/icons';
+import { RecordingEditor } from './RecordingEditor';
 
 /**
  * Chooses what may leave the notebook. The person confirms the screenshots, the daemon freezes the
@@ -55,6 +56,19 @@ export function Review({ observation: id }: { observation: number }) {
       .catch((error: Error) => setProblem(error.message));
     return () => client.disconnect();
   }, [client, id]);
+
+  // Transcripts finish in the daemon after the page opens: look again until each one is done.
+  const transcribing = voice.some((v) => v.state === 'waiting' || v.state === 'transcribing');
+  useEffect(() => {
+    if (!transcribing) return;
+    const timer = setInterval(() => {
+      void client
+        .request({ method: 'listVoiceNotes', params: { observation: id } })
+        .then(setVoice)
+        .catch(() => {});
+    }, 2000);
+    return () => clearInterval(timer);
+  }, [client, id, transcribing]);
 
   async function freeze() {
     if (!observation) return;
@@ -175,13 +189,17 @@ export function Review({ observation: id }: { observation: number }) {
           <section className="section">
             <h2>What leaves your computer</h2>
             <p className="muted small">
-              The screenshots below are rendered with your marks, and masks are burned in. Evidence is redacted.
+              {review.items.every((i) => i.kind === 'session')
+                ? 'The steps, your words and notes from the parts you kept, with a test that repeats them. Evidence is redacted.'
+                : 'The screenshots below are rendered with your marks, and masks are burned in. Evidence is redacted.'}
             </p>
           </section>
           <ol aria-label="Reviewed captures" className="review-list">
             {review.items.map((item, index) => (
-              <li key={item.capture} className="card review-item">
-                <BlobImage client={client} blob={item.screenshot} alt={`Reviewed capture ${item.capture}`} />
+              <li key={item.capture} className="card review-item" data-session={item.kind === 'session' || undefined}>
+                {item.kind !== 'session' && (
+                  <BlobImage client={client} blob={item.screenshot} alt={`Reviewed capture ${item.capture}`} />
+                )}
                 <div className="review-side">
                   <a className="small url" href={item.pageUrl} target="_blank" rel="noreferrer">
                     {item.pageUrl}
@@ -198,9 +216,19 @@ export function Review({ observation: id }: { observation: number }) {
                     <p className="small muted">No failed requests, console errors or exceptions.</p>
                   )}
                   <Steps client={client} evidence={item.evidence} label={`Steps of capture ${index + 1}`} />
+                  {item.annotations.length > 0 && (
+                    <ul className="small notes-shared" aria-label={`Notes of capture ${index + 1}`}>
+                      {item.annotations.map((a) => (
+                        <li key={a.id}>
+                          {a.text || 'Drawing'}
+                          {a.elements.length > 0 && <span className="muted"> · {a.elements.map(describeTarget).join(', ')}</span>}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
                   <p className="small muted" aria-label={`Files of capture ${item.capture}`}>
-                    Files: capture-{index + 1}.png, capture-{index + 1}-timeline.txt, capture-{index + 1}.spec.ts,
-                    capture-{index + 1}.har, capture-{index + 1}-evidence.json
+                    Files: {item.kind !== 'session' && `capture-${index + 1}.png, `}capture-{index + 1}-timeline.txt, capture-
+                    {index + 1}.spec.ts, capture-{index + 1}.har, capture-{index + 1}-evidence.json
                     {item.recording && `, capture-${index + 1}-recording.json`}
                   </p>
                 </div>
@@ -326,10 +354,20 @@ export function Review({ observation: id }: { observation: number }) {
               </span>
             </label>
           </section>
+          {captures
+            .filter((c) => c.kind === 'session' && c.recording)
+            .map((c) => (
+              <RecordingEditor key={c.id} client={client} capture={c} voice={voice} />
+            ))}
           <ol aria-label="Captures to review" className="review-list">
             {captures.map((c) => (
-              <li key={c.id} className="card review-item" data-excluded={!chosen.has(c.id) || undefined}>
-                <BlobImage client={client} blob={c.screenshot} alt={`Capture ${c.id} before review`} />
+              <li
+                key={c.id}
+                className="card review-item"
+                data-session={c.kind === 'session' || undefined}
+                data-excluded={!chosen.has(c.id) || undefined}
+              >
+                {c.kind !== 'session' && <BlobImage client={client} blob={c.screenshot} alt={`Capture ${c.id} before review`} />}
                 <div className="review-side">
                   <label className="check">
                     <input
@@ -343,20 +381,22 @@ export function Review({ observation: id }: { observation: number }) {
                       }}
                     />
                     <span>
-                      Include capture {c.id}
+                      {c.kind === 'session' ? `Include recording ${c.id}` : `Include capture ${c.id}`}
                       <span className="small muted num" style={{ display: 'block' }}>
                         {c.eventCount} events · {c.annotations.filter((s) => s.kind === 'mask').length} masks
                       </span>
                     </span>
                   </label>
-                  <button
-                    type="button"
-                    className="btn btn-ghost btn-sm"
-                    onClick={() => void browser.tabs.create({ url: browser.runtime.getURL(`/annotate.html?capture=${c.id}`) })}
-                  >
-                    <MaskIcon />
-                    Mark up or mask
-                  </button>
+                  {c.kind !== 'session' && (
+                    <button
+                      type="button"
+                      className="btn btn-ghost btn-sm"
+                      onClick={() => void browser.tabs.create({ url: browser.runtime.getURL(`/annotate.html?capture=${c.id}`) })}
+                    >
+                      <MaskIcon />
+                      Mark up or mask
+                    </button>
+                  )}
                   <Steps client={client} evidence={c.evidence} label={`Steps of capture ${c.id}`} hideValues={!typedValues} />
                   {c.recording && (
                     <label className="check">
@@ -382,7 +422,7 @@ export function Review({ observation: id }: { observation: number }) {
               </li>
             ))}
           </ol>
-          {voice.length > 0 && (
+          {voice.length > 0 && !captures.some((c) => c.kind === 'session') && (
             <section className="card voice-review">
               <VoiceList notes={voice.filter((v) => v.state === 'done')} label="Voice notes to share" />
               {voice.some((v) => v.state !== 'done') && (
@@ -400,7 +440,11 @@ export function Review({ observation: id }: { observation: number }) {
           <footer className="action-bar">
             <label className="check confirm">
               <input type="checkbox" checked={checked} onChange={(e) => setChecked(e.target.checked)} />
-              <span>I checked every included screenshot and masked what is private.</span>
+              <span>
+                {captures.every((c) => c.kind === 'session')
+                  ? 'I checked the recording and cut out what is private.'
+                  : 'I checked every included screenshot and masked what is private.'}
+              </span>
             </label>
             <span className="spacer" />
             <button type="button" className="btn btn-primary" onClick={freeze} disabled={!checked || chosen.size === 0}>

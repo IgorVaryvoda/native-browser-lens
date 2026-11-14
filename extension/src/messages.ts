@@ -4,6 +4,9 @@ import type { CaptureMode } from './protocol/CaptureMode';
 /** Side panel → background. */
 export type BackgroundRequest =
   | { kind: 'capture'; tabId: number; observation: number | null }
+  /** Record mode: everything from now until stopSession becomes one recording. */
+  | { kind: 'startSession'; tabId: number }
+  | { kind: 'stopSession'; tabId: number }
   | { kind: 'tabStatus'; tabId: number }
   | { kind: 'projectsChanged' };
 
@@ -19,6 +22,8 @@ export interface TabStatus {
   mode: CaptureMode | null;
   /** Collection is paused from the Lens menu. */
   paused: boolean;
+  /** When a Record mode session started in this tab, if one runs. */
+  session: number | null;
 }
 
 /** Background → every extension page. */

@@ -5,21 +5,21 @@ import { BLOCK_SELECTOR, scrubRecording } from '@/collector/recording';
 import type { Action } from '@/protocol/Action';
 import type { PageElement } from '@/protocol/PageElement';
 
-/** A full DOM checkpoint this often; the recorder keeps the current and the previous segment. */
-const CHECKOUT_MS = 30_000;
-/** Beyond this the oldest segment goes first, so a busy page cannot exhaust memory. */
-const MAX_EVENTS = 20_000;
+/** A full DOM checkpoint this often, so a replay can start near any moment of the window. */
+const CHECKOUT_MS = 60_000;
+/** The page sends what it recorded this often; the background keeps the window across pages. */
+const SEND_MS = 1000;
 /** Elements named for marks; the daemon keeps at most 800. */
 const MAX_ELEMENTS = 800;
 
-export type RecorderRequest = { kind: 'lens-prepare' };
-/** What the page holds for a capture: the DOM recording, steps not reported yet, and what is on screen. */
+export type RecorderRequest = { kind: 'lens-prepare' } | { kind: 'lens-snapshot' };
+/** What the page holds for a capture: recording and steps not sent yet, and what is on screen. */
 export interface Prepared {
   recording: eventWithTime[];
   pending: Action[];
   elements: PageElement[];
 }
-export type RecorderMessage = { kind: 'lens-action'; action: Action };
+export type RecorderMessage = { kind: 'lens-action'; action: Action } | { kind: 'lens-replay'; events: eventWithTime[] };
 
 // Injected by the background only into tabs Lens collects on (registration: 'runtime').
 export default defineContentScript({
@@ -29,17 +29,11 @@ export default defineContentScript({
     if (scope.__lensRecorder) return;
     scope.__lensRecorder = true;
 
-    let previous: eventWithTime[] = [];
-    let current: eventWithTime[] = [];
+    let unsent: eventWithTime[] = [];
     const stopRecording = record({
-      emit(event, isCheckout) {
+      emit(event) {
         scrubRecording(event);
-        if (isCheckout) {
-          previous = current;
-          current = [];
-        }
-        current.push(event);
-        if (previous.length + current.length > MAX_EVENTS) previous = [];
+        unsent.push(event);
       },
       checkoutEveryNms: CHECKOUT_MS,
       // Typed values and editable text never leave the page. Hidden inputs, token meta tags and
@@ -55,30 +49,46 @@ export default defineContentScript({
     let collecting: Action[] | null = null;
     const steps = new ActionRecorder(document, (action) => {
       if (collecting) return void collecting.push(action);
-      // After the extension reloads or updates, this script stays in the page without an
-      // extension: sending then throws at once. It stops itself instead of failing on each click.
+      send({ kind: 'lens-action', action });
+    });
+    steps.start();
+    // After the extension reloads or updates, this script stays without an extension: sending
+    // then throws at once. It stops itself instead of failing on every event.
+    const send = (message: RecorderMessage) => {
       try {
         if (!browser.runtime?.id) return retire();
-        void browser.runtime.sendMessage({ kind: 'lens-action', action } satisfies RecorderMessage).catch(() => {});
+        void browser.runtime.sendMessage(message).catch(() => {});
       } catch {
         retire();
       }
-    });
-    steps.start();
+    };
+    const timer = setInterval(() => {
+      if (!unsent.length) return;
+      const events = unsent;
+      unsent = [];
+      send({ kind: 'lens-replay', events });
+    }, SEND_MS);
     function retire() {
+      clearInterval(timer);
       steps.stop();
       stopRecording?.();
-      previous = [];
-      current = [];
+      unsent = [];
     }
 
     browser.runtime.onMessage.addListener((message: RecorderRequest, _sender, reply) => {
+      if (message?.kind === 'lens-snapshot') {
+        // A session starts: its replay begins with a fresh copy of the page.
+        record.takeFullSnapshot(true);
+        return;
+      }
       if (message?.kind !== 'lens-prepare') return;
       collecting = [];
       steps.flushAll();
       const pending = collecting;
       collecting = null;
-      reply({ recording: [...previous, ...current], pending, elements: elementMap(document, MAX_ELEMENTS) } satisfies Prepared);
+      const recording = unsent;
+      unsent = [];
+      reply({ recording, pending, elements: elementMap(document, MAX_ELEMENTS) } satisfies Prepared);
     });
   },
 });

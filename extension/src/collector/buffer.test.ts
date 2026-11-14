@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { EvidenceBuffer, MAX_EVENTS, WINDOW_MS } from './buffer';
+import { EvidenceBuffer, MAX_EVENTS, ReplayBuffer, startBefore, WINDOW_MS } from './buffer';
 
 describe('EvidenceBuffer', () => {
   it('keeps two minutes, then evicts by count and records the gap', () => {
@@ -23,4 +23,48 @@ describe('EvidenceBuffer', () => {
     expect(buffer.snapshot(1)!.events[0]!.data).toHaveProperty('omission');
     expect(buffer.snapshot(2)).toBeUndefined();
   });
+
+  it('keeps everything a session holds, past the window', () => {
+    let now = 0;
+    const buffer = new EvidenceBuffer(() => now);
+    buffer.start(1, 'deep');
+    buffer.hold(1, 0);
+    buffer.record(1, 'console', { text: 'at the start' });
+    now = WINDOW_MS * 3;
+    buffer.record(1, 'console', { text: 'later' });
+    expect(buffer.snapshot(1)!.events.map((e) => (e.data as { text: string }).text)).toEqual(['at the start', 'later']);
+    buffer.hold(1, null);
+    now += WINDOW_MS + 1;
+    buffer.record(1, 'console', { text: 'now' });
+    expect(buffer.snapshot(1)!.events).toHaveLength(1);
+  });
 });
+
+describe('ReplayBuffer', () => {
+  const meta = (t: number) => ({ type: 4, timestamp: t });
+  const full = (t: number) => ({ type: 2, timestamp: t });
+  const step = (t: number) => ({ type: 3, timestamp: t });
+
+  it('starts every replay at a full snapshot', () => {
+    const s = 1000;
+    const events = [meta(0), full(0), step(5 * s), meta(60 * s), full(60 * s), step(70 * s)];
+    expect(startBefore(events, 65 * s)).toBe(3);
+    // A session's own snapshot, taken just after it started, wins over the older one.
+    expect(startBefore(events, 58 * s)).toBe(3);
+    expect(startBefore(events, 30 * s)).toBe(0);
+    expect(startBefore(events, -5 * s)).toBe(0);
+  });
+
+  it('drops what lies before the window, from the last snapshot before it', () => {
+    let now = 0;
+    const buffer = new ReplayBuffer(() => now);
+    buffer.add(1, [meta(0), full(0), step(1)]);
+    now = WINDOW_MS + 100;
+    buffer.add(1, [meta(60_000), full(60_000), step(WINDOW_MS + 50)]);
+    expect(buffer.slice(1, 0).map((e) => e.timestamp)).toEqual([0, 0, 1, 60_000, 60_000, WINDOW_MS + 50]);
+    now = WINDOW_MS + 70_000;
+    buffer.add(1, [step(now)]);
+    expect(buffer.slice(1, 0)[0]).toEqual(meta(60_000));
+  });
+});
+

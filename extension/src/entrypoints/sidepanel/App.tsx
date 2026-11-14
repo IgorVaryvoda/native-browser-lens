@@ -7,6 +7,7 @@ import type { ObservationSummary } from '@/protocol/ObservationSummary';
 import { AlertIcon, BackIcon, CameraIcon, ExportIcon, PenIcon, PlayIcon, SettingsIcon, LensMark } from '@/ui/icons';
 import { Notes } from './Notes';
 import { VoiceNotes } from './Voice';
+import { RecordControls, useStored, type PanelMode } from './Record';
 import { InstallApp, SetupCard } from './Onboarding';
 
 type Connection = { state: 'connecting' } | { state: 'ready'; hello: Hello } | { state: 'failed'; message: string };
@@ -54,6 +55,7 @@ export function App() {
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
+  const [panelMode, setPanelMode] = useStored<PanelMode>('lens.mode', 'record');
   const lastWebTab = useRef<number | null>(null);
 
   /**
@@ -191,6 +193,27 @@ export function App() {
           <SetupCard client={client} refresh={site?.mode ? 1 : 0} />
 
           <section className="card site" aria-label="This site">
+            <div className="segmented mode-switch" role="tablist" aria-label="Mode">
+              {(['record', 'capture'] as const).map((m) => (
+                <button
+                  key={m}
+                  type="button"
+                  role="tab"
+                  className="btn btn-sm"
+                  aria-selected={panelMode === m}
+                  aria-pressed={panelMode === m}
+                  onClick={() => setPanelMode(m)}
+                  disabled={site?.session != null}
+                >
+                  {m === 'record' ? 'Record' : 'Capture'}
+                </button>
+              ))}
+            </div>
+            <p className="small muted mode-hint">
+              {panelMode === 'record'
+                ? 'Record a session with your voice, then review, cut and annotate it.'
+                : 'Capture saves the last ten minutes of this tab.'}
+            </p>
             {site?.origin ? (
               <>
                 <div className="site-row">
@@ -224,6 +247,9 @@ export function App() {
             ) : (
               <p className="small muted">Open a web page (http or https) to capture it.</p>
             )}
+            {panelMode === 'record' ? (
+              <RecordControls client={client} tabId={tabId} site={site} onProblem={setProblem} />
+            ) : (
             <button
               type="button"
               className="btn btn-primary btn-lg btn-block capture"
@@ -240,6 +266,7 @@ export function App() {
                 ))}
               </span>
             </button>
+            )}
             {problem && (
               <div role="alert" className="notice">
                 <AlertIcon />

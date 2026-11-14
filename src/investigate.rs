@@ -494,7 +494,7 @@ impl Drop for Workspace {
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
-    use crate::protocol::{BlobRef, CaptureMode, ReviewItem};
+    use crate::protocol::{BlobRef, CaptureKind, CaptureMode, ReviewItem};
 
     fn review(blobs: &Blobs) -> Review {
         let mut pixmap = tiny_skia::Pixmap::new(2, 2).unwrap();
@@ -523,6 +523,9 @@ mod tests {
                 recording: None,
                 findings: vec!["HTTP 500 from https://shop.test/api".into()],
                 marks: vec![],
+                kind: CaptureKind::Moment,
+                kept: vec![],
+                annotations: vec![],
             }],
             voice: vec![],
         }

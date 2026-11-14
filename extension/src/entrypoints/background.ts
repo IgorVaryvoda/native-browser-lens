@@ -1,4 +1,4 @@
-import { ActionLog, EvidenceBuffer } from '@/collector/buffer';
+import { ActionLog, EvidenceBuffer, ReplayBuffer, WINDOW_MS } from '@/collector/buffer';
 import { DeepCollector } from '@/collector/deep';
 import { LimitedCollector } from '@/collector/limited';
 import { sanitize, sanitizeUrl } from '@/collector/sanitize';
@@ -12,12 +12,15 @@ import type { Action } from '@/protocol/Action';
 import type { PageElement } from '@/protocol/PageElement';
 import type { Prepared, RecorderMessage } from './recorder.content';
 
-/** The request limit is 16 MiB, shared with the screenshot and the evidence. */
-const MAX_RECORDING_BYTES = 8 * 1024 * 1024;
+/** A recording uploads in chunks; past this it is left out with a gap. */
+const MAX_RECORDING_BYTES = 256 * 1024 * 1024;
 
 export default defineBackground(() => {
   const buffer = new EvidenceBuffer();
   const actions = new ActionLog();
+  const replay = new ReplayBuffer();
+  /** Record mode: the tabs with a running session, and when each started. */
+  const sessions = new Map<number, number>();
   const urls = new Map<number, string>();
   const deep = DeepCollector.available() ? new DeepCollector(buffer, (tabId) => urls.get(tabId)) : undefined;
   if (!deep) new LimitedCollector(buffer, (tabId) => buffer.mode(tabId) !== undefined).listen();
@@ -76,6 +79,8 @@ export default defineBackground(() => {
   function stop(tabId: number) {
     buffer.stop(tabId);
     actions.clear(tabId);
+    replay.clear(tabId);
+    sessions.delete(tabId);
   }
 
   /** The rrweb recorder, in collected tabs only. Idempotent: the script guards against a second run. */
@@ -101,10 +106,8 @@ export default defineBackground(() => {
         new Promise((_, fail) => setTimeout(() => fail(new Error('the recorder did not answer')), 3000)),
       ])) as Prepared | undefined;
       if (!prepared) return gap('recording', 'The recorder did not answer'), empty;
-      let recording: JsonValue[] | null = prepared.recording as unknown as JsonValue[];
-      if (!recording.length) (gap('recording', 'The recording is empty'), (recording = null));
-      else if (JSON.stringify(recording).length > MAX_RECORDING_BYTES) (gap('recording', 'The recording exceeds 8 MiB'), (recording = null));
-      return { recording, pending: prepared.pending, elements: prepared.elements };
+      replay.add(tabId, prepared.recording);
+      return { recording: null, pending: prepared.pending, elements: prepared.elements };
     } catch (error) {
       return gap('recording', (error as Error).message), empty;
     }
@@ -133,22 +136,39 @@ export default defineBackground(() => {
     return {
       origin,
       paused,
+      session: sessions.get(tabId) ?? null,
       projectId: project?.id ?? null,
       permitted: await permitted(origin),
       mode: buffer.mode(tabId) ?? null,
     };
   }
 
-  async function capture(tabId: number, observation: number | null): Promise<CaptureResult> {
+  /**
+   * Saves what the tab recorded from `session` on (Record mode), or the last ten minutes
+   * (Capture mode): the replay, the steps, network and console, and a screenshot of now.
+   */
+  async function capture(tabId: number, observation: number | null, session: number | null = null): Promise<CaptureResult> {
     try {
+      const from = session ?? Date.now() - WINDOW_MS;
       const tab = await browser.tabs.get(tabId);
       const screenshot = await takeScreenshot(tab);
-      const snapshot = buffer.snapshot(tabId) ?? {
+      const snapshot = buffer.snapshot(tabId, from) ?? {
         mode: 'screenshotOnly' as const,
         events: [],
         gaps: [{ channel: 'collector', reason: 'Lens does not collect evidence on this site', startedAt: Date.now(), endedAt: null }],
       };
-      const { recording, pending, elements } = await preparePage(tabId, snapshot.gaps);
+      const { pending, elements } = await preparePage(tabId, snapshot.gaps);
+      // The replay lasts until now, also when the page did not change at the end.
+      const events = [...replay.slice(tabId, from), { type: 5, data: { tag: 'lens-end', payload: {} }, timestamp: Date.now() }];
+      let recording = null;
+      if (events.length > 1) {
+        const body = new Blob([JSON.stringify(events)], { type: 'application/json' });
+        if (body.size > MAX_RECORDING_BYTES) {
+          snapshot.gaps.push({ channel: 'recording', reason: 'The recording exceeds 256 MiB', startedAt: Date.now(), endedAt: null });
+        } else {
+          recording = await client().upload(body, 'application/json');
+        }
+      }
       const page = await pageSnapshot(tabId).catch((error: Error) => {
         snapshot.gaps.push({ channel: 'page', reason: error.message, startedAt: Date.now(), endedAt: null });
         return null;
@@ -160,8 +180,10 @@ export default defineBackground(() => {
           pageUrl: sanitizeUrl(tab.url ?? ''),
           pageTitle: tab.title ?? '',
           screenshot,
-          evidence: { ...snapshot, page, actions: [...actions.snapshot(tabId), ...pending], elements },
+          evidence: { ...snapshot, page, actions: [...actions.snapshot(tabId, from), ...pending], elements },
           recording,
+          kind: session === null ? 'moment' : 'session',
+          startedAt: session ?? Math.max(from, events[0]?.timestamp ?? from),
         },
       });
       void broadcast({ kind: 'captured', capture: saved });
@@ -169,6 +191,30 @@ export default defineBackground(() => {
     } catch (error) {
       return { ok: false, error: (error as Error).message };
     }
+  }
+
+  async function startSession(tabId: number): Promise<{ ok: true; startedAt: number } | { ok: false; error: string }> {
+    if (buffer.mode(tabId) === undefined) return { ok: false, error: 'Lens does not collect on this site yet.' };
+    const startedAt = sessions.get(tabId) ?? Date.now();
+    sessions.set(tabId, startedAt);
+    buffer.hold(tabId, startedAt);
+    actions.hold(tabId, startedAt);
+    replay.hold(tabId, startedAt);
+    await browser.tabs.sendMessage(tabId, { kind: 'lens-snapshot' }).catch(() => {});
+    void broadcast({ kind: 'tabChanged', tabId });
+    return { ok: true, startedAt };
+  }
+
+  async function stopSession(tabId: number): Promise<CaptureResult> {
+    const startedAt = sessions.get(tabId);
+    if (startedAt === undefined) return { ok: false, error: 'No recording runs in this tab.' };
+    const result = await capture(tabId, null, startedAt);
+    sessions.delete(tabId);
+    buffer.hold(tabId, null);
+    actions.hold(tabId, null);
+    replay.hold(tabId, null);
+    void broadcast({ kind: 'tabChanged', tabId });
+    return result;
   }
 
   /** Through the debugger when attached; else the visible tab, which needs activeTab (a toolbar
@@ -181,10 +227,18 @@ export default defineBackground(() => {
   }
 
   browser.runtime.onMessage.addListener((message: BackgroundRequest | RecorderMessage, sender, reply) => {
-    if (message.kind === 'lens-action') {
+    if (message.kind === 'lens-action' || message.kind === 'lens-replay') {
       const tabId = sender.tab?.id;
-      if (tabId !== undefined && buffer.mode(tabId) !== undefined) actions.add(tabId, message.action);
+      if (tabId === undefined || buffer.mode(tabId) === undefined) return;
+      if (message.kind === 'lens-action') actions.add(tabId, message.action);
+      else replay.add(tabId, message.events);
       return;
+    }
+    if (message.kind === 'startSession' || message.kind === 'stopSession') {
+      (message.kind === 'startSession' ? startSession(message.tabId) : stopSession(message.tabId)).then(reply, (error: Error) =>
+        reply({ ok: false, error: error.message }),
+      );
+      return true;
     }
     const work =
       message.kind === 'capture'

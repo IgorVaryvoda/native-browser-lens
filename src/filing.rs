@@ -225,7 +225,7 @@ fn hex(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::{BlobRef, CaptureMode, ReviewItem};
+    use crate::protocol::{BlobRef, CaptureKind, CaptureMode, ReviewItem};
     use std::collections::HashMap;
     use std::sync::{Arc, Mutex};
 
@@ -340,6 +340,9 @@ mod tests {
                 recording: None,
                 findings: vec!["HTTP 500 from https://shop.test/api".into()],
                 marks: vec![],
+                kind: CaptureKind::Moment,
+                kept: vec![],
+                annotations: vec![],
             }],
             voice: vec![],
         };

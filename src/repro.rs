@@ -3,7 +3,8 @@
 //! answers. Everything here comes from the evidence, which a website wrote: generated code holds
 //! page text only inside JSON string literals and one-line comments, so a page cannot add code.
 use crate::protocol::{
-    Action, ActionKind, Evidence, Locator, MarkTarget, PageElement, ReviewVoice, Shape,
+    Action, ActionKind, Annotation, Evidence, Locator, MarkTarget, PageElement, ReviewVoice, Shape,
+    TimeRange,
 };
 use serde_json::{Value, json};
 use std::collections::HashMap;
@@ -21,8 +22,31 @@ struct Entry {
     text: String,
     /// The action it describes, for the test; None for what the page did or the person said.
     action: Option<Action>,
+    source: Source,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum Source {
+    Page,
     /// Words from the person's voice notes.
-    said: bool,
+    Said,
+    /// A note the person added in the review, with what it points at.
+    Noted,
+}
+
+/// What the person added to a recording: their words, their notes, and the parts that stay.
+#[derive(Default)]
+pub struct Context<'a> {
+    pub voice: &'a [ReviewVoice],
+    pub notes: &'a [Annotation],
+    /// Empty: everything stays.
+    pub kept: &'a [TimeRange],
+}
+
+impl Context<'_> {
+    fn keeps(&self, at: i64) -> bool {
+        self.kept.is_empty() || self.kept.iter().any(|r| at >= r.from && at <= r.to)
+    }
 }
 
 /// Voice notes reach a capture's timeline when they fall near its steps and events: a minute
@@ -35,8 +59,8 @@ pub fn parse(evidence: &[u8]) -> Option<Evidence> {
 }
 
 /// The steps, the page's notable events and the person's words in time order, as plain text.
-pub fn timeline(evidence: &Evidence, voice: &[ReviewVoice]) -> String {
-    let entries = entries(evidence, voice);
+pub fn timeline(evidence: &Evidence, context: &Context) -> String {
+    let entries = entries(evidence, context);
     let Some(start) = entries.first().map(|e| e.timestamp) else {
         return "Lens recorded no steps and no notable events for this capture.\n".into();
     };
@@ -50,10 +74,10 @@ pub fn timeline(evidence: &Evidence, voice: &[ReviewVoice]) -> String {
             ms / 1000 % 60,
             ms % 1000,
             one_line(
-                &if entry.said {
-                    format!("the person said: {}", entry.text)
-                } else {
-                    entry.text.clone()
+                &match entry.source {
+                    Source::Said => format!("the person said: {}", entry.text),
+                    Source::Noted => format!("the person noted: {}", entry.text),
+                    Source::Page => entry.text.clone(),
                 },
                 400
             )
@@ -65,7 +89,7 @@ pub fn timeline(evidence: &Evidence, voice: &[ReviewVoice]) -> String {
 /// A Playwright test that repeats the person's steps, with what the page did as comments.
 pub fn playwright(
     evidence: &Evidence,
-    voice: &[ReviewVoice],
+    context: &Context,
     capture: usize,
     title: &str,
     page_url: &str,
@@ -117,15 +141,15 @@ pub fn playwright(
          // await page.routeFromHAR('capture-{capture}.har', {{ notFound: 'fallback' }});"
     );
 
-    let entries = entries(evidence, voice);
+    let entries = entries(evidence, context);
     let mut current: Option<String> = None;
     let mut last_step: Option<(i64, ActionKind)> = None;
     for entry in &entries {
         let Some(action) = &entry.action else {
-            let source = if entry.said {
-                "The person said"
-            } else {
-                "Lens recorded"
+            let source = match entry.source {
+                Source::Said => "The person said",
+                Source::Noted => "The person noted",
+                Source::Page => "Lens recorded",
             };
             let _ = writeln!(out, "  // {source}: {}", comment(&entry.text));
             continue;
@@ -267,7 +291,7 @@ fn describe(action: &Action) -> String {
 
 /// The person's steps and the page's notable events, oldest first. Requests appear only when they
 /// failed or came from the page's own code (fetch, XHR) or loaded a document.
-fn entries(evidence: &Evidence, voice: &[ReviewVoice]) -> Vec<Entry> {
+fn entries(evidence: &Evidence, context: &Context) -> Vec<Entry> {
     let mut entries: Vec<Entry> = evidence
         .actions
         .iter()
@@ -275,7 +299,7 @@ fn entries(evidence: &Evidence, voice: &[ReviewVoice]) -> Vec<Entry> {
             timestamp: a.timestamp,
             text: describe(a),
             action: Some(a.clone()),
-            said: false,
+            source: Source::Page,
         })
         .collect();
     let mut requests: HashMap<&str, (&str, &str)> = HashMap::new();
@@ -314,15 +338,18 @@ fn entries(evidence: &Evidence, voice: &[ReviewVoice]) -> Vec<Entry> {
                 timestamp: event.timestamp,
                 text: text.trim_end().into(),
                 action: None,
-                said: false,
+                source: Source::Page,
             });
         }
     }
     let first = entries.iter().map(|e| e.timestamp).min();
     let last = entries.iter().map(|e| e.timestamp).max();
-    for note in voice {
+    for note in context.voice {
         for segment in &note.segments {
             let at = note.started_at + segment.start_ms;
+            if !context.keeps(at) {
+                continue;
+            }
             let near = match (first, last) {
                 (Some(first), Some(last)) => {
                     at >= first - VOICE_BEFORE_MS && at <= last + VOICE_AFTER_MS
@@ -334,10 +361,24 @@ fn entries(evidence: &Evidence, voice: &[ReviewVoice]) -> Vec<Entry> {
                     timestamp: at,
                     text: segment.text.trim().into(),
                     action: None,
-                    said: true,
+                    source: Source::Said,
                 });
             }
         }
+    }
+    for note in context.notes.iter().filter(|n| context.keeps(n.at)) {
+        let on: Vec<String> = note.elements.iter().map(describe_locator).collect();
+        let text = match (note.text.trim(), on.is_empty()) {
+            (text, true) => text.to_string(),
+            ("", false) => format!("marked {}", on.join(", ")),
+            (text, false) => format!("{text} (marked {})", on.join(", ")),
+        };
+        entries.push(Entry {
+            timestamp: note.at,
+            text,
+            action: None,
+            source: Source::Noted,
+        });
     }
     // Stable: an action and the events it caused keep their recorded order at equal times.
     entries.sort_by_key(|e| e.timestamp);
@@ -554,8 +595,14 @@ impl Rect {
 /// The evidence as a review shares it: without the element list. Unless the person chose to share
 /// what they typed and the site's data, typed values are masked, request bodies are dropped, and
 /// only the bodies of failed responses stay, as before Lens kept API answers.
-pub fn for_review(mut evidence: Evidence, typed_values: bool) -> Evidence {
+pub fn for_review(mut evidence: Evidence, typed_values: bool, kept: &[TimeRange]) -> Evidence {
     evidence.elements.clear();
+    // What happened in a trimmed or cut part does not leave.
+    if !kept.is_empty() {
+        let inside = |at: i64| kept.iter().any(|r| at >= r.from && at <= r.to);
+        evidence.actions.retain(|a| inside(a.timestamp));
+        evidence.events.retain(|e| inside(e.timestamp));
+    }
     if typed_values {
         return evidence;
     }
@@ -765,7 +812,7 @@ mod tests {
 
     #[test]
     fn the_timeline_merges_steps_and_failures() {
-        let text = timeline(&checkout(), &[]);
+        let text = timeline(&checkout(), &Context::default());
         assert_eq!(
             text,
             "+00:00.000  type \"SAVE10\" into textbox \"Coupon\"\n\
@@ -778,7 +825,13 @@ mod tests {
 
     #[test]
     fn the_test_repeats_the_steps() {
-        let script = playwright(&checkout(), &[], 1, "Checkout", "https://shop.test/cart");
+        let script = playwright(
+            &checkout(),
+            &Context::default(),
+            1,
+            "Checkout",
+            "https://shop.test/cart",
+        );
         for expected in [
             "test.use({ viewport: { width: 640, height: 480 }, deviceScaleFactor: 2, locale: \"en-US\" });",
             "  await page.goto(\"https://shop.test/cart\");",
@@ -804,7 +857,7 @@ mod tests {
             json!({ "level": "error", "text": "a\nrequire('child_process').exec('rm -rf ~')" });
         let script = playwright(
             &evidence,
-            &[],
+            &Context::default(),
             1,
             "t\n}); evil(); //",
             "https://shop.test/cart",
@@ -852,7 +905,14 @@ mod tests {
                 },
             ],
         };
-        let text = timeline(&checkout(), std::slice::from_ref(&note));
+        let voice = std::slice::from_ref(&note);
+        let text = timeline(
+            &checkout(),
+            &Context {
+                voice,
+                ..Default::default()
+            },
+        );
         assert!(
             text.contains("+00:00.300  the person said: now I pay\n"),
             "{text}"
@@ -860,7 +920,10 @@ mod tests {
         assert!(!text.contains("much later"));
         let script = playwright(
             &checkout(),
-            &[note],
+            &Context {
+                voice,
+                ..Default::default()
+            },
             1,
             "Checkout",
             "https://shop.test/cart",
@@ -868,6 +931,39 @@ mod tests {
         assert!(
             script.contains("  // The person said: now I pay\n"),
             "{script}"
+        );
+    }
+
+    #[test]
+    fn notes_and_cuts_shape_the_timeline() {
+        let notes = [Annotation {
+            id: "a".into(),
+            at: 1500,
+            text: "total is wrong here".into(),
+            drawing: vec![],
+            elements: vec![button("Pay")],
+        }];
+        // The cut removes the console error and the failed answer.
+        let kept = [
+            TimeRange { from: 0, to: 1550 },
+            TimeRange {
+                from: 1800,
+                to: 3000,
+            },
+        ];
+        let context = Context {
+            notes: &notes,
+            kept: &kept,
+            ..Default::default()
+        };
+        let text = timeline(&for_review(checkout(), true, &kept), &context);
+        assert!(
+            text.contains("the person noted: total is wrong here (marked button \"Pay\")"),
+            "{text}"
+        );
+        assert!(
+            !text.contains("console.error") && !text.contains("HTTP 500"),
+            "{text}"
         );
     }
 
@@ -953,11 +1049,14 @@ mod tests {
 
     #[test]
     fn reviews_mask_typed_values_unless_shared() {
-        let hidden = for_review(checkout(), false);
+        let hidden = for_review(checkout(), false, &[]);
         assert_eq!(hidden.actions[0].value, None);
         assert!(hidden.actions[0].masked);
-        assert!(timeline(&hidden, &[]).contains("type a private value into textbox \"Coupon\""));
-        let shared = for_review(checkout(), true);
+        assert!(
+            timeline(&hidden, &Context::default())
+                .contains("type a private value into textbox \"Coupon\"")
+        );
+        let shared = for_review(checkout(), true, &[]);
         assert_eq!(shared.actions[0].value.as_deref(), Some("SAVE10"));
         assert!(har(&shared)["log"]["entries"][0]["request"]["postData"].is_object());
     }
@@ -980,7 +1079,7 @@ mod tests {
             "responseBody",
             json!({ "requestId": "8", "format": "json", "body": { "email": "a@b.test" } }),
         ));
-        let hidden = for_review(evidence, false);
+        let hidden = for_review(evidence, false, &[]);
         let text = serde_json::to_string(&hidden.events).unwrap();
         assert!(
             !text.contains("a@b.test") && !text.contains("SAVE10"),

@@ -384,3 +384,40 @@
 .model-progress .meter {
   display: block;
 }
+
+/* ---------- Modes ---------- */
+.mode-switch {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+}
+.mode-hint {
+  margin: -2px 0 2px;
+}
+.record-start {
+  display: grid;
+  gap: 10px;
+}
+.record-start .check svg {
+  vertical-align: -2px;
+}
+.record-live {
+  display: grid;
+  grid-template-columns: auto auto 1fr auto;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 8px 8px 12px;
+  border-radius: var(--radius);
+  background: var(--card-danger);
+}
+.record-time {
+  font: 600 16px var(--font-heading);
+}
+.record-what {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rec-dot-still {
+  animation: none;
+  background: currentColor;
+}

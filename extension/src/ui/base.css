@@ -373,3 +373,16 @@ code,
     transition: none;
   }
 }
+
+/* ---------- Segmented control ---------- */
+.segmented {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: var(--radius);
+  background: var(--muted);
+}
+.segmented .btn[aria-pressed='true'] {
+  background: var(--background);
+  box-shadow: var(--app-shadow-hairline), var(--app-shadow-xs);
+}

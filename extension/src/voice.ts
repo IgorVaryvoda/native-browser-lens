@@ -1,10 +1,6 @@
 // Voice notes: the microphone in an extension page, a 16 kHz mono WAV, and an upload in chunks.
-import type { LensClient } from '@/lens-client';
-import type { BlobRef } from '@/protocol/BlobRef';
 
 const SAMPLE_RATE = 16_000;
-/** Raw bytes per upload request; base64 makes each request about 4 MiB, under the 16 MiB limit. */
-const CHUNK_BYTES = 3 * 1024 * 1024;
 
 export interface Recording {
   startedAt: number;
@@ -81,28 +77,4 @@ export function encodeWav(samples: Float32Array): Blob {
     view.setInt16(44 + i * 2, s < 0 ? s * 0x8000 : s * 0x7fff, true);
   }
   return new Blob([view.buffer], { type: 'audio/wav' });
-}
-
-/** Sends a file to the daemon in chunks; the last reply names the stored blob. */
-export async function upload(client: LensClient, file: Blob, mediaType: 'audio/wav' | 'application/json'): Promise<BlobRef> {
-  const id = crypto.randomUUID();
-  for (let offset = 0; ; offset += CHUNK_BYTES) {
-    const part = file.slice(offset, offset + CHUNK_BYTES);
-    const done = offset + CHUNK_BYTES >= file.size;
-    const stored = await client.request({
-      method: 'uploadChunk',
-      params: { upload: id, offset, data: await base64(part), done, mediaType },
-    });
-    if (done) {
-      if (!stored) throw new Error('Lens did not store the upload');
-      return stored;
-    }
-  }
-}
-
-async function base64(blob: Blob): Promise<string> {
-  const bytes = new Uint8Array(await blob.arrayBuffer());
-  let binary = '';
-  for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
-  return btoa(binary);
 }

@@ -102,7 +102,11 @@ impl LensMcp {
             .map(|(index, item)| {
                 let n = index + 1;
                 let mut files = vec![
-                    format!("capture-{n}.png"),
+                    if item.kind == crate::protocol::CaptureKind::Session {
+                        String::new()
+                    } else {
+                        format!("capture-{n}.png")
+                    },
                     format!("capture-{n}-timeline.txt"),
                     format!("capture-{n}.spec.ts"),
                     format!("capture-{n}.har"),
@@ -111,6 +115,7 @@ impl LensMcp {
                 if item.recording.is_some() {
                     files.push(format!("capture-{n}-recording.json"));
                 }
+                files.retain(|f| !f.is_empty());
                 serde_json::json!({
                     "capture": n,
                     "collection": item.mode,
@@ -119,6 +124,8 @@ impl LensMcp {
                         "pageUrl": item.page_url, "pageTitle": item.page_title, "findings": item.findings,
                         // What each red mark on the screenshot points at, as locators.
                         "marks": item.marks,
+                        // The person's notes at moments of a recording, with the elements they drew on.
+                        "notes": item.annotations,
                     },
                 })
             })

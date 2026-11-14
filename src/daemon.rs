@@ -322,16 +322,23 @@ impl Daemon {
                 capture.evidence.actions.truncate(repro::MAX_ACTIONS);
                 capture.evidence.elements.truncate(repro::MAX_ELEMENTS);
                 let evidence = serde_json::to_vec(&capture.evidence).expect("evidence serializes");
-                let recording = match &capture.recording {
-                    Some(events) if !events.is_empty() => {
-                        let bytes = serde_json::to_vec(events).expect("events serialize");
-                        Some(
-                            self.blobs
-                                .put(&bytes, "application/json")
-                                .map_err(storage)?,
-                        )
+                // The recording came through UploadChunk; it must be stored and be JSON.
+                let recording = match capture.recording.clone() {
+                    Some(blob) => {
+                        let (head, size) = self
+                            .blobs
+                            .read(&blob.sha256, 0, 1)
+                            .map_err(|_| not_found("upload the recording first"))?;
+                        if head != b"[" {
+                            return Err(bad("the recording must be a JSON array of rrweb events"));
+                        }
+                        Some(BlobRef {
+                            size,
+                            media_type: "application/json".into(),
+                            ..blob
+                        })
                     }
-                    _ => None,
+                    None => None,
                 };
                 let row = CaptureRow {
                     created_at: now_ms(),
@@ -346,6 +353,8 @@ impl Daemon {
                     event_count: capture.evidence.events.len() as u32,
                     gap_count: capture.evidence.gaps.len() as u32,
                     recording,
+                    kind: capture.kind,
+                    started_at: capture.started_at,
                 };
                 let saved = store
                     .create_capture(capture.observation, row)
@@ -369,6 +378,18 @@ impl Daemon {
                     shape.validate().map_err(bad)?;
                 }
                 if !store.save_annotations(capture, &shapes).map_err(storage)? {
+                    return Err(not_found("no such capture"));
+                }
+                Reply::Capture(
+                    store
+                        .get_capture(capture)
+                        .map_err(storage)?
+                        .ok_or_else(|| not_found("no such capture"))?,
+                )
+            }
+            Request::SaveEdits { capture, edits } => {
+                edits.validate().map_err(bad)?;
+                if !store.save_edits(capture, &edits).map_err(storage)? {
                     return Err(not_found("no such capture"));
                 }
                 Reply::Capture(
@@ -426,7 +447,23 @@ impl Daemon {
                         &parsed.elements,
                         repro::scale(&original, &parsed),
                     );
-                    let shared = repro::for_review(parsed, request.typed_values);
+                    // Trims and cuts decide what leaves; an unedited capture keeps all of it.
+                    let kept = if capture.edits == Edits::default() {
+                        Vec::new()
+                    } else {
+                        capture.edits.kept(capture.started_at, capture.created_at)
+                    };
+                    let inside = |at: i64| {
+                        kept.is_empty() || kept.iter().any(|r| at >= r.from && at <= r.to)
+                    };
+                    let annotations: Vec<Annotation> = capture
+                        .edits
+                        .annotations
+                        .iter()
+                        .filter(|a| inside(a.at))
+                        .cloned()
+                        .collect();
+                    let shared = repro::for_review(parsed, request.typed_values, &kept);
                     let shared = serde_json::to_vec(&shared).expect("evidence serializes");
                     items.push(ReviewItem {
                         capture: capture.id,
@@ -445,6 +482,9 @@ impl Daemon {
                             &serde_json::from_slice(&shared).unwrap_or_default(),
                         ),
                         marks,
+                        kind: capture.kind,
+                        kept,
+                        annotations,
                     });
                 }
                 Reply::Review(
@@ -775,11 +815,13 @@ impl Daemon {
             &self.paths,
             &format!("installing update {}", manifest.version),
         );
+        // Read before the file is replaced: afterwards Linux reports this binary as "… (deleted)".
+        let executable = std::env::current_exe().map_err(storage)?;
         if let Err(e) = crate::update::install(&self.paths, &manifest) {
             let _ = self.lock_store().set_setting("update.error", &e);
             return Err(remote(e));
         }
-        restart_soon(&self.paths);
+        restart_soon(&self.paths, &executable);
         Ok(())
     }
 
@@ -985,10 +1027,7 @@ fn project_for(store: &Store, page_url: Option<&str>) -> Result<String, Protocol
 
 /// Starts `lens restart` from the new binary, detached; it stops this daemon after the reply is out
 /// and starts the new one through the service manager.
-fn restart_soon(paths: &Paths) {
-    let Ok(executable) = std::env::current_exe() else {
-        return;
-    };
+fn restart_soon(paths: &Paths, executable: &std::path::Path) {
     let mut command = std::process::Command::new(executable);
     command
         .args(["restart", "--after", "2"])
@@ -1187,13 +1226,23 @@ mod tests {
     fn stores_a_capture_and_serves_its_blobs_in_chunks() {
         let (_dir, daemon) = daemon();
         let png = [b"\x89PNG\r\n\x1a\n".as_slice(), &[7u8; 600 * 1024]].concat();
+        // The recording arrives first, in chunks, as a blob.
+        let events = br#"[{"type":4,"data":{"href":"http://127.0.0.1:4100/cart"},"timestamp":1}]"#;
+        let upload = "0b5c4e1e-8d7a-4f0e-9a39-1d2f3c4b5a69";
+        let first = ask(&daemon, &serde_json::json!({ "id": 9, "method": "uploadChunk", "params": {
+            "upload": upload, "offset": 0, "data": BASE64.encode(&events[..10]), "done": false, "mediaType": "application/json" } }).to_string());
+        assert_eq!(first["result"]["data"], serde_json::Value::Null, "{first}");
+        let last = ask(&daemon, &serde_json::json!({ "id": 10, "method": "uploadChunk", "params": {
+            "upload": upload, "offset": 10, "data": BASE64.encode(&events[10..]), "done": true, "mediaType": "application/json" } }).to_string());
+        let recording = last["result"]["data"].clone();
+        assert_eq!(recording["size"], events.len(), "{last}");
         let request = serde_json::json!({
             "id": 1, "method": "createCapture", "params": {
                 "observation": null, "pageUrl": "http://127.0.0.1:4100/cart", "pageTitle": "Cart",
                 "screenshot": BASE64.encode(&png),
                 "evidence": { "mode": "deep", "page": null, "gaps": [],
                     "events": [{ "timestamp": 1, "kind": "console", "data": { "level": "error" } }] },
-                "recording": [{ "type": 4, "data": { "href": "http://127.0.0.1:4100/cart" }, "timestamp": 1 }]
+                "recording": recording, "kind": "session", "startedAt": 1
             }
         });
         let reply = ask(&daemon, &request.to_string());
@@ -1221,9 +1270,24 @@ mod tests {
         }
         assert_eq!(read, png);
 
+        // Edits: saved, validated, and returned with the capture.
+        let id = capture["id"].as_i64().unwrap();
+        let edits = serde_json::json!({ "trimStart": 2, "trimEnd": null, "cuts": [{ "from": 5, "to": 6 }],
+            "annotations": [{ "id": "n1", "at": 3, "text": "here", "drawing": [[{ "x": 1.0, "y": 2.0 }]], "elements": [] }] });
+        let saved = ask(&daemon, &serde_json::json!({ "id": 3, "method": "saveEdits", "params": { "capture": id, "edits": edits } }).to_string());
+        assert_eq!(
+            saved["result"]["data"]["edits"]["cuts"][0]["from"], 5,
+            "{saved}"
+        );
+        assert_eq!(saved["result"]["data"]["kind"], "session");
+        let backwards = serde_json::json!({ "trimStart": null, "trimEnd": null, "cuts": [{ "from": 6, "to": 5 }], "annotations": [] });
+        let refused = ask(&daemon, &serde_json::json!({ "id": 4, "method": "saveEdits", "params": { "capture": id, "edits": backwards } }).to_string());
+        assert_eq!(refused["status"], "error");
+
         let not_png = serde_json::json!({ "id": 3, "method": "createCapture", "params": {
             "observation": null, "pageUrl": "http://a.test/", "pageTitle": "", "screenshot": BASE64.encode(b"GIF89a"),
-            "evidence": { "mode": "screenshotOnly", "page": null, "gaps": [], "events": [] }, "recording": null } });
+            "evidence": { "mode": "screenshotOnly", "page": null, "gaps": [], "events": [] }, "recording": null,
+            "kind": "moment", "startedAt": 0 } });
         assert_eq!(
             ask(&daemon, &not_png.to_string())["error"]["code"],
             "badRequest"

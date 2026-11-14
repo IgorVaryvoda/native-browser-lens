@@ -4,10 +4,11 @@ import type { CoverageGap } from '@/protocol/CoverageGap';
 import type { EvidenceEvent } from '@/protocol/EvidenceEvent';
 import { sanitize } from './sanitize';
 
-export const WINDOW_MS = 120_000;
-export const MAX_EVENTS = 512;
+/** Capture reaches this far back; a session holds everything from Record to Stop. */
+export const WINDOW_MS = 10 * 60_000;
+export const MAX_EVENTS = 4000;
 export const MAX_EVENT_BYTES = 24 * 1024;
-export const MAX_BUFFER_BYTES = 1024 * 1024;
+export const MAX_BUFFER_BYTES = 4 * 1024 * 1024;
 const MAX_GAPS = 40;
 
 const bytes = (value: unknown) => new TextEncoder().encode(JSON.stringify(value)).length;
@@ -17,9 +18,11 @@ interface Entry {
   events: { event: EvidenceEvent; size: number }[];
   size: number;
   gaps: CoverageGap[];
+  /** A session in this tab keeps everything from this time on. */
+  hold?: number;
 }
 
-/** The last two minutes of evidence for each collected tab, within count and byte budgets. */
+/** The last ten minutes of evidence for each collected tab, within count and byte budgets. */
 export class EvidenceBuffer {
   private readonly tabs = new Map<number, Entry>();
 
@@ -68,15 +71,26 @@ export class EvidenceBuffer {
     if (entry.gaps.length > MAX_GAPS) entry.gaps.shift();
   }
 
-  snapshot(tabId: number) {
+  /** Keeps everything from `from` on, past the window, until released with null. */
+  hold(tabId: number, from: number | null) {
+    const entry = this.tabs.get(tabId);
+    if (entry) entry.hold = from ?? undefined;
+  }
+
+  /** The evidence from `from` on (default: the whole window). */
+  snapshot(tabId: number, from = 0) {
     const entry = this.tabs.get(tabId);
     if (!entry) return undefined;
     this.prune(tabId, entry);
-    return { mode: entry.mode, events: entry.events.map((e) => e.event), gaps: [...entry.gaps] };
+    return {
+      mode: entry.mode,
+      events: entry.events.map((e) => e.event).filter((e) => e.timestamp >= from),
+      gaps: [...entry.gaps],
+    };
   }
 
   private prune(tabId: number, entry: Entry) {
-    const cutoff = this.now() - WINDOW_MS;
+    const cutoff = Math.min(this.now() - WINDOW_MS, entry.hold ?? Infinity);
     while (entry.events.length && entry.events[0]!.event.timestamp < cutoff) entry.size -= entry.events.shift()!.size;
     let evicted = false;
     while (entry.events.length > MAX_EVENTS || entry.size > MAX_BUFFER_BYTES) {
@@ -94,23 +108,123 @@ export const MAX_ACTIONS = 300;
 /** The person's recent steps in each collected tab. */
 export class ActionLog {
   private readonly tabs = new Map<number, Action[]>();
+  private readonly holds = new Map<number, number>();
 
   constructor(private readonly now: () => number = Date.now) {}
+
+  private cutoff(tabId: number) {
+    return Math.min(this.now() - ACTION_WINDOW_MS, this.holds.get(tabId) ?? Infinity);
+  }
 
   add(tabId: number, action: Action) {
     const list = this.tabs.get(tabId) ?? [];
     list.push(action);
-    const cutoff = this.now() - ACTION_WINDOW_MS;
+    const cutoff = this.cutoff(tabId);
     while (list.length && (list.length > MAX_ACTIONS || list[0]!.timestamp < cutoff)) list.shift();
     this.tabs.set(tabId, list);
   }
 
-  snapshot(tabId: number): Action[] {
-    const cutoff = this.now() - ACTION_WINDOW_MS;
+  hold(tabId: number, from: number | null) {
+    if (from === null) this.holds.delete(tabId);
+    else this.holds.set(tabId, from);
+  }
+
+  snapshot(tabId: number, from = 0): Action[] {
+    const cutoff = Math.max(this.cutoff(tabId), from);
     return (this.tabs.get(tabId) ?? []).filter((a) => a.timestamp >= cutoff);
   }
 
   clear(tabId: number) {
     this.tabs.delete(tabId);
+    this.holds.delete(tabId);
   }
+}
+
+/** rrweb's event types that start a replay: the page's size and URL, then the whole DOM. */
+const META = 4;
+const FULL_SNAPSHOT = 2;
+/** One tab's replay may hold this much; beyond it the oldest stretch goes, with a gap. */
+export const MAX_REPLAY_BYTES = 64 * 1024 * 1024;
+
+interface ReplayEvent {
+  type: number;
+  timestamp: number;
+}
+
+/**
+ * The DOM recording of each collected tab, across page loads. A replay can only start at a full
+ * snapshot, so the buffer keeps the last one before the window and cuts there.
+ */
+export class ReplayBuffer {
+  private readonly tabs = new Map<number, { events: { event: ReplayEvent; size: number }[]; size: number; hold?: number }>();
+
+  constructor(private readonly now: () => number = Date.now) {}
+
+  add(tabId: number, events: ReplayEvent[]) {
+    const entry = this.tabs.get(tabId) ?? { events: [], size: 0 };
+    for (const event of events) {
+      const size = JSON.stringify(event).length;
+      entry.events.push({ event, size });
+      entry.size += size;
+    }
+    this.tabs.set(tabId, entry);
+    this.prune(entry);
+  }
+
+  hold(tabId: number, from: number | null) {
+    const entry = this.tabs.get(tabId);
+    if (entry) entry.hold = from ?? undefined;
+  }
+
+  /** The events from the last full snapshot at or before `from`, or the first one after it. */
+  slice(tabId: number, from: number): ReplayEvent[] {
+    const entry = this.tabs.get(tabId);
+    if (!entry) return [];
+    const start = startBefore(entry.events.map((e) => e.event), from);
+    return entry.events.slice(start).map((e) => e.event);
+  }
+
+  clear(tabId: number) {
+    this.tabs.delete(tabId);
+  }
+
+  private prune(entry: { events: { event: ReplayEvent; size: number }[]; size: number; hold?: number }) {
+    const cutoff = Math.min(this.now() - WINDOW_MS, entry.hold ?? Infinity);
+    let start = startBefore(
+      entry.events.map((e) => e.event),
+      cutoff,
+    );
+    // Over budget: drop whole stretches up to the next full snapshot, so the rest still replays.
+    let size = entry.events.slice(start).reduce((sum, e) => sum + e.size, 0);
+    while (size > MAX_REPLAY_BYTES) {
+      const next = entry.events.findIndex((e, i) => i > start && e.event.type === FULL_SNAPSHOT);
+      if (next < 0) break;
+      const from = entry.events[next - 1]?.event.type === META ? next - 1 : next;
+      size -= entry.events.slice(start, from).reduce((sum, e) => sum + e.size, 0);
+      start = from;
+    }
+    if (start > 0) {
+      entry.events.splice(0, start);
+      entry.size = size;
+    }
+  }
+}
+
+/** A snapshot this soon after `from` is the one taken for it, when a session started. */
+const FRESH_MS = 5000;
+
+/**
+ * Index of the replay start for `from`: a full snapshot taken just after it, else the last one at
+ * or before it (with the meta event in front of it).
+ */
+export function startBefore(events: ReplayEvent[], from: number): number {
+  let found = -1;
+  for (let i = 0; i < events.length; i++) {
+    if (events[i]!.type !== FULL_SNAPSHOT) continue;
+    const at = events[i]!.timestamp;
+    if (at <= from || found < 0 || at - from <= FRESH_MS) found = i;
+    if (at > from) break;
+  }
+  if (found < 0) return 0;
+  return events[found - 1]?.type === META ? found - 1 : found;
 }

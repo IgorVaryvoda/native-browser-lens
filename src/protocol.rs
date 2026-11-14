@@ -58,6 +58,12 @@ pub enum Request {
         capture: i64,
         shapes: Vec<Shape>,
     },
+    /// Replaces a recording's edits: the trimmed ends, the cut parts, the notes and drawings.
+    SaveEdits {
+        #[ts(type = "number")]
+        capture: i64,
+        edits: Edits,
+    },
     /// Freezes what may leave the notebook: chosen captures, rendered with their marks and masks,
     /// at the observation's current revision. The person must confirm they checked the screenshots.
     CreateReview(ReviewRequest),
@@ -370,6 +376,18 @@ pub struct ReviewItem {
     /// What each mark on the screenshot points at, in the order of the marks. Masks are left out.
     #[serde(default)]
     pub marks: Vec<MarkTarget>,
+    #[serde(default = "moment")]
+    pub kind: CaptureKind,
+    /// The parts of the recording that leave, after trims and cuts; empty for a moment capture.
+    #[serde(default)]
+    pub kept: Vec<TimeRange>,
+    /// The person's notes and drawings at moments of the recording.
+    #[serde(default)]
+    pub annotations: Vec<Annotation>,
+}
+
+fn moment() -> CaptureKind {
+    CaptureKind::Moment
 }
 
 /// The page elements under one mark.
@@ -529,8 +547,119 @@ pub struct NewCapture {
     /// PNG bytes, base64.
     pub screenshot: String,
     pub evidence: Evidence,
-    /// rrweb events of the last seconds before the capture, when the tab was recorded.
-    pub recording: Option<Vec<serde_json::Value>>,
+    /// The rrweb events (a JSON array) from UploadChunk, when the tab was recorded.
+    pub recording: Option<BlobRef>,
+    pub kind: CaptureKind,
+    /// Where the recording and the evidence begin, in Unix milliseconds.
+    #[ts(type = "number")]
+    pub started_at: i64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum CaptureKind {
+    /// Capture mode: the last minutes before the person pressed Capture.
+    Moment,
+    /// Record mode: from Record to Stop.
+    Session,
+}
+
+/// What the person changed in a recording before sharing it. Times are Unix milliseconds.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase", default)]
+#[ts(export)]
+pub struct Edits {
+    #[ts(type = "number | null")]
+    pub trim_start: Option<i64>,
+    #[ts(type = "number | null")]
+    pub trim_end: Option<i64>,
+    /// Parts cut out of the recording; what happened there does not leave.
+    pub cuts: Vec<TimeRange>,
+    pub annotations: Vec<Annotation>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct TimeRange {
+    #[ts(type = "number")]
+    pub from: i64,
+    #[ts(type = "number")]
+    pub to: i64,
+}
+
+/// A note at a moment of the recording, with an optional drawing over the page.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct Annotation {
+    pub id: String,
+    #[ts(type = "number")]
+    pub at: i64,
+    pub text: String,
+    /// Strokes in CSS pixels of the recorded page's viewport.
+    pub drawing: Vec<Vec<Point>>,
+    /// The page elements under the drawing, for an agent.
+    pub elements: Vec<Locator>,
+}
+
+pub const MAX_ANNOTATIONS: usize = 200;
+pub const MAX_STROKE_POINTS: usize = 2000;
+
+impl Edits {
+    /// Bounded and finite, so stored edits always load and render.
+    pub fn validate(&self) -> Result<(), String> {
+        if self.annotations.len() > MAX_ANNOTATIONS || self.cuts.len() > MAX_ANNOTATIONS {
+            return Err(format!(
+                "a recording keeps at most {MAX_ANNOTATIONS} notes and cuts"
+            ));
+        }
+        for a in &self.annotations {
+            if a.text.len() > 4000 || a.id.len() > 64 || a.elements.len() > 20 {
+                return Err("a note is too long".into());
+            }
+            let points: usize = a.drawing.iter().map(Vec::len).sum();
+            if points > MAX_STROKE_POINTS
+                || a.drawing
+                    .iter()
+                    .flatten()
+                    .any(|p| !p.x.is_finite() || !p.y.is_finite())
+            {
+                return Err("a drawing is too large or not finite".into());
+            }
+        }
+        if self.cuts.iter().any(|c| c.to < c.from) {
+            return Err("a cut ends before it starts".into());
+        }
+        Ok(())
+    }
+
+    /// The time ranges that stay, inside `[start, end]`: the trimmed span minus the cuts.
+    pub fn kept(&self, start: i64, end: i64) -> Vec<TimeRange> {
+        let from = self.trim_start.unwrap_or(start).max(start);
+        let to = self.trim_end.unwrap_or(end).min(end);
+        let mut cuts = self.cuts.clone();
+        cuts.sort_by_key(|c| c.from);
+        let mut kept = Vec::new();
+        let mut cursor = from;
+        for cut in cuts {
+            if cut.to <= cursor || cut.from >= to {
+                continue;
+            }
+            if cut.from > cursor {
+                kept.push(TimeRange {
+                    from: cursor,
+                    to: cut.from,
+                });
+            }
+            cursor = cursor.max(cut.to);
+        }
+        if cursor < to {
+            kept.push(TimeRange { from: cursor, to });
+        }
+        kept
+    }
 }
 
 /// What the collector saw before the capture, and what it could not see.
@@ -665,6 +794,10 @@ pub struct Capture {
     pub annotations: Vec<Shape>,
     /// rrweb events as a JSON array.
     pub recording: Option<BlobRef>,
+    pub kind: CaptureKind,
+    #[ts(type = "number")]
+    pub started_at: i64,
+    pub edits: Edits,
 }
 
 /// A mark on a screenshot, in the screenshot's own pixels.
@@ -872,6 +1005,21 @@ impl ProtocolError {
 
 #[cfg(test)]
 mod tests {
+    use super::{Edits, TimeRange};
+
+    #[test]
+    fn trims_and_cuts_leave_the_kept_ranges() {
+        let r = |from, to| TimeRange { from, to };
+        let edits = Edits {
+            trim_start: Some(10),
+            trim_end: Some(90),
+            cuts: vec![r(40, 50), r(0, 15), r(85, 120)],
+            annotations: vec![],
+        };
+        assert_eq!(edits.kept(0, 100), [r(15, 40), r(50, 85)]);
+        assert_eq!(Edits::default().kept(0, 100), [r(0, 100)]);
+    }
+
     #[test]
     fn the_extension_speaks_this_protocol_version() {
         let client = include_str!("../extension/src/lens-client.ts");
