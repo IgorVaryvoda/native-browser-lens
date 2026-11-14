@@ -413,8 +413,8 @@ export function Review({ observation: id }: { observation: number }) {
               <span>
                 Include what I typed and the site’s API data
                 <span className="small muted" style={{ display: 'block' }}>
-                  So an agent can repeat the steps and replay the server. Without it, only failed answers leave. Passwords,
-                  card numbers and private fields are always masked.
+                  So an agent can repeat the steps and replay the server. Without it, only failed answers leave, and the
+                  shots after your steps stay here. Passwords, card numbers and private fields are always masked.
                 </span>
               </span>
             </label>

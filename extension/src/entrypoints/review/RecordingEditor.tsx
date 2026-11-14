@@ -675,6 +675,11 @@ export function RecordingEditor({
             }
           />
         )}
+        {(edits.cuts.length > 0 || edits.trimStart !== null || edits.trimEnd !== null) && (
+          <p className="small muted">
+            With cuts or trims, the recording itself stays on this computer; its steps, your words and notes leave.
+          </p>
+        )}
         <p className="small muted num" role="status" aria-label="Edits">
           {span && `${clock(keptMs)} of ${clock(span.end - span.start)} kept · ${edits.annotations.length} notes · ${saved ? 'Saved' : 'Saving…'}`}
         </p>

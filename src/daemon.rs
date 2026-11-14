@@ -497,10 +497,15 @@ impl Daemon {
                     let shared = repro::for_review(parsed, request.typed_values, &kept);
                     let cut =
                         before.saturating_sub(shared.actions.len() + shared.events.len()) as u32;
+                    // Step shots show what was typed, as pixels: they leave only with typed values.
                     let shots: Vec<Shot> = capture
                         .shots
                         .iter()
-                        .filter(|s| inside(s.at) && !capture.edits.hidden_shots.contains(&s.at))
+                        .filter(|s| {
+                            request.typed_values
+                                && inside(s.at)
+                                && !capture.edits.hidden_shots.contains(&s.at)
+                        })
                         .cloned()
                         .collect();
                     let shared = serde_json::to_vec(&shared).expect("evidence serializes");
@@ -514,9 +519,11 @@ impl Daemon {
                             .blobs
                             .put(&shared, "application/json")
                             .map_err(storage)?,
+                        // A recording replays everything, cut parts included: until Lens can trim
+                        // it to the kept parts, an edited recording stays on this computer.
                         recording: capture
                             .recording
-                            .filter(|_| request.recordings.contains(id)),
+                            .filter(|_| request.recordings.contains(id) && kept.is_empty()),
                         findings: export::findings(
                             &serde_json::from_slice(&shared).unwrap_or_default(),
                         ),
