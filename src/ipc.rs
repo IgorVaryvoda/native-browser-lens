@@ -75,7 +75,7 @@ mod windows_identity {
     use windows_sys::Win32::Security::Authorization::{GetSecurityInfo, SE_KERNEL_OBJECT};
     use windows_sys::Win32::Security::{
         EqualSid, GetTokenInformation, OWNER_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID,
-        TOKEN_QUERY, TOKEN_USER, TokenUser,
+        TOKEN_INFORMATION_CLASS, TOKEN_OWNER, TOKEN_QUERY, TOKEN_USER, TokenOwner, TokenUser,
     };
     use windows_sys::Win32::Storage::FileSystem::{
         CreateFileW, FILE_FLAG_OVERLAPPED, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
@@ -105,9 +105,14 @@ mod windows_identity {
         Ok(unsafe { OwnedHandle::from_raw_handle(handle) })
     }
 
+    /// True when the pipe's owner is this token's user or its default owner. An elevated
+    /// administrator's objects are owned by the Administrators group, not the user, so both count;
+    /// another non-admin account's pipe matches neither.
     pub fn owned_by_current_user(pipe: &OwnedHandle) -> io::Result<bool> {
+        let user = token_information(TokenUser)?;
+        let default_owner = token_information(TokenOwner)?;
         // SAFETY: GetSecurityInfo fills `owner` inside `descriptor`, which LocalFree releases after
-        // the comparison; the token buffer outlives its SID pointer.
+        // the comparisons; both token buffers outlive their SID pointers.
         unsafe {
             let mut owner: PSID = std::ptr::null_mut();
             let mut descriptor: PSECURITY_DESCRIPTOR = std::ptr::null_mut();
@@ -124,15 +129,16 @@ mod windows_identity {
             if status != 0 {
                 return Err(io::Error::from_raw_os_error(status as i32));
             }
-            let mine = current_user();
-            let same = mine.map(|mine| EqualSid(owner, user_sid(&mine)) != 0);
+            let user_sid = (*(user.as_ptr() as *const TOKEN_USER)).User.Sid;
+            let owner_sid = (*(default_owner.as_ptr() as *const TOKEN_OWNER)).Owner;
+            let same = EqualSid(owner, user_sid) != 0 || EqualSid(owner, owner_sid) != 0;
             LocalFree(descriptor);
-            same
+            Ok(same)
         }
     }
 
-    /// The current process's TOKEN_USER, in a u64 buffer so the cast in `user_sid` is aligned.
-    fn current_user() -> io::Result<Vec<u64>> {
+    /// One TOKEN_INFORMATION_CLASS of this process's token, in a u64 buffer so casts are aligned.
+    fn token_information(class: TOKEN_INFORMATION_CLASS) -> io::Result<Vec<u64>> {
         // SAFETY: the token handle is opened and closed here; sizes come from the first call.
         unsafe {
             let mut token: HANDLE = std::ptr::null_mut();
@@ -140,25 +146,14 @@ mod windows_identity {
                 return Err(io::Error::last_os_error());
             }
             let mut size = 0u32;
-            GetTokenInformation(token, TokenUser, std::ptr::null_mut(), 0, &mut size);
+            GetTokenInformation(token, class, std::ptr::null_mut(), 0, &mut size);
             let mut buffer = vec![0u64; (size as usize).div_ceil(8)];
-            let ok = GetTokenInformation(
-                token,
-                TokenUser,
-                buffer.as_mut_ptr().cast(),
-                size,
-                &mut size,
-            );
+            let ok = GetTokenInformation(token, class, buffer.as_mut_ptr().cast(), size, &mut size);
             CloseHandle(token);
             if ok == 0 {
                 return Err(io::Error::last_os_error());
             }
             Ok(buffer)
         }
-    }
-
-    fn user_sid(token_user: &[u64]) -> PSID {
-        // SAFETY: the buffer holds a TOKEN_USER written by GetTokenInformation.
-        unsafe { (*(token_user.as_ptr() as *const TOKEN_USER)).User.Sid }
     }
 }

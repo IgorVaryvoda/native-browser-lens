@@ -86,9 +86,10 @@ live in the data folder.
 - Windows: the daemon must survive Chrome closing the host's job, and the pipe DACL must refuse
   another account. A pipe that another account creates first is refused by design: the daemon
   creates only the first instance; the client opens the pipe at identification level (no
-  impersonation) and accepts it only when the pipe object's owner SID is its own user. A daemon
-  started from an elevated prompt owns its pipe as Administrators and is refused too. All of this
-  still needs a test with two accounts.
+  impersonation) and accepts it only when the pipe object's owner SID is its token's user or its
+  token's default owner (Administrators for an elevated administrator). Another non-admin
+  account's pipe matches neither; another administrator could already read the process. A test
+  with two accounts is still open.
 - Side panel microphone permission may need a one-time normal extension tab.
 - Screenshots show typed text as pixels. Recordings mask inputs and evidence is redacted, but the
   review before filing must make the person check the screenshots and mask what is private.
