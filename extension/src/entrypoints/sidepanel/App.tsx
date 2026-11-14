@@ -8,7 +8,7 @@ import { AlertIcon, BackIcon, CameraIcon, DeleteIcon, ExportIcon, LensMark, MicI
 import type { BlobRef } from '@/protocol/BlobRef';
 import { Notes } from './Notes';
 import { VoiceNotes } from './Voice';
-import { RecordControls, useStored, type PanelMode } from './Record';
+import { RecordControls, SCREEN_ACCESS_REFUSED, useScreenAccess, useStored, type PanelMode } from './Record';
 import { InstallApp, SetupCard } from './Onboarding';
 
 type Connection = { state: 'connecting' } | { state: 'ready'; hello: Hello } | { state: 'failed'; message: string };
@@ -55,6 +55,7 @@ export function App() {
   const [site, setSite] = useState<TabStatus | null>(null);
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
+  const screenAccess = useScreenAccess();
   const [attempt, setAttempt] = useState(0);
   const [panelMode, setPanelMode] = useStored<PanelMode>('lens.mode', 'record');
   const lastWebTab = useRef<number | null>(null);
@@ -126,8 +127,11 @@ export function App() {
   async function track() {
     if (!client || !site?.origin) return;
     const origin = site.origin;
-    // The permission prompt must open inside the click, before any other await.
-    const granted = await browser.permissions.request({ origins: [`${origin}/*`] });
+    // The permission prompt must open inside the click, before any other await. Firefox also
+    // needs all sites for screenshots (see useScreenAccess); one prompt asks for both.
+    const granted = await browser.permissions.request({
+      origins: [`${origin}/*`, ...(import.meta.env.FIREFOX ? ['<all_urls>'] : [])],
+    });
     if (!granted) return setProblem(`Lens may not read ${origin}.`);
     try {
       if (site.projectId === null) {
@@ -146,6 +150,7 @@ export function App() {
 
   async function capture() {
     if (tabId === null) return;
+    if (!(await screenAccess())) return setProblem(SCREEN_ACCESS_REFUSED);
     setBusy(true);
     const result = await send<CaptureResult>({ kind: 'capture', tabId, observation: selected });
     setBusy(false);

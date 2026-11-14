@@ -11,6 +11,26 @@ const clock = (ms: number) => {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 };
 
+/**
+ * Firefox takes a tab screenshot only with access to all sites; a granted site is not enough.
+ * `ensure` asks once, and must be the first await of a click handler, while the click counts as
+ * the person's gesture. Lens still collects only on the sites the person adds.
+ */
+const ALL_SITES = { origins: ['<all_urls>'] };
+export function useScreenAccess(): () => Promise<boolean> {
+  const granted = useRef(!import.meta.env.FIREFOX);
+  useEffect(() => {
+    if (import.meta.env.FIREFOX) void browser.permissions.contains(ALL_SITES).then((yes) => (granted.current = yes));
+  }, []);
+  return async () => {
+    if (granted.current) return true;
+    granted.current = await browser.permissions.request(ALL_SITES).catch(() => false);
+    return granted.current;
+  };
+}
+export const SCREEN_ACCESS_REFUSED =
+  'Firefox lets Lens take screenshots only with access to all sites. Lens still collects only on the sites you add. Allow it and press again.';
+
 /** A setting kept in the browser profile; it never matters enough to fail over. */
 export function useStored<T>(key: string, initial: T): [T, (value: T) => void] {
   const [value, setValue] = useState(initial);
@@ -43,6 +63,7 @@ export function RecordControls({
   const [now, setNow] = useState(Date.now());
   const microphone = useRef<Recording | null>(null);
   const running = site?.session ?? null;
+  const screenAccess = useScreenAccess();
 
   useEffect(() => {
     if (running === null) return;
@@ -57,6 +78,7 @@ export function RecordControls({
 
   async function start() {
     if (tabId === null) return;
+    if (!(await screenAccess())) return onProblem(SCREEN_ACCESS_REFUSED);
     onProblem(null);
     if (voice && !inBackground) {
       try {
@@ -84,6 +106,7 @@ export function RecordControls({
 
   async function stop() {
     if (tabId === null) return;
+    if (!(await screenAccess())) return onProblem(SCREEN_ACCESS_REFUSED);
     setBusy(true);
     const spoken = microphone.current;
     microphone.current = null;

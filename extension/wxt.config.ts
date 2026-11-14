@@ -19,7 +19,9 @@ export default defineConfig({
         ...(firefox ? ['webRequest'] : ['sidePanel', 'debugger', 'favicon', 'offscreen']),
       ],
       // Lens reads a site only after the person grants that exact origin from the side panel.
-      optional_host_permissions: ['http://*/*', 'https://*/*'],
+      // Firefox screenshots a tab only with <all_urls> (or a fresh toolbar click): Lens asks for it
+      // there, and still collects only on the sites the person adds.
+      optional_host_permissions: ['http://*/*', 'https://*/*', ...(firefox ? ['<all_urls>'] : [])],
       // The end-to-end build pre-grants the local fixture origin: a test cannot click Chrome's prompt.
       ...(process.env.LENS_E2E ? { host_permissions: ['http://127.0.0.1/*'] } : {}),
       action: { default_title: 'Open Lens' },
