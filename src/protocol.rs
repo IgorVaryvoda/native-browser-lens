@@ -29,6 +29,12 @@ pub enum Request {
         url: Option<String>,
     },
     ListObservations,
+    GetObservation {
+        #[ts(type = "number")]
+        id: i64,
+    },
+    /// Saves the title and notes when `revision` is still current; else a `conflict` error.
+    UpdateObservation(ObservationUpdate),
     ListProjects,
     /// Creates a project when `id` is null, else replaces that project.
     SaveProject(ProjectInput),
@@ -85,7 +91,7 @@ pub enum Outcome {
 pub enum Reply {
     Hello(Hello),
     Observation(Observation),
-    Observations(Vec<Observation>),
+    Observations(Vec<ObservationSummary>),
     Project(Project),
     Projects(Vec<Project>),
     Deleted,
@@ -329,10 +335,44 @@ pub struct Observation {
     pub id: i64,
     pub title: String,
     pub url: Option<String>,
+    pub notes: String,
+    /// Grows by one with every saved edit; an update must name the revision it started from.
+    pub revision: u32,
     /// Milliseconds since the Unix epoch.
     #[ts(type = "number")]
     pub created_at: i64,
+    #[ts(type = "number")]
+    pub updated_at: i64,
 }
+
+/// An observation in a list: no notes, so long notebooks stay under the reply limit.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ObservationSummary {
+    #[ts(type = "number")]
+    pub id: i64,
+    pub title: String,
+    pub url: Option<String>,
+    #[ts(type = "number")]
+    pub created_at: i64,
+    #[ts(type = "number")]
+    pub updated_at: i64,
+    pub capture_count: u32,
+}
+
+#[derive(Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ObservationUpdate {
+    #[ts(type = "number")]
+    pub id: i64,
+    pub revision: u32,
+    pub title: String,
+    pub notes: String,
+}
+
+pub const MAX_NOTES_BYTES: usize = 256 * 1024;
 
 #[derive(Debug, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -348,6 +388,8 @@ pub struct ProtocolError {
 pub enum ErrorCode {
     BadRequest,
     NotFound,
+    /// The record changed since the client read it; read it again.
+    Conflict,
     TooLarge,
     Storage,
     Internal,

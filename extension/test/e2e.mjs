@@ -73,7 +73,7 @@ try {
 
   const panel = await context.newPage();
   await panel.goto(`chrome-extension://${extensionId}/sidepanel.html?tab=${tabId}`);
-  const status = panel.getByRole('status');
+  const status = panel.getByRole('status', { name: 'Connection' });
   await status.filter({ hasNotText: 'Connecting' }).waitFor({ timeout: 15_000 });
   const statusText = await status.textContent();
   if (!statusText?.startsWith('Connected')) {
@@ -136,7 +136,17 @@ try {
   await editor.getByRole('status').filter({ hasText: 'Saved · 2 marks' }).waitFor({ timeout: 15_000 });
   await capture.getByText(/· 2 marks/).waitFor({ timeout: 15_000 });
 
-  console.log(`e2e: ok (${evidence.events.length} events, screenshot ${imageWidth}px wide, 2 marks)`);
+  // Notes: autosave, then still there after the panel reloads (a new shim, the same daemon).
+  const notes = 'Coupon SAVE10 applied, then Pay: total shows NaN.';
+  await panel.getByLabel('Notes', { exact: true }).fill(notes);
+  await panel.getByRole('status', { name: 'Notes status' }).filter({ hasText: /^Saved$/ }).waitFor({ timeout: 15_000 });
+  await panel.reload();
+  await panel.getByRole('list', { name: 'Observations' }).getByRole('button', { name: /Checkout/ }).click();
+  const reloaded = panel.getByLabel('Notes', { exact: true });
+  await reloaded.waitFor({ timeout: 15_000 });
+  if ((await reloaded.inputValue()) !== notes) throw new Error(`notes after reload: ${await reloaded.inputValue()}`);
+
+  console.log(`e2e: ok (${evidence.events.length} events, screenshot ${imageWidth}px wide, 2 marks, notes kept)`);
 } finally {
   // Cleanup must not hide the failure above, and must not hang the job.
   await Promise.race([context.close(), new Promise((done) => setTimeout(done, 20_000))]).catch(() => {});

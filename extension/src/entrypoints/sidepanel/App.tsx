@@ -3,7 +3,8 @@ import { LensClient, type LensError } from '@/lens-client';
 import { originOf, send, type Broadcast, type CaptureResult, type TabStatus } from '@/messages';
 import type { Capture } from '@/protocol/Capture';
 import type { Hello } from '@/protocol/Hello';
-import type { Observation } from '@/protocol/Observation';
+import type { ObservationSummary } from '@/protocol/ObservationSummary';
+import { Notes } from './Notes';
 
 type Connection = { state: 'connecting' } | { state: 'ready'; hello: Hello } | { state: 'failed'; message: string };
 
@@ -24,7 +25,7 @@ async function targetTab(): Promise<number | null> {
 export function App() {
   const [client, setClient] = useState<LensClient | null>(null);
   const [connection, setConnection] = useState<Connection>({ state: 'connecting' });
-  const [observations, setObservations] = useState<Observation[]>([]);
+  const [observations, setObservations] = useState<ObservationSummary[]>([]);
   const [selected, setSelected] = useState<number | null>(null);
   const [tabId, setTabId] = useState<number | null>(null);
   const [site, setSite] = useState<TabStatus | null>(null);
@@ -96,7 +97,7 @@ export function App() {
     <main>
       <header>
         <h1>Lens</h1>
-        <p className="status" data-state={connection.state} role="status">
+        <p className="status" data-state={connection.state} role="status" aria-label="Connection">
           {connection.state === 'connecting' && 'Connecting…'}
           {connection.state === 'ready' && `Connected · Lens ${connection.hello.version}`}
           {connection.state === 'failed' && `Not connected: ${connection.message}`}
@@ -133,7 +134,16 @@ export function App() {
                   <strong>{o.title}</strong>
                   {o.url && <span className="url">{originOf(o.url) ?? o.url}</span>}
                 </button>
-                {o.id === selected && <Captures client={client} observation={o.id} />}
+                {o.id === selected && (
+                  <>
+                    <Notes
+                      client={client}
+                      id={o.id}
+                      onSaved={() => void client.request({ method: 'listObservations' }).then(setObservations)}
+                    />
+                    <Captures client={client} observation={o.id} />
+                  </>
+                )}
               </li>
             ))}
           </ul>

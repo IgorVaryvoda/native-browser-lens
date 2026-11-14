@@ -1,4 +1,6 @@
-use crate::protocol::{BlobRef, Capture, CaptureMode, Observation, Project, Shape};
+use crate::protocol::{
+    BlobRef, Capture, CaptureMode, Observation, ObservationSummary, Project, Shape,
+};
 use rusqlite::{Connection, params};
 use std::path::Path;
 
@@ -32,7 +34,33 @@ const MIGRATIONS: &[&str] = &[
     );
     CREATE INDEX captures_by_observation ON captures(observation_id);",
     "ALTER TABLE captures ADD COLUMN annotations TEXT NOT NULL DEFAULT '[]';",
+    "ALTER TABLE observations ADD COLUMN notes TEXT NOT NULL DEFAULT '';
+    ALTER TABLE observations ADD COLUMN revision INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE observations ADD COLUMN updated_at INTEGER NOT NULL DEFAULT 0;
+    UPDATE observations SET updated_at = created_at;",
 ];
+
+/// What an update found.
+pub enum Updated {
+    Saved(Observation),
+    /// Someone saved first; this is their version.
+    Conflict(Observation),
+    Missing,
+}
+
+const OBSERVATION_COLUMNS: &str = "id, title, url, notes, revision, created_at, updated_at";
+
+fn observation_from_row(row: &rusqlite::Row) -> rusqlite::Result<Observation> {
+    Ok(Observation {
+        id: row.get(0)?,
+        title: row.get(1)?,
+        url: row.get(2)?,
+        notes: row.get(3)?,
+        revision: row.get(4)?,
+        created_at: row.get(5)?,
+        updated_at: row.get(6)?,
+    })
+}
 
 const CAPTURE_COLUMNS: &str = "id, observation_id, created_at, page_url, page_title, mode,
     screenshot_sha256, screenshot_size, evidence_sha256, evidence_size, event_count, gap_count,
@@ -133,31 +161,64 @@ impl Store {
         created_at: i64,
     ) -> rusqlite::Result<Observation> {
         self.db.execute(
-            "INSERT INTO observations (title, url, created_at) VALUES (?1, ?2, ?3)",
+            "INSERT INTO observations (title, url, created_at, updated_at) VALUES (?1, ?2, ?3, ?3)",
             params![title, url, created_at],
         )?;
-        Ok(Observation {
-            id: self.db.last_insert_rowid(),
-            title: title.into(),
-            url: url.map(Into::into),
-            created_at,
-        })
+        Ok(self
+            .get_observation(self.db.last_insert_rowid())?
+            .expect("the row was just inserted"))
     }
 
-    pub fn list_observations(&self) -> rusqlite::Result<Vec<Observation>> {
+    pub fn get_observation(&self, id: i64) -> rusqlite::Result<Option<Observation>> {
+        let mut statement = self.db.prepare(&format!(
+            "SELECT {OBSERVATION_COLUMNS} FROM observations WHERE id = ?1"
+        ))?;
+        statement
+            .query_map([id], observation_from_row)?
+            .next()
+            .transpose()
+    }
+
+    // ponytail: the whole list in one reply; page it when a notebook nears 5000 observations
+    // (about 1 MiB of summaries).
+    pub fn list_observations(&self) -> rusqlite::Result<Vec<ObservationSummary>> {
         let mut statement = self.db.prepare(
-            "SELECT id, title, url, created_at FROM observations ORDER BY created_at DESC, id DESC",
+            "SELECT o.id, o.title, o.url, o.created_at, o.updated_at,
+                (SELECT COUNT(*) FROM captures c WHERE c.observation_id = o.id)
+             FROM observations o ORDER BY o.updated_at DESC, o.id DESC",
         )?;
         statement
             .query_map([], |row| {
-                Ok(Observation {
+                Ok(ObservationSummary {
                     id: row.get(0)?,
                     title: row.get(1)?,
                     url: row.get(2)?,
                     created_at: row.get(3)?,
+                    updated_at: row.get(4)?,
+                    capture_count: row.get(5)?,
                 })
             })?
             .collect()
+    }
+
+    pub fn update_observation(
+        &self,
+        id: i64,
+        revision: u32,
+        title: &str,
+        notes: &str,
+        now: i64,
+    ) -> rusqlite::Result<Updated> {
+        let changed = self.db.execute(
+            "UPDATE observations SET title = ?3, notes = ?4, revision = revision + 1, updated_at = ?5
+             WHERE id = ?1 AND revision = ?2",
+            params![id, revision, title, notes, now],
+        )?;
+        Ok(match (changed, self.get_observation(id)?) {
+            (1, Some(saved)) => Updated::Saved(saved),
+            (_, Some(current)) => Updated::Conflict(current),
+            (_, None) => Updated::Missing,
+        })
     }
 
     pub fn list_projects(&self) -> rusqlite::Result<Vec<Project>> {
@@ -269,6 +330,10 @@ impl Store {
             ],
         )?;
         let id = tx.last_insert_rowid();
+        tx.execute(
+            "UPDATE observations SET updated_at = ?2 WHERE id = ?1",
+            params![observation, row.created_at],
+        )?;
         tx.commit()?;
         Ok(Some(Capture {
             id,
@@ -325,7 +390,11 @@ mod tests {
             .create_observation("Price shows NaN", Some("https://a.test/"), 5)
             .unwrap();
         let reopened = Store::open(&path).unwrap();
-        assert_eq!(reopened.list_observations().unwrap(), vec![first]);
+        let listed = reopened.list_observations().unwrap();
+        assert_eq!(
+            (listed.len(), listed[0].id, listed[0].capture_count),
+            (1, first.id, 0)
+        );
     }
 
     #[test]
@@ -394,6 +463,38 @@ mod tests {
             .map(|o| (o.id, o.title))
             .collect();
         assert!(titles.contains(&(untitled.observation, "https://shop.test/cart".into())));
+    }
+
+    #[test]
+    fn updates_need_the_current_revision() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(&dir.path().join("lens.sqlite")).unwrap();
+        let created = store.create_observation("Cart", None, 1).unwrap();
+        assert_eq!(created.revision, 0);
+
+        let Updated::Saved(saved) = store
+            .update_observation(created.id, 0, "Cart", "NaN after coupon", 2)
+            .unwrap()
+        else {
+            panic!("the first update must save");
+        };
+        assert_eq!(
+            (saved.revision, saved.notes.as_str(), saved.updated_at),
+            (1, "NaN after coupon", 2)
+        );
+
+        // A second window still holds revision 0: it must not overwrite the first.
+        let Updated::Conflict(current) = store
+            .update_observation(created.id, 0, "Cart", "stale", 3)
+            .unwrap()
+        else {
+            panic!("a stale revision must conflict");
+        };
+        assert_eq!(current.notes, "NaN after coupon");
+        assert!(matches!(
+            store.update_observation(999, 0, "x", "", 4).unwrap(),
+            Updated::Missing
+        ));
     }
 
     #[test]

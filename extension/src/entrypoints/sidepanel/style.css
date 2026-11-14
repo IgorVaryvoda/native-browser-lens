@@ -115,3 +115,23 @@ li[aria-current='true'] > .observation strong {
 .shot:focus-visible {
   outline: 2px solid currentColor;
 }
+.notes {
+  display: grid;
+  gap: 4px;
+  margin-top: 8px;
+}
+.notes label {
+  margin: 4px 0 0;
+}
+.notes input,
+.notes textarea {
+  font: inherit;
+  padding: 6px 8px;
+  resize: vertical;
+}
+.save-state {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  min-height: 1.4em;
+}

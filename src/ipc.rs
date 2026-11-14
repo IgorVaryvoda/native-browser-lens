@@ -7,17 +7,21 @@ use std::io;
 #[cfg(unix)]
 pub fn listen(paths: &Paths) -> io::Result<Listener> {
     use interprocess::local_socket::GenericFilePath;
-    use interprocess::os::unix::local_socket::ListenerOptionsExt;
     let path = paths.socket();
     // Only the lock holder calls this, so a socket file left here belongs to a dead daemon.
     match std::fs::remove_file(&path) {
         Err(e) if e.kind() != io::ErrorKind::NotFound => return Err(e),
         _ => {}
     }
-    ListenerOptions::new()
-        .name(path.as_path().to_fs_name::<GenericFilePath>()?)
-        .mode(0o600)
-        .create_sync()
+    let options = ListenerOptions::new().name(path.as_path().to_fs_name::<GenericFilePath>()?);
+    // The 0700 folder (Paths::ensure) is what keeps other accounts out: BSD kernels, macOS among
+    // them, ignore a socket file's own mode, and interprocess can set it only on Linux.
+    #[cfg(target_os = "linux")]
+    let options = {
+        use interprocess::os::unix::local_socket::ListenerOptionsExt;
+        options.mode(0o600)
+    };
+    options.create_sync()
 }
 
 #[cfg(unix)]

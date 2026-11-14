@@ -4,7 +4,7 @@ use crate::blobs::Blobs;
 use crate::framing::{read_frame, write_frame};
 use crate::paths::Paths;
 use crate::protocol::*;
-use crate::store::{CaptureRow, Store};
+use crate::store::{CaptureRow, Store, Updated};
 use crate::{ipc, secrets};
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64;
@@ -37,7 +37,15 @@ pub fn run(paths: &Paths) -> std::io::Result<()> {
     }
     let store = Store::open(&paths.database()).map_err(std::io::Error::other)?;
     let daemon = Arc::new(Daemon::new(store, paths));
-    let listener = ipc::listen(paths)?;
+    let listener = ipc::listen(paths).map_err(|e| {
+        std::io::Error::new(
+            e.kind(),
+            format!(
+                "cannot open the Lens endpoint in {}: {e}",
+                paths.runtime.display()
+            ),
+        )
+    })?;
     for connection in listener.incoming() {
         match connection {
             Ok(stream) => {
@@ -150,6 +158,40 @@ impl Daemon {
             }
             Request::ListObservations => {
                 Reply::Observations(store.list_observations().map_err(storage)?)
+            }
+            Request::GetObservation { id } => Reply::Observation(
+                store
+                    .get_observation(id)
+                    .map_err(storage)?
+                    .ok_or_else(|| not_found("no such observation"))?,
+            ),
+            Request::UpdateObservation(update) => {
+                let title = update.title.trim();
+                if title.is_empty() {
+                    return Err(bad("the title is empty"));
+                }
+                if update.notes.len() > MAX_NOTES_BYTES {
+                    return Err(ProtocolError::new(
+                        ErrorCode::TooLarge,
+                        "the notes exceed 256 KiB",
+                    ));
+                }
+                let outcome = store
+                    .update_observation(update.id, update.revision, title, &update.notes, now_ms())
+                    .map_err(storage)?;
+                match outcome {
+                    Updated::Saved(saved) => Reply::Observation(saved),
+                    Updated::Conflict(current) => {
+                        return Err(ProtocolError::new(
+                            ErrorCode::Conflict,
+                            format!(
+                                "the observation changed elsewhere (revision {} is current)",
+                                current.revision
+                            ),
+                        ));
+                    }
+                    Updated::Missing => return Err(not_found("no such observation")),
+                }
             }
             Request::ListProjects => Reply::Projects(store.list_projects().map_err(storage)?),
             Request::SaveProject(input) => {

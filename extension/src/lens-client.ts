@@ -10,6 +10,8 @@ type ReplyTo = {
   hello: 'hello';
   createObservation: 'observation';
   listObservations: 'observations';
+  getObservation: 'observation';
+  updateObservation: 'observation';
   listProjects: 'projects';
   saveProject: 'project';
   deleteProject: 'deleted';

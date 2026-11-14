@@ -3,6 +3,7 @@ import type { BlobChunk } from "./BlobChunk";
 import type { Capture } from "./Capture";
 import type { Hello } from "./Hello";
 import type { Observation } from "./Observation";
+import type { ObservationSummary } from "./ObservationSummary";
 import type { Project } from "./Project";
 
-export type Reply = { "type": "hello", "data": Hello } | { "type": "observation", "data": Observation } | { "type": "observations", "data": Array<Observation> } | { "type": "project", "data": Project } | { "type": "projects", "data": Array<Project> } | { "type": "deleted" } | { "type": "capture", "data": Capture } | { "type": "captures", "data": Array<Capture> } | { "type": "blob", "data": BlobChunk } | { "type": "stopping" };
+export type Reply = { "type": "hello", "data": Hello } | { "type": "observation", "data": Observation } | { "type": "observations", "data": Array<ObservationSummary> } | { "type": "project", "data": Project } | { "type": "projects", "data": Array<Project> } | { "type": "deleted" } | { "type": "capture", "data": Capture } | { "type": "captures", "data": Array<Capture> } | { "type": "blob", "data": BlobChunk } | { "type": "stopping" };
