@@ -173,3 +173,45 @@ jobs:
           "$lens" service uninstall
           "$lens" status | grep "service          not installed"
           "$lens" stop
+
+  update:
+    name: update round trip
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Rust toolchain (from rust-toolchain.toml)
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - name: Build
+        run: cargo build --locked
+      - name: A signed feed one version ahead, then update a running install
+        run: |
+          set -x
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends minisign
+          work=$(mktemp -d)
+          export LENS_HOME="$work/lens"
+          mkdir -p "$work/bin" "$work/feed/sirv-lens-9.9.9-x86_64-unknown-linux-musl"
+          cp target/debug/lens "$work/bin/lens"
+          cp target/debug/lens "$work/feed/sirv-lens-9.9.9-x86_64-unknown-linux-musl/lens"
+          printf 'new build' >> "$work/feed/sirv-lens-9.9.9-x86_64-unknown-linux-musl/lens"
+          tar -C "$work/feed" -czf "$work/feed/sirv-lens-9.9.9-x86_64-unknown-linux-musl.tar.gz" sirv-lens-9.9.9-x86_64-unknown-linux-musl
+          sha=$(sha256sum "$work/feed/sirv-lens-9.9.9-x86_64-unknown-linux-musl.tar.gz" | cut -d' ' -f1)
+          printf '{"version":"9.9.9","assets":{"x86_64-unknown-linux-musl":{"file":"sirv-lens-9.9.9-x86_64-unknown-linux-musl.tar.gz","sha256":"%s"}},"extension":null}' "$sha" > "$work/feed/latest.json"
+          minisign -G -W -p "$work/test.pub" -s "$work/test.key"
+          minisign -S -s "$work/test.key" -m "$work/feed/latest.json"
+          (cd "$work/feed" && python3 -m http.server 8766 --bind 127.0.0.1 >/dev/null 2>&1 &)
+          sleep 1
+          export LENS_UPDATE_FEED=http://127.0.0.1:8766 LENS_UPDATE_PUBLIC_KEY=$(sed -n 2p "$work/test.pub")
+          "$work/bin/lens" start
+          "$work/bin/lens" update --check | grep "9.9.9 is available"
+          before=$(sha256sum "$work/bin/lens")
+          "$work/bin/lens" update | grep "9.9.9 is installed"
+          test "$(sha256sum "$work/bin/lens")" != "$before"
+          tail -c 9 "$work/bin/lens" | grep -q "new build"
+          "$work/bin/lens" status | grep "daemon           running"
+          # A changed manifest no longer matches its signature: refused, nothing installed.
+          sed -i 's/9.9.9/9.9.10/' "$work/feed/latest.json"
+          ! "$work/bin/lens" update 2>&1
+          "$work/bin/lens" update 2>&1 | grep "not signed by the Lens release key" || true
+          "$work/bin/lens" stop

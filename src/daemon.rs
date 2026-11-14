@@ -79,6 +79,10 @@ pub fn run(paths: &Paths, service: bool) -> std::io::Result<()> {
     );
     let store = Store::open(&paths.database()).map_err(std::io::Error::other)?;
     let daemon = Arc::new(Daemon::new(store, paths));
+    crate::update::clean_up();
+    if service {
+        schedule_updates(daemon.clone());
+    }
     let listener = ipc::listen(paths).map_err(|e| {
         std::io::Error::new(
             e.kind(),
@@ -437,6 +441,18 @@ impl Daemon {
                 status.steps = crate::setup::steps(&status, &self.paths);
                 Reply::Setup(Box::new(status))
             }
+            Request::GetUpdates => Reply::Updates(self.update_state(&store)?),
+            Request::SetAutomaticUpdates { enabled } => {
+                store
+                    .set_setting("update.automatic", if enabled { "true" } else { "false" })
+                    .map_err(storage)?;
+                Reply::Updates(self.update_state(&store)?)
+            }
+            Request::UpdateNow => {
+                drop(store);
+                self.update(true)?;
+                Reply::Updates(self.update_state(&self.lock_store())?)
+            }
             Request::ListAgents => {
                 drop(store);
                 Reply::Agents(
@@ -585,6 +601,66 @@ impl Daemon {
 }
 
 impl Daemon {
+    fn update_state(&self, store: &Store) -> Result<UpdateState, ProtocolError> {
+        let executable = std::env::current_exe().map_err(storage)?;
+        Ok(UpdateState {
+            current: env!("CARGO_PKG_VERSION").into(),
+            available: store.setting("update.available").map_err(storage)?,
+            checked_at: store
+                .setting("update.checked_at")
+                .map_err(storage)?
+                .and_then(|t| t.parse().ok()),
+            automatic: store
+                .setting("update.automatic")
+                .map_err(storage)?
+                .as_deref()
+                != Some("false"),
+            managed_by: crate::update::managed_by(&executable).map(String::from),
+            last_error: store
+                .setting("update.error")
+                .map_err(storage)?
+                .filter(|e| !e.is_empty()),
+        })
+    }
+
+    /// Checks the signed feed; with `install`, installs a newer release and restarts Lens.
+    pub fn update(&self, install: bool) -> Result<(), ProtocolError> {
+        let found = crate::update::check();
+        let store = self.lock_store();
+        store
+            .set_setting("update.checked_at", &now_ms().to_string())
+            .map_err(storage)?;
+        let manifest = match found {
+            Ok(manifest) => manifest,
+            Err(e) => {
+                store.set_setting("update.error", &e).map_err(storage)?;
+                return Err(remote(e));
+            }
+        };
+        store.set_setting("update.error", "").map_err(storage)?;
+        let Some(manifest) = manifest else {
+            store.set_setting("update.available", "").map_err(storage)?;
+            return Ok(());
+        };
+        store
+            .set_setting("update.available", &manifest.version)
+            .map_err(storage)?;
+        drop(store);
+        if !install {
+            return Ok(());
+        }
+        log(
+            &self.paths,
+            &format!("installing update {}", manifest.version),
+        );
+        if let Err(e) = crate::update::install(&self.paths, &manifest) {
+            let _ = self.lock_store().set_setting("update.error", &e);
+            return Err(remote(e));
+        }
+        restart_soon(&self.paths);
+        Ok(())
+    }
+
     fn lock_store(&self) -> std::sync::MutexGuard<'_, Store> {
         self.store
             .lock()
@@ -628,6 +704,60 @@ fn project_for(store: &Store, page_url: Option<&str>) -> Result<String, Protocol
         .find(|p| origin.as_ref().is_some_and(|o| p.origins.contains(o)))
         .map(|p| format!("lens-project-{}", p.id))
         .unwrap_or_else(|| "lens".into()))
+}
+
+/// Starts `lens restart` from the new binary, detached; it stops this daemon after the reply is out
+/// and starts the new one through the service manager.
+fn restart_soon(paths: &Paths) {
+    let Ok(executable) = std::env::current_exe() else {
+        return;
+    };
+    let mut command = std::process::Command::new(executable);
+    command
+        .args(["restart", "--after", "2"])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x0000_0008 | 0x0800_0000); // DETACHED_PROCESS | CREATE_NO_WINDOW
+    }
+    if let Err(e) = command.spawn() {
+        log(paths, &format!("cannot restart after the update: {e}"));
+    }
+}
+
+/// Checks for updates an hour after start and then daily; installs them when the person allows it.
+fn schedule_updates(daemon: Arc<Daemon>) {
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_secs(3600));
+        loop {
+            let executable = std::env::current_exe();
+            let managed = executable
+                .as_deref()
+                .ok()
+                .and_then(crate::update::managed_by);
+            if managed.is_none() {
+                let automatic = daemon
+                    .lock_store()
+                    .setting("update.automatic")
+                    .ok()
+                    .flatten()
+                    .as_deref()
+                    != Some("false");
+                if let Err(e) = daemon.update(automatic) {
+                    log(&daemon.paths, &format!("update check: {}", e.message));
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_secs(24 * 3600));
+        }
+    });
 }
 
 fn filing_reply(attempt: &filing::Attempt) -> Filing {

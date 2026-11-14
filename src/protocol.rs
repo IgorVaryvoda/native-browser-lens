@@ -70,6 +70,13 @@ pub enum Request {
     Announce(ClientInfo),
     /// Every setup step, checked against the real state: service, browsers, extensions, sites.
     SetupStatus,
+    /// The update state: this version, the newest known, and whether updates install by themselves.
+    GetUpdates,
+    SetAutomaticUpdates {
+        enabled: bool,
+    },
+    /// Checks the signed release feed now and installs a newer version; Lens restarts afterwards.
+    UpdateNow,
     /// Which agent CLIs are installed and signed in.
     ListAgents,
     /// A draft report from Codex or Claude Code over one frozen review. Nothing is saved.
@@ -146,6 +153,7 @@ pub enum Reply {
     Agents(Vec<crate::investigate::AgentInfo>),
     Done,
     Setup(Box<SetupStatus>),
+    Updates(UpdateState),
     Suggestion(crate::investigate::Suggestion),
     Stopping,
 }
@@ -214,6 +222,21 @@ pub struct ReviewItem {
     pub recording: Option<BlobRef>,
     /// What failed, as the report states it: HTTP errors, failed requests, console errors.
     pub findings: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct UpdateState {
+    pub current: String,
+    /// The newest version the last check found, when it is newer than this one.
+    pub available: Option<String>,
+    #[ts(type = "number | null")]
+    pub checked_at: Option<i64>,
+    pub automatic: bool,
+    /// A package manager or the Microsoft Store updates this copy instead.
+    pub managed_by: Option<String>,
+    pub last_error: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]

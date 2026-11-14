@@ -7,6 +7,7 @@ cd "$(dirname "$0")/.."
 
 cargo fmt --check
 cargo clippy --all-targets --locked -- -D warnings
+scripts/cross-clippy.sh
 cargo test --locked   # also regenerates extension/src/protocol; CI checks it is committed
 
 cd extension

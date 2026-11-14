@@ -273,6 +273,7 @@ pub fn check(_paths: &Paths, executable: &Path) -> Vec<BrowserCheck> {
     let Ok((home, config)) = home_and_config() else {
         return Vec::new();
     };
+    #[cfg_attr(target_os = "macos", allow(unused_mut))]
     let mut checks: Vec<BrowserCheck> = browsers(&home, &config)
         .iter()
         .filter(|b| b.root.is_dir())
@@ -328,7 +329,7 @@ pub fn check(_paths: &Paths, executable: &Path) -> Vec<BrowserCheck> {
                     .is_ok()
             })
     };
-    let local = std::env::var_os("LOCALAPPDATA").map(PathBuf::from);
+    let local = std::env::var_os("LOCALAPPDATA").map(std::path::PathBuf::from);
     browsers()
         .into_iter()
         .filter(|b| match b.name {

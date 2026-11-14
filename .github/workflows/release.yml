@@ -154,6 +154,35 @@ jobs:
         run: |
           cp scripts/install.sh scripts/install.ps1 release/
           cd release && sha256sum * > SHA256SUMS && cat SHA256SUMS
+      - name: Signed update manifest
+        env:
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+        working-directory: release
+        run: |
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends minisign
+          version="${GITHUB_REF_NAME#v}"
+          python3 - "$version" <<'PY'
+          import json, re, sys
+          version = sys.argv[1]
+          sums = dict(reversed(line.split(maxsplit=1)) for line in open("SHA256SUMS").read().splitlines())
+          sums = {name.lstrip("*"): digest for name, digest in sums.items()}
+          assets = {}
+          for name, digest in sums.items():
+              found = re.fullmatch(rf"sirv-lens-{re.escape(version)}-(.+)\.(tar\.gz|zip)", name)
+              if found:
+                  assets[found.group(1)] = {"file": name, "sha256": digest}
+          extension = f"sirv-lens-extension-{version}-chrome.zip"
+          manifest = {"version": version, "assets": assets,
+                      "extension": {"file": extension, "sha256": sums[extension]} if extension in sums else None}
+          assert len(assets) == 6, f"expected six platform archives, found {sorted(assets)}"
+          json.dump(manifest, open("latest.json", "w"), indent=2)
+          PY
+          key="$RUNNER_TEMP/minisign.key"
+          printf '%s\n' "$MINISIGN_SECRET_KEY" > "$key"
+          minisign -S -s "$key" -m latest.json -t "Sirv Lens $version"
+          rm -f "$key"
+          minisign -V -P RWRUIk1sA/LfACfTQLljdyJArqZHzXbSZB32dsXEr2AMUrXAmSXevoDr -m latest.json
+          sha256sum latest.json latest.json.minisig >> SHA256SUMS
       - name: Draft release
         env:
           GH_TOKEN: ${{ github.token }}

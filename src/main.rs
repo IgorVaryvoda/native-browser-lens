@@ -16,6 +16,7 @@ mod service;
 mod setup;
 mod shim;
 mod store;
+mod update;
 mod vibeq;
 
 use paths::Paths;
@@ -31,6 +32,7 @@ const USAGE: &str = "Usage: lens <command>
   start              Start Lens in the background
   stop               Stop Lens (the service does not restart it)
   restart            Stop, then start
+  update [--check]   Install the newest signed release (--check only reports it)
   service install    Start Lens at login (per user, no admin rights)
   service uninstall  Stop starting Lens at login
   register           Register Lens with every installed browser (per user)
@@ -52,6 +54,10 @@ fn main() -> ExitCode {
         }
         Some("start") => with_paths(|p| service::start(p).map(|()| println!("started"))),
         Some("restart") => with_paths(|p| {
+            if args.get(1).is_some_and(|a| a == "--after") {
+                let seconds = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(2);
+                std::thread::sleep(std::time::Duration::from_secs(seconds));
+            }
             stop_daemon(p)?;
             service::start(p)?;
             println!("restarted");
@@ -79,6 +85,35 @@ fn main() -> ExitCode {
         Some("unregister") => with_paths(|p| print_report(register::unregister(p)?)),
         Some("status") => with_paths(status),
         Some("setup") => with_paths(setup::setup),
+        Some("update") => with_paths(|p| {
+            let executable = std::env::current_exe()?;
+            if let Some(manager) = update::managed_by(&executable) {
+                println!("{manager} updates this copy of Lens.");
+                return Ok(());
+            }
+            match update::check().map_err(std::io::Error::other)? {
+                None => println!("Lens {} is the newest version.", env!("CARGO_PKG_VERSION")),
+                Some(manifest) if args.get(1).is_some_and(|a| a == "--check") => {
+                    println!(
+                        "Lens {} is available; lens update installs it.",
+                        manifest.version
+                    )
+                }
+                Some(manifest) => {
+                    update::install(p, &manifest).map_err(std::io::Error::other)?;
+                    // This process still runs the old file, which Linux now reports as deleted:
+                    // the new binary, at the path read before the update, does the restart.
+                    if ipc::connect(p).is_ok() || service::state(p) != service::State::NotInstalled
+                    {
+                        std::process::Command::new(&executable)
+                            .arg("restart")
+                            .status()?;
+                    }
+                    println!("Lens {} is installed.", manifest.version);
+                }
+            }
+            Ok(())
+        }),
         Some("paths") => with_paths(|p| {
             let folder = match args.get(1).map(String::as_str) {
                 Some("data") => p.data.clone(),
