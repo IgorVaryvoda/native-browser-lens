@@ -190,6 +190,9 @@ impl LensMcp {
             .ok_or_else(|| failure(format!("review {review} has no capture {n}")))?;
         let generated = matches!(kind, "timeline" | "spec" | "har");
         let blob = match kind {
+            "png" if item.kind == crate::protocol::CaptureKind::Session => {
+                return Err(failure("a recording shares no screenshot"));
+            }
             "png" => &item.screenshot,
             "evidence" | "timeline" | "spec" | "har" => &item.evidence,
             _ => item

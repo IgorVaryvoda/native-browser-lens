@@ -147,7 +147,13 @@ pub fn investigate(
     let binary = find(agent).ok_or_else(|| format!("{agent:?} is not installed"))?;
     let work = Workspace::new()?;
     let mut images = Vec::new();
-    for item in review.items.iter().take(MAX_IMAGES) {
+    // A recording shares no screenshot, so the agent gets none of it either.
+    for item in review
+        .items
+        .iter()
+        .filter(|i| i.kind != crate::protocol::CaptureKind::Session)
+        .take(MAX_IMAGES)
+    {
         if item.screenshot.size > MAX_IMAGE_BYTES {
             continue;
         }

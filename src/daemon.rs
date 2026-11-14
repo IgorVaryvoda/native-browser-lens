@@ -389,6 +389,17 @@ impl Daemon {
             }
             Request::SaveEdits { capture, edits } => {
                 edits.validate().map_err(bad)?;
+                let found = store
+                    .get_capture(capture)
+                    .map_err(storage)?
+                    .ok_or_else(|| not_found("no such capture"))?;
+                // An empty kept list means "unedited, keep all" downstream: edits that keep
+                // nothing must never reach it.
+                if edits != Edits::default()
+                    && edits.kept(found.started_at, found.created_at).is_empty()
+                {
+                    return Err(bad("these trims and cuts leave nothing of the recording"));
+                }
                 if !store.save_edits(capture, &edits).map_err(storage)? {
                     return Err(not_found("no such capture"));
                 }
@@ -451,7 +462,13 @@ impl Daemon {
                     let kept = if capture.edits == Edits::default() {
                         Vec::new()
                     } else {
-                        capture.edits.kept(capture.started_at, capture.created_at)
+                        let kept = capture.edits.kept(capture.started_at, capture.created_at);
+                        if kept.is_empty() {
+                            return Err(bad(format!(
+                                "the edits of capture {id} leave nothing to share"
+                            )));
+                        }
+                        kept
                     };
                     let inside = |at: i64| {
                         kept.is_empty() || kept.iter().any(|r| at >= r.from && at <= r.to)
@@ -1280,6 +1297,12 @@ mod tests {
             "{saved}"
         );
         assert_eq!(saved["result"]["data"]["kind"], "session");
+        let everything = serde_json::json!({ "trimStart": null, "trimEnd": null, "cuts": [{ "from": 0, "to": i64::MAX }], "annotations": [] });
+        let nothing_left = ask(&daemon, &serde_json::json!({ "id": 5, "method": "saveEdits", "params": { "capture": id, "edits": everything } }).to_string());
+        assert_eq!(
+            nothing_left["status"], "error",
+            "a cut of everything must not mean: share all"
+        );
         let backwards = serde_json::json!({ "trimStart": null, "trimEnd": null, "cuts": [{ "from": 6, "to": 5 }], "annotations": [] });
         let refused = ask(&daemon, &serde_json::json!({ "id": 4, "method": "saveEdits", "params": { "capture": id, "edits": backwards } }).to_string());
         assert_eq!(refused["status"], "error");
