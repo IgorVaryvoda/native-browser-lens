@@ -202,18 +202,36 @@
   gap: 8px;
   margin: 4px 0 8px;
 }
+.obs-day {
+  display: grid;
+  gap: 2px;
+}
+.obs-day + .obs-day {
+  margin-top: 8px;
+}
+.obs-day .label {
+  margin: 0;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
 .obs-list {
   display: grid;
   margin: 0;
   padding: 0;
   list-style: none;
 }
+.obs-item {
+  position: relative;
+}
 .obs-row {
   display: grid;
-  gap: 2px;
-  width: calc(100% + 20px);
-  margin: 0 -10px;
-  padding: 9px 10px;
+  grid-template-columns: 64px minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 10px;
+  width: calc(100% + 16px);
+  margin: 0 -8px;
+  padding: 8px;
   border: 0;
   border-radius: var(--radius);
   background: transparent;
@@ -221,16 +239,73 @@
   font: inherit;
   text-align: left;
   cursor: pointer;
-  transition: background-color 120ms var(--ease);
 }
 .obs-row:hover {
   background: var(--muted);
 }
-.obs-title {
+.obs-thumb {
+  display: block;
+  width: 64px;
+  height: 40px;
   overflow: hidden;
-  font-weight: 500;
+  border-radius: 6px;
+  background: var(--muted);
+  box-shadow: var(--app-shadow-hairline);
+}
+.obs-thumb img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: top left;
+}
+.obs-text {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.obs-title {
+  display: -webkit-box;
+  overflow: hidden;
+  font-weight: 600;
+  line-height: 1.3;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+.obs-headline {
+  overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
+}
+.obs-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+}
+.obs-kind {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.obs-kind .rec-dot {
+  width: 7px;
+  height: 7px;
+  margin: 0;
+  color: var(--danger);
+}
+.obs-status {
+  margin-top: 1px;
+}
+.obs-delete {
+  position: absolute;
+  right: -4px;
+  bottom: 6px;
+  opacity: 0;
+}
+.obs-item:hover .obs-delete,
+.obs-delete:focus-visible {
+  opacity: 1;
 }
 .empty {
   display: grid;
@@ -420,4 +495,118 @@
 .rec-dot-still {
   animation: none;
   background: currentColor;
+}
+
+/* ---------- Detail ---------- */
+.detail-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.hero-wrap {
+  display: grid;
+  gap: 4px;
+}
+.hero {
+  position: relative;
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 10;
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+  border-radius: var(--radius-card);
+  background: var(--muted);
+  box-shadow: var(--app-shadow-hairline);
+  cursor: pointer;
+}
+span.hero {
+  display: block;
+}
+.hero .thumb {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: top left;
+  border: 0;
+  border-radius: 0;
+}
+.hero::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(to top, oklch(0 0 0 / 45%), transparent 45%);
+  pointer-events: none;
+}
+.hero-play {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  background: var(--primary);
+  color: var(--on-primary);
+  box-shadow: var(--app-shadow-lg);
+  transform: translate(-50%, -50%);
+  transition: transform 120ms var(--ease);
+}
+.hero:hover .hero-play {
+  transform: translate(-50%, -50%) scale(1.06);
+}
+.hero-play svg {
+  width: 24px;
+  height: 24px;
+  margin-left: 2px;
+  fill: currentColor;
+}
+.hero-badge {
+  position: absolute;
+  left: 10px;
+  bottom: 8px;
+  z-index: 1;
+  color: #fff;
+  font: 600 12px var(--font-ui);
+  text-shadow: 0 1px 2px oklch(0 0 0 / 50%);
+}
+.hero-wrap[data-small] .hero-play {
+  width: 34px;
+  height: 34px;
+}
+.hero-wrap[data-small] .hero-play svg {
+  width: 16px;
+  height: 16px;
+}
+.hero-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px 8px;
+}
+.hero-meta:empty {
+  display: none;
+}
+.detail .detail-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.detail .detail-actions > :only-child {
+  grid-column: 1 / -1;
+}
+.more {
+  display: grid;
+  gap: 8px;
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
 }

@@ -64,6 +64,29 @@ export function Notes({
       onSaved();
     } catch (error) {
       const conflict = error instanceof LensError && error.code === 'conflict';
+      if (conflict) {
+        // Lens titles observations in the background: a new title and findings put in front of
+        // the notes. That change and the person's edit combine; anything else is a real conflict.
+        const latest = await client.request({ method: 'getObservation', params: { id } }).catch(() => null);
+        const prepended = latest && latest.notes.endsWith(record.notes);
+        if (latest && prepended) {
+          const merged = {
+            title: title === record.title ? latest.title : title,
+            notes: latest.notes.slice(0, latest.notes.length - record.notes.length) + notes,
+          };
+          try {
+            const saved = await client.request({ method: 'updateObservation', params: { id, revision: latest.revision, ...merged } });
+            setRecord(saved);
+            setTitle(saved.title);
+            setNotes(saved.notes);
+            setState({ kind: 'saved' });
+            onSaved();
+            return;
+          } catch {
+            // Fall through: show the conflict.
+          }
+        }
+      }
       setState(conflict ? { kind: 'conflict' } : { kind: 'failed', message: (error as Error).message });
     } finally {
       saving.current = false;

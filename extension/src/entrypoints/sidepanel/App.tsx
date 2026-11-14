@@ -4,7 +4,8 @@ import { originOf, send, type Broadcast, type CaptureResult, type TabStatus } fr
 import type { Capture } from '@/protocol/Capture';
 import type { Hello } from '@/protocol/Hello';
 import type { ObservationSummary } from '@/protocol/ObservationSummary';
-import { AlertIcon, BackIcon, CameraIcon, ExportIcon, PenIcon, PlayIcon, SettingsIcon, LensMark } from '@/ui/icons';
+import { AlertIcon, BackIcon, CameraIcon, DeleteIcon, ExportIcon, LensMark, MicIcon, PenIcon, PlayIcon, SettingsIcon } from '@/ui/icons';
+import type { BlobRef } from '@/protocol/BlobRef';
 import { Notes } from './Notes';
 import { VoiceNotes } from './Voice';
 import { RecordControls, useStored, type PanelMode } from './Record';
@@ -115,6 +116,12 @@ export function App() {
   const reloadObservations = useCallback(() => {
     void client?.request({ method: 'listObservations' }).then(setObservations);
   }, [client]);
+  // Titles and transcripts finish in the background: the list looks again now and then.
+  useEffect(() => {
+    if (connection.state !== 'ready') return;
+    const timer = setInterval(reloadObservations, 10_000);
+    return () => clearInterval(timer);
+  }, [connection.state, reloadObservations]);
 
   async function track() {
     if (!client || !site?.origin) return;
@@ -209,11 +216,13 @@ export function App() {
                 </button>
               ))}
             </div>
-            <p className="small muted mode-hint">
-              {panelMode === 'record'
-                ? 'Record a session with your voice, then review, cut and annotate it.'
-                : 'Capture saves the last ten minutes of this tab.'}
-            </p>
+            {!current && (
+              <p className="small muted mode-hint">
+                {panelMode === 'record'
+                  ? 'Record a session with your voice, then review, cut and annotate it.'
+                  : 'Capture saves the last ten minutes of this tab.'}
+              </p>
+            )}
             {site?.origin ? (
               <>
                 <div className="site-row">
@@ -284,7 +293,7 @@ export function App() {
               onSaved={reloadObservations}
             />
           ) : (
-            <Observations list={observations} onOpen={setSelected} />
+            <Observations client={client} list={observations} onOpen={setSelected} onChanged={reloadObservations} />
           )}
         </>
       )}
@@ -292,7 +301,50 @@ export function App() {
   );
 }
 
-function Observations({ list, onOpen }: { list: ObservationSummary[] | null; onOpen: (id: number) => void }) {
+/** Screenshots shown in the list, kept for the life of the panel. */
+const thumbnails = new Map<string, Promise<string>>();
+
+function Thumbnail({ client, blob }: { client: LensClient; blob: BlobRef | null }) {
+  const [src, setSrc] = useState<string | null>(null);
+  useEffect(() => {
+    if (!blob) return;
+    let cached = thumbnails.get(blob.sha256);
+    if (!cached) {
+      cached = client.readBlob(blob).then((data) => URL.createObjectURL(data));
+      thumbnails.set(blob.sha256, cached);
+    }
+    void cached.then(setSrc).catch(() => thumbnails.delete(blob.sha256));
+  }, [client, blob]);
+  return <span className="obs-thumb">{src && <img src={src} alt="" />}</span>;
+}
+
+function dayOf(ms: number) {
+  const day = new Date(ms);
+  day.setHours(0, 0, 0, 0);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const days = Math.round((today.getTime() - day.getTime()) / 86_400_000);
+  if (days === 0) return 'Today';
+  if (days === 1) return 'Yesterday';
+  return day.toLocaleDateString([], { weekday: days < 7 ? 'long' : undefined, day: 'numeric', month: 'short' });
+}
+
+const length = (ms: number) => {
+  const s = Math.max(1, Math.round(ms / 1000));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+};
+
+function Observations({
+  client,
+  list,
+  onOpen,
+  onChanged,
+}: {
+  client: LensClient;
+  list: ObservationSummary[] | null;
+  onOpen: (id: number) => void;
+  onChanged: () => void;
+}) {
   if (list === null) {
     return (
       <div className="list-skeleton" aria-hidden="true">
@@ -301,35 +353,83 @@ function Observations({ list, onOpen }: { list: ObservationSummary[] | null; onO
       </div>
     );
   }
+  const days: [string, ObservationSummary[]][] = [];
+  for (const o of list) {
+    const day = dayOf(Number(o.createdAt));
+    if (days.at(-1)?.[0] === day) days.at(-1)![1].push(o);
+    else days.push([day, [o]]);
+  }
+  async function remove(o: ObservationSummary) {
+    if (!confirm(`Delete “${o.title}” with its recordings and notes? Tasks already filed stay in VibeQ.`)) return;
+    await client.request({ method: 'deleteObservation', params: { id: o.id } }).catch(() => {});
+    onChanged();
+  }
   return (
     <section className="observations" aria-label="Your observations">
       <div className="section-head">
-        <h2>Observations</h2>
+        <h2>Recordings and captures</h2>
         {list.length > 0 && <span className="small muted num">{list.length}</span>}
       </div>
       {list.length === 0 ? (
         <div className="empty">
-          <p>Nothing captured yet.</p>
+          <p>Nothing recorded yet.</p>
           <p className="small muted">
-            Make the defect happen on the page, then capture it. Lens attaches the last two minutes of network requests,
-            console messages and errors, and you can mark up the screenshot afterwards.
+            Press Record, use the site and say what you see; or make the defect happen and press Capture, which keeps
+            the last ten minutes.
           </p>
         </div>
       ) : (
-        <ul className="obs-list" aria-label="Observations">
-          {list.map((o) => (
-            <li key={o.id}>
-              <button type="button" className="obs-row" onClick={() => onOpen(o.id)}>
-                <span className="obs-title">{o.title}</span>
-                <span className="small muted num">
-                  {[hostOf(o.url), `${o.captureCount} ${o.captureCount === 1 ? 'capture' : 'captures'}`, ago(o.updatedAt)]
-                    .filter(Boolean)
-                    .join(' · ')}
-                </span>
-              </button>
-            </li>
-          ))}
-        </ul>
+        days.map(([day, items]) => (
+          <div key={day} className="obs-day">
+            <h3 className="label">{day}</h3>
+            <ul className="obs-list" aria-label={day === dayOf(Date.now()) ? 'Observations' : `Observations from ${day}`}>
+              {items.map((o) => (
+                <li key={o.id} className="obs-item">
+                  <button type="button" className="obs-row" onClick={() => onOpen(o.id)}>
+                    <Thumbnail client={client} blob={o.thumbnail} />
+                    <span className="obs-text">
+                      <span className="obs-title">{o.title}</span>
+                      {o.headline && <span className="obs-headline small muted">{o.headline}</span>}
+                      <span className="obs-meta small muted num">
+                        {o.kind === 'session' ? (
+                          <span className="obs-kind">
+                            <span className="rec-dot rec-dot-still" aria-hidden="true" />
+                            {length(Number(o.durationMs))}
+                          </span>
+                        ) : (
+                          <span className="obs-kind">
+                            <CameraIcon size={12} />
+                            {o.captureCount > 1 ? `${o.captureCount} captures` : 'Capture'}
+                          </span>
+                        )}
+                        {o.voiceCount > 0 && (
+                          <span className="obs-kind" title="With voice">
+                            <MicIcon size={12} />
+                          </span>
+                        )}
+                        <span>{ago(Number(o.createdAt))}</span>
+                      </span>
+                    </span>
+                    {o.status !== 'draft' && (
+                      <span className="pill obs-status" data-tone={o.status === 'filed' ? 'success' : 'info'}>
+                        {o.status === 'filed' ? 'Filed' : 'Reviewed'}
+                      </span>
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-icon btn-sm obs-delete"
+                    aria-label={`Delete ${o.title}`}
+                    title="Delete"
+                    onClick={() => void remove(o)}
+                  >
+                    <DeleteIcon />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))
       )}
     </section>
   );
@@ -347,86 +447,112 @@ function Detail({
   onSaved: () => void;
 }) {
   const append = useRef<((text: string) => void) | null>(null);
+  const [captures, setCaptures] = useState<Capture[] | null>(null);
+  useEffect(() => {
+    const load = () =>
+      void client.request({ method: 'listCaptures', params: { observation: observation.id } }).then(setCaptures);
+    load();
+    const listener = (message: Broadcast) => {
+      if ((message.kind === 'captured' || message.kind === 'annotated') && message.capture.observation === observation.id) load();
+    };
+    browser.runtime.onMessage.addListener(listener);
+    return () => browser.runtime.onMessage.removeListener(listener);
+  }, [client, observation.id]);
+  const open = (path: string) => void browser.tabs.create({ url: browser.runtime.getURL(path as '/') });
+  const newest = captures?.at(-1);
   return (
     <section className="detail" aria-label="Observation">
-      <button type="button" className="btn btn-ghost btn-sm back" onClick={onBack}>
-        <BackIcon size={14} />
-        All observations
-      </button>
-      <Notes client={client} id={observation.id} onSaved={onSaved} appendRef={append} />
-      <VoiceNotes client={client} observation={observation.id} onAppend={(text) => append.current?.(text)} />
-      <Captures client={client} observation={observation.id} />
+      <div className="detail-top">
+        <button type="button" className="btn btn-ghost btn-sm back" onClick={onBack}>
+          <BackIcon size={14} />
+          All recordings
+        </button>
+        {observation.status !== 'draft' && (
+          <span className="pill" data-tone={observation.status === 'filed' ? 'success' : 'info'}>
+            {observation.status === 'filed' ? 'Filed' : 'Reviewed'}
+          </span>
+        )}
+      </div>
+      {captures === null ? (
+        <span className="hero skeleton" aria-hidden="true" />
+      ) : newest ? (
+        <Hero client={client} capture={newest} onOpen={() => open(newest.recording ? `/replay.html?capture=${newest.id}` : `/annotate.html?capture=${newest.id}`)} />
+      ) : (
+        <p className="small muted">Nothing recorded here yet.</p>
+      )}
       <div className="detail-actions">
-        <button
-          type="button"
-          className="btn btn-secondary btn-block"
-          onClick={() =>
-            void browser.tabs.create({ url: browser.runtime.getURL(`/review.html?observation=${observation.id}`) })
-          }
-        >
+        {newest?.recording && (
+          <button type="button" className="btn btn-primary" onClick={() => open(`/replay.html?capture=${newest.id}`)}>
+            <PlayIcon />
+            Open in editor
+          </button>
+        )}
+        <button type="button" className="btn btn-secondary" onClick={() => open(`/review.html?observation=${observation.id}`)}>
           <ExportIcon />
-          Review and export
+          Review and file
         </button>
       </div>
+      <Notes client={client} id={observation.id} onSaved={onSaved} appendRef={append} />
+      <VoiceNotes client={client} observation={observation.id} onAppend={(text) => append.current?.(text)} />
+      {captures && captures.length > 1 && (
+        <section className="more" aria-label="Captures">
+          <h3 className="label">All {captures.length} captures</h3>
+          <ol className="captures">
+            {captures.map((c) => (
+              <li key={c.id}>
+                <Hero client={client} capture={c} small onOpen={() => open(c.recording ? `/replay.html?capture=${c.id}` : `/annotate.html?capture=${c.id}`)} />
+              </li>
+            ))}
+          </ol>
+        </section>
+      )}
+      {captures?.length === 1 && <ol aria-label="Captures" className="sr-only"><li>{captureLabel(captures[0]!)}</li></ol>}
     </section>
   );
 }
 
-function Captures({ client, observation }: { client: LensClient; observation: number }) {
-  const [captures, setCaptures] = useState<Capture[] | null>(null);
-  useEffect(() => {
-    const load = () => void client.request({ method: 'listCaptures', params: { observation } }).then(setCaptures);
-    load();
-    const listener = (message: Broadcast) => {
-      if ((message.kind === 'captured' || message.kind === 'annotated') && message.capture.observation === observation) load();
-    };
-    browser.runtime.onMessage.addListener(listener);
-    return () => browser.runtime.onMessage.removeListener(listener);
-  }, [client, observation]);
-  if (captures === null) return <span className="thumb skeleton" aria-hidden="true" />;
-  if (!captures.length) return <p className="small muted">No captures yet. Capture adds one here.</p>;
-  const open = (path: string) => void browser.tabs.create({ url: browser.runtime.getURL(path as '/') });
+function captureLabel(c: Capture) {
+  const time = new Date(Number(c.createdAt)).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  if (c.kind === 'session') return `Recording · ${length(Number(c.createdAt) - Number(c.startedAt))} · ${time}`;
+  return `Capture · ${time}`;
+}
+
+/** A capture as a picture: its screenshot, with a play button when it has a recording. */
+function Hero({ client, capture, onOpen, small = false }: { client: LensClient; capture: Capture; onOpen: () => void; small?: boolean }) {
+  const marks = capture.annotations.length;
   return (
-    <ol aria-label="Captures" className="captures">
-      {captures.map((c) => (
-        <li key={c.id} className="capture-card">
+    <div className="hero-wrap" data-small={small || undefined}>
+      <button
+        type="button"
+        className="hero"
+        aria-label={capture.recording ? `Open the recording, ${captureLabel(capture)}` : `Annotate capture ${capture.id}`}
+        onClick={onOpen}
+      >
+        <Screenshot client={client} capture={capture} />
+        {capture.recording && (
+          <span className="hero-play" aria-hidden="true">
+            <svg viewBox="0 0 24 24">
+              <path d="M8 5.6v12.8a1 1 0 0 0 1.5.86l10.2-6.4a1 1 0 0 0 0-1.72L9.5 4.74A1 1 0 0 0 8 5.6z" />
+            </svg>
+          </span>
+        )}
+        <span className="hero-badge num">{captureLabel(capture)}</span>
+      </button>
+      <div className="hero-meta small muted">
+        {capture.mode === 'limited' && <span>Network answers were not recorded in this browser.</span>}
+        {capture.mode === 'screenshotOnly' && <span>Only the screenshot: Lens did not collect on this site.</span>}
+        {capture.kind !== 'session' && (
           <button
             type="button"
-            className="shot"
-            aria-label={`Annotate capture ${c.id}`}
-            onClick={() => open(`/annotate.html?capture=${c.id}`)}
+            className="btn btn-ghost btn-sm"
+            aria-label={`Annotate capture ${capture.id}`}
+            onClick={() => void browser.tabs.create({ url: browser.runtime.getURL(`/annotate.html?capture=${capture.id}`) })}
           >
-            <Screenshot client={client} capture={c} />
+            <PenIcon /> Mark up{marks ? ` · ${marks}` : ''}
           </button>
-          <div className="capture-meta">
-            <span className="facts small muted num">
-              {c.eventCount} events · {c.gapCount} gaps · {c.mode} · {c.annotations.length} marks
-            </span>
-            <span className="capture-actions">
-              <button
-                type="button"
-                className="btn btn-ghost btn-icon btn-sm"
-                aria-label="Annotate"
-                title="Annotate"
-                onClick={() => open(`/annotate.html?capture=${c.id}`)}
-              >
-                <PenIcon />
-              </button>
-              {c.recording && (
-                <button
-                  type="button"
-                  className="btn btn-ghost btn-sm"
-                  onClick={() => open(`/replay.html?capture=${c.id}`)}
-                >
-                  <PlayIcon />
-                  Open recording
-                </button>
-              )}
-            </span>
-          </div>
-        </li>
-      ))}
-    </ol>
+        )}
+      </div>
+    </div>
   );
 }
 

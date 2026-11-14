@@ -195,14 +195,13 @@ try {
   await panel.getByRole('tab', { name: 'Capture' }).click();
   await panel.getByRole('button', { name: 'Capture to a new observation' }).click();
 
-  // A capture opens its observation: the captures list appears in the detail view.
-  const captures = panel.getByRole('list', { name: 'Captures' });
-  await captures.or(panel.getByRole('alert')).first().waitFor({ timeout: 15_000 });
+  // A capture opens its observation: its picture leads the detail view.
+  const capture = panel.getByRole('region', { name: 'Observation' });
+  const hero = capture.getByRole('button', { name: /^Open the recording, Capture/ });
+  await hero.or(panel.getByRole('alert')).first().waitFor({ timeout: 15_000 });
   if (await panel.getByRole('alert').isVisible()) throw new Error(await panel.getByRole('alert').textContent());
-  const capture = panel.getByRole('list', { name: 'Captures' }).getByRole('listitem').first();
-  await capture.getByText(/\d+ events · \d+ gaps · deep/).waitFor({ timeout: 15_000 });
-  await capture.getByRole('img').waitFor();
-  const imageWidth = await capture.getByRole('img').evaluate((img) => img.naturalWidth);
+  await hero.getByRole('img').waitFor();
+  const imageWidth = await hero.getByRole('img').evaluate((img) => img.naturalWidth);
   if (!(imageWidth > 0)) throw new Error('the screenshot did not render');
 
   // The stored evidence holds the defect, and not the secret.
@@ -247,12 +246,12 @@ try {
   await drag(200, 20, 320, 70);
   await editor.getByRole('button', { name: 'Save' }).click();
   await editor.getByRole('status').filter({ hasText: 'Saved · 2 marks' }).waitFor({ timeout: 15_000 });
-  await capture.getByText(/· 2 marks/).waitFor({ timeout: 15_000 });
+  await capture.getByText('Mark up · 2').waitFor({ timeout: 15_000 });
 
   // The capture's recording opens in the editor, the same one Record mode uses.
   const [replay] = await Promise.all([
     context.waitForEvent('page'),
-    capture.getByRole('button', { name: 'Open recording' }).click(),
+    capture.getByRole('button', { name: 'Open in editor' }).click(),
   ]);
   await replay.getByRole('region', { name: 'Recording editor' }).waitFor({ timeout: 15_000 });
   const replayed = replay.frameLocator('.stage iframe').getByRole('heading', { name: 'Checkout' });
@@ -263,11 +262,12 @@ try {
   await panel.getByLabel('Notes', { exact: true }).fill(notes);
   await panel.getByRole('status', { name: 'Notes status' }).filter({ hasText: /^Saved$/ }).waitFor({ timeout: 15_000 });
   await panel.reload();
-  await panel.getByRole('list', { name: 'Observations' }).getByRole('button', { name: /Checkout/ }).click();
-  await panel.getByRole('button', { name: 'Review and export' }).waitFor({ timeout: 15_000 });
+  await panel.getByRole('list', { name: 'Observations' }).getByRole('button', { name: /^Checkout/ }).first().click();
+  await panel.getByRole('button', { name: 'Review and file' }).waitFor({ timeout: 15_000 });
   const reloaded = panel.getByLabel('Notes', { exact: true });
   await reloaded.waitFor({ timeout: 15_000 });
-  if ((await reloaded.inputValue()) !== notes) throw new Error(`notes after reload: ${await reloaded.inputValue()}`);
+  // Lens may have put its findings in front meanwhile: the person's text follows them, whole.
+  if (!(await reloaded.inputValue()).endsWith(notes)) throw new Error(`notes after reload: ${await reloaded.inputValue()}`);
 
   // Voice: a spoken note becomes a transcript when the speech model and program are present
   // (LENS_SPEECH_MODELS, LENS_SPEECH_DIR); without them it waits and the panel offers the model.
@@ -288,7 +288,7 @@ try {
   // daemon-rendered images and a report of what failed.
   const [review] = await Promise.all([
     context.waitForEvent('page'),
-    panel.getByRole('button', { name: 'Review and export' }).click(),
+    panel.getByRole('button', { name: 'Review and file' }).click(),
   ]);
   const freeze = review.getByRole('button', { name: 'Create review' });
   await freeze.waitFor({ timeout: 15_000 });
@@ -299,7 +299,7 @@ try {
     .waitFor({ timeout: 30_000 });
   if (summaries) {
     if ((await review.getByLabel('Title', { exact: true }).inputValue()) !== 'Checkout: total shows NaN after Pay') throw new Error('the title was not written');
-    if (!(await review.getByLabel('Notes', { exact: true }).inputValue()).startsWith('Findings:\n- The total shows NaN after Pay\n\n')) {
+    if (!(await review.getByLabel('Notes', { exact: true }).inputValue()).startsWith('Findings (written by Claude Haiku from the recording; check them):\n- The total shows NaN after Pay\n\n')) {
       throw new Error(`the findings are not first: ${await review.getByLabel('Notes', { exact: true }).inputValue()}`);
     }
   }
@@ -524,7 +524,7 @@ try {
   }
   const sessionReport = readFileSync(join(sessionFolder, 'report.md'), 'utf8');
   // Findings first, the raw timeline last.
-  if (!(sessionReport.indexOf('Findings:') < sessionReport.indexOf('## Timeline'))) throw new Error(`the report order:\n${sessionReport}`);
+  if (!(sessionReport.indexOf('Findings') < sessionReport.indexOf('## Timeline'))) throw new Error(`the report order:\n${sessionReport}`);
   const sessionTimeline = readFileSync(join(sessionFolder, 'capture-1-timeline.txt'), 'utf8');
   const sessionSpec = readFileSync(join(sessionFolder, 'capture-1.spec.ts'), 'utf8');
   for (const [file, text] of [['timeline', sessionTimeline], ['spec', sessionSpec]]) {
@@ -556,10 +556,10 @@ try {
         await page.screenshot({ path: join(gallery, `${name}-${scheme}.png`) });
       }
       await panel.getByRole('list', { name: 'Observations' }).getByRole('button').first().click();
-      await panel.getByRole('button', { name: 'Review and export' }).waitFor();
+      await panel.getByRole('button', { name: 'Review and file' }).waitFor();
       await panel.waitForTimeout(500);
       await panel.screenshot({ path: join(gallery, `panel-detail-${scheme}.png`) });
-      await panel.getByRole('button', { name: 'All observations' }).click();
+      await panel.getByRole('button', { name: 'All recordings' }).click();
     }
   }
 

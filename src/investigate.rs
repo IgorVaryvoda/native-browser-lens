@@ -212,12 +212,18 @@ fn summary_schema() -> Value {
     })
 }
 
+impl Agent {
+    /// The agent that writes summaries: Claude (Haiku) first, then Codex.
+    pub fn ready() -> Option<Agent> {
+        [Agent::Claude, Agent::Codex]
+            .into_iter()
+            .find(|a| status(*a) == AgentState::Ready)
+    }
+}
+
 /// Asks the first ready agent for a title and findings: Claude (Haiku) first, then Codex.
 pub fn summarize(context: &Value, notebook: &Path) -> Result<Summary, String> {
-    let agent = [Agent::Claude, Agent::Codex]
-        .into_iter()
-        .find(|a| status(*a) == AgentState::Ready)
-        .ok_or("neither Claude Code nor Codex is installed and signed in")?;
+    let agent = Agent::ready().ok_or("neither Claude Code nor Codex is installed and signed in")?;
     let binary = find(agent).ok_or_else(|| format!("{agent:?} is not installed"))?;
     let work = Workspace::new()?;
     let mut text = serde_json::to_string_pretty(context).expect("JSON serializes");

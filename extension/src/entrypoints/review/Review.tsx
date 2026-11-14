@@ -66,11 +66,20 @@ export function Review({ observation: id }: { observation: number }) {
       const found = await client.request({ method: 'summarize', params: { observation: id } });
       const latest = await client.request({ method: 'getObservation', params: { id } });
       // The findings go first in the notes; what the person wrote stays below them.
-      const previous = latest.notes.replace(/^Findings:\n(- .*\n?)+\n*/, '').trim();
-      const findings = found.findings.length ? `Findings:\n${found.findings.map((f) => `- ${f}`).join('\n')}` : '';
+      const previous = latest.notes.replace(/^Findings[^\n]*:\n(- .*\n?)+\n*/, '').trim();
+      // The model read page text: its words cannot add links, images or HTML to the notes.
+      const escape = (text: string) => text.replace(/[\\`*_{}[\]()#+!|<>~&]/g, (c) => `\\${c}`);
+      const findings = found.findings.length
+        ? `${FINDINGS_HEADER}\n${found.findings.map((f) => `- ${escape(f)}`).join('\n')}`
+        : '';
       const saved = await client.request({
         method: 'updateObservation',
-        params: { id, revision: latest.revision, title: found.title, notes: [findings, previous].filter(Boolean).join('\n\n') },
+        params: {
+          id,
+          revision: latest.revision,
+          title: found.title.replace(/[[\]()<>!`*_#|\\]/g, '').trim(),
+          notes: [findings, previous].filter(Boolean).join('\n\n'),
+        },
       });
       setObservation(saved);
       setNotesVersion((v) => v + 1);
@@ -79,6 +88,13 @@ export function Review({ observation: id }: { observation: number }) {
       setSummary({ state: 'failed', reason: (error as Error).message });
     }
   }, [client, id]);
+  // The daemon may have written them already, in the background.
+  useEffect(() => {
+    if (summary.state === 'idle' && observation?.notes.startsWith(FINDINGS_HEADER)) {
+      summarized.current = true;
+      setSummary({ state: 'done', agent: 'claude' });
+    }
+  }, [observation, summary.state]);
   const waitingForWords = voice.some((v) => v.state === 'transcribing' || (v.state === 'waiting' && !v.detail));
   useEffect(() => {
     if (review || !observation || summarized.current || waitingForWords || captures.length === 0) return;
@@ -408,11 +424,9 @@ export function Review({ observation: id }: { observation: number }) {
             .map((c) => (
               <RecordingEditor key={c.id} client={client} capture={c} voice={voice} onVoice={(note) => setVoice((all) => all.map((v) => (v.id === note.id ? note : v)))} />
             ))}
-          {captures.some((c) => c.kind !== 'session') && (
+          {captures.length > 0 && (
             <ol aria-label="Captures to review" className="review-list">
-              {captures
-                .filter((c) => c.kind !== 'session')
-                .map((c) => (
+              {captures.map((c) => (
                   <li key={c.id} className="card review-item">
                     <BlobImage client={client} blob={c.screenshot} alt={`Capture ${c.id} before review`} />
                     <div className="review-side">
@@ -426,6 +440,9 @@ export function Review({ observation: id }: { observation: number }) {
                         Mark up or mask
                       </button>
                       <Steps client={client} evidence={c.evidence} label={`Steps of capture ${c.id}`} hideValues={!typedValues} />
+                      {c.kind === 'session' && (
+                        <p className="small muted">This screenshot of the page at Stop goes with the recording.</p>
+                      )}
                     </div>
                   </li>
                 ))}
@@ -479,6 +496,9 @@ function VoiceList({ notes, label }: { notes: (VoiceNote | ReviewVoice)[]; label
     </section>
   );
 }
+
+/** Must equal FINDINGS_HEADER in src/daemon.rs. */
+const FINDINGS_HEADER = 'Findings (written by Claude Haiku from the recording; check them):';
 
 /** The person's steps from a capture's evidence, as the review will share them. */
 function Steps({

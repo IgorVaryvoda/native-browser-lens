@@ -1,7 +1,8 @@
 use crate::filing::Attempt;
 use crate::protocol::{
     BlobRef, Capture, CaptureKind, CaptureMode, ClientInfo, ClientSeen, Edits, Observation,
-    ObservationSummary, Project, Review, ReviewSummary, Shape, VoiceNote, VoiceSegment, VoiceState,
+    ObservationStatus, ObservationSummary, Project, Review, ReviewSummary, Shape, VoiceNote,
+    VoiceSegment, VoiceState,
 };
 use rusqlite::{Connection, params};
 use std::path::Path;
@@ -148,6 +149,17 @@ fn capture_from_row(row: &rusqlite::Row) -> rusqlite::Result<Capture> {
     })
 }
 
+/// The first finding, else the first line of the notes, for a list row.
+fn headline(notes: &str) -> Option<String> {
+    let line = notes
+        .lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty() && !l.starts_with("Findings"))?
+        .trim_start_matches(['-', '*', ' '])
+        .trim();
+    (!line.is_empty()).then(|| line.chars().take(140).collect())
+}
+
 const VOICE_COLUMNS: &str = "id, observation_id, started_at, duration_ms, audio_sha256, audio_size,
     state, language, segments, detail";
 
@@ -271,11 +283,24 @@ impl Store {
     pub fn list_observations(&self) -> rusqlite::Result<Vec<ObservationSummary>> {
         let mut statement = self.db.prepare(
             "SELECT o.id, o.title, o.url, o.created_at, o.updated_at,
-                (SELECT COUNT(*) FROM captures c WHERE c.observation_id = o.id)
-             FROM observations o ORDER BY o.updated_at DESC, o.id DESC",
+                (SELECT COUNT(*) FROM captures c WHERE c.observation_id = o.id),
+                EXISTS (SELECT 1 FROM captures c WHERE c.observation_id = o.id AND c.kind = 'session'),
+                (SELECT COALESCE(SUM(c.created_at - c.started_at), 0) FROM captures c
+                    WHERE c.observation_id = o.id AND c.started_at > 0),
+                (SELECT COUNT(*) FROM voice_notes v WHERE v.observation_id = o.id),
+                EXISTS (SELECT 1 FROM filings f WHERE f.observation_id = o.id
+                    AND json_extract(f.body, '$.receipt') IS NOT NULL),
+                EXISTS (SELECT 1 FROM reviews r WHERE r.observation_id = o.id),
+                (SELECT c.screenshot_sha256 FROM captures c WHERE c.observation_id = o.id ORDER BY c.id DESC LIMIT 1),
+                (SELECT c.screenshot_size FROM captures c WHERE c.observation_id = o.id ORDER BY c.id DESC LIMIT 1),
+                o.notes
+             FROM observations o ORDER BY o.created_at DESC, o.id DESC",
         )?;
         statement
             .query_map([], |row| {
+                let sha: Option<String> = row.get(11)?;
+                let size: Option<i64> = row.get(12)?;
+                let notes: String = row.get(13)?;
                 Ok(ObservationSummary {
                     id: row.get(0)?,
                     title: row.get(1)?,
@@ -283,9 +308,40 @@ impl Store {
                     created_at: row.get(3)?,
                     updated_at: row.get(4)?,
                     capture_count: row.get(5)?,
+                    kind: if row.get::<_, bool>(6)? {
+                        CaptureKind::Session
+                    } else {
+                        CaptureKind::Moment
+                    },
+                    duration_ms: row.get(7)?,
+                    voice_count: row.get(8)?,
+                    status: if row.get::<_, bool>(9)? {
+                        ObservationStatus::Filed
+                    } else if row.get::<_, bool>(10)? {
+                        ObservationStatus::Reviewed
+                    } else {
+                        ObservationStatus::Draft
+                    },
+                    thumbnail: sha.zip(size).map(|(sha256, size)| BlobRef {
+                        sha256,
+                        size: size as u64,
+                        media_type: "image/png".into(),
+                    }),
+                    headline: headline(&notes),
                 })
             })?
             .collect()
+    }
+
+    /// Deletes an observation; captures, voice notes and reviews go with it. Returns false when
+    /// there is none. Blobs stay: other records may share them.
+    pub fn delete_observation(&self, id: i64) -> rusqlite::Result<bool> {
+        self.db
+            .execute("DELETE FROM filings WHERE observation_id = ?1", [id])?;
+        Ok(self
+            .db
+            .execute("DELETE FROM observations WHERE id = ?1", [id])?
+            > 0)
     }
 
     pub fn update_observation(

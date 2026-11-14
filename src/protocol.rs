@@ -35,6 +35,11 @@ pub enum Request {
     },
     /// Saves the title and notes when `revision` is still current; else a `conflict` error.
     UpdateObservation(ObservationUpdate),
+    /// Deletes an observation with its captures, voice notes and reviews. Filed tasks stay in VibeQ.
+    DeleteObservation {
+        #[ts(type = "number")]
+        id: i64,
+    },
     ListProjects,
     /// Creates a project when `id` is null, else replaces that project.
     SaveProject(ProjectInput),
@@ -981,6 +986,27 @@ pub struct ObservationSummary {
     #[ts(type = "number")]
     pub updated_at: i64,
     pub capture_count: u32,
+    /// Session when it holds a Record mode recording.
+    pub kind: CaptureKind,
+    /// The length of its recordings, in milliseconds.
+    #[ts(type = "number")]
+    pub duration_ms: i64,
+    pub voice_count: u32,
+    pub status: ObservationStatus,
+    /// The newest capture's screenshot, for a thumbnail.
+    pub thumbnail: Option<BlobRef>,
+    /// The first finding, or the first line of the notes.
+    pub headline: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum ObservationStatus {
+    Draft,
+    Reviewed,
+    /// VibeQ confirmed a task for one of its reviews.
+    Filed,
 }
 
 #[derive(Debug, Serialize, Deserialize, TS)]

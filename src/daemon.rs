@@ -20,6 +20,8 @@ pub struct Daemon {
     speech_download: Mutex<Option<ModelState>>,
     /// Voice note IDs for the transcription worker.
     speech_queue: std::sync::OnceLock<std::sync::mpsc::Sender<i64>>,
+    /// Observations being titled in the background.
+    titling: Mutex<std::collections::HashSet<i64>>,
     /// The daemon itself, for work that outlives a request.
     me: std::sync::OnceLock<std::sync::Weak<Daemon>>,
     blobs: Blobs,
@@ -195,6 +197,7 @@ impl Daemon {
             speech_download: Mutex::new(None),
             speech_queue: std::sync::OnceLock::new(),
             me: std::sync::OnceLock::new(),
+            titling: Mutex::new(std::collections::HashSet::new()),
             blobs: Blobs::new(paths.blobs()),
             data_dir: paths.data.display().to_string(),
             downloads: paths.downloads(),
@@ -278,6 +281,12 @@ impl Daemon {
                     Updated::Missing => return Err(not_found("no such observation")),
                 }
             }
+            Request::DeleteObservation { id } => {
+                if !store.delete_observation(id).map_err(storage)? {
+                    return Err(not_found("no such observation"));
+                }
+                Reply::Deleted
+            }
             Request::ListProjects => Reply::Projects(store.list_projects().map_err(storage)?),
             Request::SaveProject(input) => {
                 let name = input.name.trim();
@@ -358,8 +367,10 @@ impl Daemon {
                 };
                 let saved = store
                     .create_capture(capture.observation, row)
-                    .map_err(storage)?;
-                Reply::Capture(saved.ok_or_else(|| not_found("no such observation"))?)
+                    .map_err(storage)?
+                    .ok_or_else(|| not_found("no such observation"))?;
+                self.auto_title(saved.observation);
+                Reply::Capture(saved)
             }
             Request::ListCaptures { observation } => {
                 Reply::Captures(store.list_captures(observation).map_err(storage)?)
@@ -773,60 +784,8 @@ impl Daemon {
                 )
             }
             Request::Summarize { observation } => {
-                let found = store
-                    .get_observation(observation)
-                    .map_err(storage)?
-                    .ok_or_else(|| not_found("no such observation"))?;
-                let captures = store.list_captures(observation).map_err(storage)?;
-                let voice: Vec<ReviewVoice> = store
-                    .list_voice_notes(observation)
-                    .map_err(storage)?
-                    .into_iter()
-                    .filter(|v| v.state == VoiceState::Done)
-                    .map(|v| ReviewVoice {
-                        started_at: v.started_at,
-                        duration_ms: v.duration_ms,
-                        language: v.language,
-                        segments: v.segments,
-                    })
-                    .collect();
                 drop(store);
-                let mut items = Vec::new();
-                for capture in &captures {
-                    let Some(evidence) = self
-                        .blobs
-                        .read_all(&capture.evidence.sha256)
-                        .ok()
-                        .and_then(|b| repro::parse(&b))
-                    else {
-                        continue;
-                    };
-                    let kept = if capture.edits == Edits::default() {
-                        Vec::new()
-                    } else {
-                        capture.edits.kept(capture.started_at, capture.created_at)
-                    };
-                    let screen = self.screen_notes(capture, &kept);
-                    let context = repro::Context {
-                        voice: &voice,
-                        notes: &capture.edits.annotations,
-                        screen: &screen,
-                        kept: &kept,
-                    };
-                    let shared = repro::for_review(evidence, false, &kept);
-                    items.push(serde_json::json!({
-                        "pageUrl": capture.page_url,
-                        "pageTitle": capture.page_title,
-                        "timeline": repro::timeline(&shared, &context),
-                    }));
-                }
-                let context = serde_json::json!({
-                    "currentTitle": found.title,
-                    "personNotes": found.notes,
-                    "voiceTranscripts": voice.iter().map(export::voice_transcript).collect::<Vec<_>>(),
-                    "captures": items,
-                });
-                Reply::Summary(investigate::summarize(&context, &self.notebook).map_err(remote)?)
+                Reply::Summary(self.summary(observation)?)
             }
             Request::SpeechStatus => {
                 drop(store);
@@ -946,6 +905,160 @@ impl Daemon {
             .collect()
     }
 
+    /// A title and findings for an observation from a small model. Nothing is saved.
+    fn summary(&self, observation: i64) -> Result<investigate::Summary, ProtocolError> {
+        let store = self.lock_store();
+        let found = store
+            .get_observation(observation)
+            .map_err(storage)?
+            .ok_or_else(|| not_found("no such observation"))?;
+        let captures = store.list_captures(observation).map_err(storage)?;
+        let voice: Vec<ReviewVoice> = store
+            .list_voice_notes(observation)
+            .map_err(storage)?
+            .into_iter()
+            .filter(|v| v.state == VoiceState::Done)
+            .map(|v| ReviewVoice {
+                started_at: v.started_at,
+                duration_ms: v.duration_ms,
+                language: v.language,
+                segments: v.segments,
+            })
+            .collect();
+        drop(store);
+        let mut items = Vec::new();
+        for capture in &captures {
+            let Some(evidence) = self
+                .blobs
+                .read_all(&capture.evidence.sha256)
+                .ok()
+                .and_then(|b| repro::parse(&b))
+            else {
+                continue;
+            };
+            let kept = if capture.edits == Edits::default() {
+                Vec::new()
+            } else {
+                capture.edits.kept(capture.started_at, capture.created_at)
+            };
+            let screen = self.screen_notes(capture, &kept);
+            let context = repro::Context {
+                voice: &voice,
+                notes: &capture.edits.annotations,
+                screen: &screen,
+                kept: &kept,
+            };
+            let shared = repro::for_review(evidence, false, &kept);
+            items.push(serde_json::json!({
+                "pageUrl": capture.page_url,
+                "pageTitle": capture.page_title,
+                "timeline": repro::timeline(&shared, &context),
+            }));
+        }
+        let context = serde_json::json!({
+            "currentTitle": found.title,
+            "personNotes": found.notes,
+            "voiceTranscripts": voice.iter().map(export::voice_transcript).collect::<Vec<_>>(),
+            "captures": items,
+        });
+        investigate::summarize(&context, &self.notebook).map_err(remote)
+    }
+
+    /// Titles an observation in the background, once its words are written down, unless the
+    /// person named it: only a page's own title or Lens's earlier automatic one is replaced.
+    fn auto_title(&self, observation: i64) {
+        let Some(daemon) = self.me() else { return };
+        if !self
+            .titling
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .insert(observation)
+        {
+            return;
+        }
+        std::thread::spawn(move || {
+            // A Record mode voice note arrives a few seconds after its recording.
+            std::thread::sleep(std::time::Duration::from_secs(8));
+            if let Err(e) = daemon.try_auto_title(observation) {
+                log(
+                    &daemon.paths,
+                    &format!("title for observation {observation}: {e}"),
+                );
+            }
+            daemon
+                .titling
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .remove(&observation);
+        });
+    }
+
+    fn try_auto_title(&self, observation: i64) -> Result<(), String> {
+        let key = format!("title.auto.{observation}");
+        let (found, automatic, waiting) = {
+            let store = self.lock_store();
+            let Some(found) = store
+                .get_observation(observation)
+                .map_err(|e| e.to_string())?
+            else {
+                return Ok(());
+            };
+            let captures = store
+                .list_captures(observation)
+                .map_err(|e| e.to_string())?;
+            let earlier = store.setting(&key).map_err(|e| e.to_string())?;
+            let automatic = found.title.trim().is_empty()
+                || earlier.as_deref() == Some(found.title.as_str())
+                || captures
+                    .iter()
+                    .any(|c| c.page_title == found.title || c.page_url == found.title);
+            let waiting = store
+                .list_voice_notes(observation)
+                .map_err(|e| e.to_string())?
+                .iter()
+                .any(|v| {
+                    v.state == VoiceState::Transcribing
+                        || (v.state == VoiceState::Waiting && v.detail.is_none())
+                });
+            (found, automatic, waiting)
+        };
+        // Words still being written down call this again when they are done.
+        if !automatic || waiting || investigate::Agent::ready().is_none() {
+            return Ok(());
+        }
+        let summary = self.summary(observation).map_err(|e| e.message)?;
+        let store = self.lock_store();
+        let previous = strip_findings(&found.notes);
+        let findings = if summary.findings.is_empty() {
+            String::new()
+        } else {
+            // The model read page text: its words cannot add links, images or HTML to the notes.
+            format!(
+                "{FINDINGS_HEADER}\n{}",
+                summary
+                    .findings
+                    .iter()
+                    .map(|f| format!("- {}", export::escape(f)))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            )
+        };
+        let notes = [findings, previous]
+            .into_iter()
+            .filter(|p| !p.is_empty())
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        let title = plain(&summary.title);
+        // A person who edited meanwhile wins: the revision no longer matches and nothing changes.
+        if let Updated::Saved(_) = store
+            .update_observation(observation, found.revision, &title, &notes, now_ms())
+            .map_err(|e| e.to_string())?
+        {
+            store.set_setting(&key, &title).map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    }
+
     fn me(&self) -> Option<Arc<Daemon>> {
         self.me.get().and_then(std::sync::Weak::upgrade)
     }
@@ -1034,6 +1147,9 @@ impl Daemon {
             .set_voice_state(id, VoiceState::Transcribing, None, &[], None);
         let result = speech::transcribe(&self.paths, &file, note.duration_ms);
         let store = self.lock_store();
+        if result.is_ok() {
+            self.auto_title(note.observation);
+        }
         let _ = match result {
             Ok(t) => store.set_voice_state(
                 id,
@@ -1170,7 +1286,37 @@ fn restart_soon(paths: &Paths, executable: &std::path::Path) {
     }
 }
 
-/// Checks for updates an hour after start and then daily; installs them when the person allows it.
+/// Heads the findings a model wrote, so every reader knows they are not the person's own words.
+pub const FINDINGS_HEADER: &str =
+    "Findings (written by Claude Haiku from the recording; check them):";
+
+/// A model's title as plain text: no Markdown or HTML punctuation.
+fn plain(text: &str) -> String {
+    text.chars()
+        .filter(|c| !"[]()<>!`*_#|\\".contains(*c))
+        .collect::<String>()
+        .trim()
+        .to_string()
+}
+
+/// The notes without an earlier findings block at their top.
+fn strip_findings(notes: &str) -> String {
+    let mut lines = notes.lines().peekable();
+    if lines
+        .peek()
+        .is_some_and(|l| l.trim() == "Findings:" || l.trim() == FINDINGS_HEADER)
+    {
+        lines.next();
+        while lines
+            .peek()
+            .is_some_and(|l| l.trim_start().starts_with("- "))
+        {
+            lines.next();
+        }
+    }
+    lines.collect::<Vec<_>>().join("\n").trim().to_string()
+}
+
 /// One worker transcribes voice notes in order; a GPU runs one model at a time anyway.
 fn start_transcription(daemon: Arc<Daemon>) {
     let (queue, jobs) = std::sync::mpsc::channel::<i64>();
@@ -1192,6 +1338,7 @@ fn start_transcription(daemon: Arc<Daemon>) {
     });
 }
 
+/// Checks for updates an hour after start and then daily; installs them when the person allows it.
 fn schedule_updates(daemon: Arc<Daemon>) {
     std::thread::spawn(move || {
         std::thread::sleep(std::time::Duration::from_secs(3600));
