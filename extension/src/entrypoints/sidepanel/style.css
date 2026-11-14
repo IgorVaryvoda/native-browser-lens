@@ -1,0 +1,52 @@
+:root {
+  color-scheme: light dark;
+  font: 14px/1.4 system-ui, sans-serif;
+  --muted: color-mix(in srgb, currentColor 60%, transparent);
+  --line: color-mix(in srgb, currentColor 15%, transparent);
+}
+body {
+  margin: 0;
+}
+main {
+  padding: 12px;
+}
+h1 {
+  font-size: 16px;
+  margin: 0;
+}
+.status {
+  margin: 2px 0 12px;
+  color: var(--muted);
+}
+.status[data-state='failed'] {
+  color: #d33;
+}
+label {
+  display: block;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+.row {
+  display: flex;
+  gap: 6px;
+}
+input {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 8px;
+}
+ul {
+  list-style: none;
+  padding: 0;
+  margin: 12px 0 0;
+}
+li {
+  padding: 8px 0;
+  border-top: 1px solid var(--line);
+  display: grid;
+}
+.url {
+  color: var(--muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}

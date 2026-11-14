@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  push:
+    branches: [next, main]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+# Third-party actions are pinned to a commit; the comment records the tag. Move both together.
+jobs:
+  check:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15, windows-2025]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Rust toolchain (from rust-toolchain.toml)
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+
+      - name: Format
+        run: cargo fmt --check
+      - name: Lint
+        run: cargo clippy --all-targets --locked -- -D warnings
+      - name: Test (also regenerates the TypeScript protocol)
+        run: cargo test --locked
+      - name: The committed TypeScript protocol matches the Rust types
+        shell: bash
+        run: git diff --exit-code -- extension/src/protocol
+      - name: Build the binary for the end-to-end test
+        run: cargo build --locked
+
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+        with:
+          package_json_file: extension/package.json
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: extension/pnpm-lock.yaml
+      - name: Extension
+        working-directory: extension
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm compile
+          pnpm build
+          pnpm build:firefox
+      - name: Chromium for the end-to-end test
+        working-directory: extension
+        run: pnpm exec playwright-core install chromium
+      - name: End to end (Chromium, extension, shim, daemon)
+        working-directory: extension
+        env:
+          LENS_BIN: ${{ github.workspace }}/target/debug/lens${{ runner.os == 'Windows' && '.exe' || '' }}
+        run: pnpm test:e2e
