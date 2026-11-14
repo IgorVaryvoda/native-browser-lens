@@ -33,14 +33,21 @@ mkdirSync(profile, { recursive: true });
 execFileSync(bin, ['register'], { env, stdio: 'inherit' });
 
 // The system Chromium when there is one, else the browser `playwright-core install chromium` fetched.
+// Its `chromium` channel is the full browser in new headless mode; Playwright's default headless
+// shell cannot load extensions.
 const systemChromium = '/usr/bin/chromium';
+const executablePath = process.env.CHROMIUM_PATH ?? (existsSync(systemChromium) ? systemChromium : undefined);
 const context = await chromium.launchPersistentContext(profile, {
-  executablePath: process.env.CHROMIUM_PATH ?? (existsSync(systemChromium) ? systemChromium : undefined),
+  ...(executablePath ? { executablePath } : { channel: 'chromium' }),
   headless: true,
   env,
   args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`],
 });
 try {
+  const worker = context.serviceWorkers()[0] ?? (await context.waitForEvent('serviceworker', { timeout: 15_000 }));
+  if (!worker.url().startsWith(`chrome-extension://${extensionId}/`)) {
+    throw new Error(`the extension loaded with an unexpected ID: ${worker.url()}`);
+  }
   const page = await context.newPage();
   await page.goto(`chrome-extension://${extensionId}/sidepanel.html`);
   await page.getByRole('status').filter({ hasText: 'Connected' }).waitFor({ timeout: 15_000 });
