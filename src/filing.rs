@@ -208,6 +208,9 @@ fn content_type(filename: &str) -> &'static str {
         Some("png") => "image/png",
         Some("json") => "application/json",
         Some("md") => "text/markdown",
+        // VibeQ shows text/plain inline; the test is code to read, not to run in a browser.
+        Some("txt" | "ts") => "text/plain",
+        Some("har") => "application/json",
         _ => "application/octet-stream",
     }
 }
