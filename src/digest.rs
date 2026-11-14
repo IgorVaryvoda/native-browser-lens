@@ -167,17 +167,12 @@ impl Dom {
     }
 
     /// The node and its subtree as rrweb serialized it, with the changes applied. None when the
-    /// page-made tree is deeper than `MAX_DEPTH` or has a cycle: then there is no snapshot.
-    fn serialize(&self, id: i64, depth: usize, path: &mut HashSet<i64>) -> Option<Value> {
-        if depth > MAX_DEPTH || !path.insert(id) {
+    /// page-made tree is deeper than `MAX_DEPTH` or names a node twice (a cycle, or one node
+    /// under two parents): a real DOM has neither, and each node is then visited once at most.
+    fn serialize(&self, id: i64, depth: usize, seen: &mut HashSet<i64>) -> Option<Value> {
+        if depth > MAX_DEPTH || !seen.insert(id) {
             return None;
         }
-        let out = self.serialize_node(id, depth, path);
-        path.remove(&id);
-        out
-    }
-
-    fn serialize_node(&self, id: i64, depth: usize, path: &mut HashSet<i64>) -> Option<Value> {
         let n = self.nodes.get(&id)?;
         let mut out = n.rest.clone();
         out.insert("id".into(), id.into());
@@ -191,7 +186,7 @@ impl Dom {
             let mut children = Vec::with_capacity(n.children.len());
             for child in &n.children {
                 if self.nodes.contains_key(child) {
-                    children.push(self.serialize(*child, depth + 1, path)?);
+                    children.push(self.serialize(*child, depth + 1, seen)?);
                 }
             }
             out.insert("childNodes".into(), children.into());
@@ -575,6 +570,31 @@ mod tests {
             out.iter().all(|e| e["type"] != 2),
             "no snapshot from a tree 1000 deep"
         );
+
+        // Each level lists the next node twice: 2^60 paths if a walk followed them all.
+        let mut doubled = vec![json!({ "type": 4, "timestamp": 999, "data": {} }), page()];
+        for i in 0..60 {
+            for _ in 0..2 {
+                doubled.push(json!({ "type": 3, "timestamp": 1500, "data": { "source": 0, "removes": [], "texts": [], "attributes": [],
+                    "adds": [{ "parentId": if i == 0 { 6 } else { 200 + i - 1 }, "nextId": null,
+                        "node": { "type": 2, "id": 200 + i, "tagName": "div", "attributes": {}, "childNodes": [] } }] } }));
+            }
+        }
+        doubled.push(
+            json!({ "type": 3, "timestamp": 2100, "data": { "source": 2, "type": 2, "id": 7 } }),
+        );
+        let out = trim(
+            &doubled,
+            &[TimeRange {
+                from: 2000,
+                to: 3000,
+            }],
+        );
+        assert!(
+            out.iter().all(|e| e["type"] != 2),
+            "no snapshot from a node under two parents"
+        );
+        let _ = digest(&doubled);
     }
 
     #[test]
