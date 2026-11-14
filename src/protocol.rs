@@ -134,6 +134,18 @@ pub enum Request {
         #[ts(type = "number")]
         id: i64,
     },
+    /// Replaces a voice note's transcript with the person's correction.
+    UpdateVoiceNote {
+        #[ts(type = "number")]
+        id: i64,
+        segments: Vec<VoiceSegment>,
+    },
+    /// A title and findings for an observation, from a small model (Claude Haiku, else Codex).
+    /// Nothing is saved; the client applies what it keeps.
+    Summarize {
+        #[ts(type = "number")]
+        observation: i64,
+    },
     /// Whether transcription is ready: the speech model, and the engine that runs it.
     SpeechStatus,
     /// Downloads the speech models (once, about 575 MB), then transcribes waiting voice notes.
@@ -301,6 +313,7 @@ pub enum Reply {
     VoiceNotes(Vec<VoiceNote>),
     Speech(SpeechStatus),
     Suggestion(crate::investigate::Suggestion),
+    Summary(crate::investigate::Summary),
     Stopping,
 }
 
@@ -384,6 +397,18 @@ pub struct ReviewItem {
     /// The person's notes and drawings at moments of the recording.
     #[serde(default)]
     pub annotations: Vec<Annotation>,
+    /// What the screen showed, read from the DOM recording: page loads and the result of clicks.
+    #[serde(default)]
+    pub screen: Vec<ScreenNote>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ScreenNote {
+    #[ts(type = "number")]
+    pub at: i64,
+    pub text: String,
 }
 
 fn moment() -> CaptureKind {

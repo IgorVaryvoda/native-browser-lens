@@ -134,3 +134,30 @@
 .review {
   max-width: 1400px;
 }
+.summary {
+  display: grid;
+  gap: 8px;
+}
+.summary .title-input {
+  font: 600 22px var(--font-heading);
+}
+.summary-state {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+}
+.notes {
+  display: grid;
+  gap: 10px;
+}
+.title-input {
+  height: 40px;
+  letter-spacing: -0.01em;
+}
+.notes-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}

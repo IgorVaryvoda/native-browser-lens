@@ -12,7 +12,7 @@ import type { Locator } from '@/protocol/Locator';
 import type { Point } from '@/protocol/Point';
 import type { TimeRange } from '@/protocol/TimeRange';
 import type { VoiceNote } from '@/protocol/VoiceNote';
-import { AddNoteIcon, DeleteIcon, PenIcon, TargetIcon } from '@/ui/icons';
+import { AddNoteIcon, CutIcon, DeleteIcon, PenIcon, TargetIcon } from '@/ui/icons';
 
 type Player = InstanceType<typeof rrwebPlayer>;
 type Mark = { at: number; kind: 'step' | 'error' | 'note'; label: string };
@@ -34,7 +34,19 @@ const DRAWING_SHOWS_MS = 2500;
  * with steps, errors, speech and notes, and the edits that decide what leaves: trimmed ends, cut
  * parts, notes at moments and drawings that name the elements under them.
  */
-export function RecordingEditor({ client, capture, voice }: { client: LensClient; capture: Capture; voice: VoiceNote[] }) {
+export function RecordingEditor({
+  client,
+  capture,
+  voice,
+  onVoice,
+}: {
+  client: LensClient;
+  capture: Capture;
+  voice: VoiceNote[];
+  /** A transcript the person corrected, as the daemon saved it. */
+  onVoice?: (note: VoiceNote) => void;
+}) {
+  const [fixing, setFixing] = useState<{ note: number; index: number; text: string } | null>(null);
   const stage = useRef<HTMLDivElement>(null);
   const overlay = useRef<HTMLCanvasElement>(null);
   const player = useRef<Player | null>(null);
@@ -51,6 +63,7 @@ export function RecordingEditor({ client, capture, voice }: { client: LensClient
   const [steps, setSteps] = useState<{ at: number; text: string; error: boolean }[]>([]);
   const [problem, setProblem] = useState<string | null>(null);
   const [pointer, setPointer] = useState<number | null>(null);
+  const [cutting, setCutting] = useState(false);
   const audio = useRef<Map<number, HTMLAudioElement>>(new Map());
 
   // The replay and the steps.
@@ -203,14 +216,57 @@ export function RecordingEditor({ client, capture, voice }: { client: LensClient
     }
   }
 
+  // Space plays and pauses; the arrows jump five seconds, one with Shift.
+  const keys = useRef<(event: KeyboardEvent) => void>(() => {});
+  keys.current = (event: KeyboardEvent) => {
+    const target = event.target as HTMLElement | null;
+    if (target?.closest('input, textarea, select, [contenteditable]') || event.ctrlKey || event.metaKey || event.altKey) return;
+    if (event.key === ' ') {
+      event.preventDefault();
+      // A focused button would also take the Space as a click: one toggle only.
+      if (target?.closest('button')) (target as HTMLElement).blur();
+      toggle();
+    } else if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+      event.preventDefault();
+      const step = (event.shiftKey ? 1000 : 5000) * (event.key === 'ArrowLeft' ? -1 : 1);
+      seek(now + step);
+    }
+  };
+  useEffect(() => {
+    const listener = (event: KeyboardEvent) => keys.current(event);
+    window.addEventListener('keydown', listener);
+    return () => window.removeEventListener('keydown', listener);
+  }, []);
+
   // Speech, as words at their moments.
   const words = useMemo(
     () =>
       voice
-        .flatMap((note) => note.segments.map((s) => ({ at: Number(note.startedAt) + Number(s.startMs), end: Number(note.startedAt) + Number(s.endMs), text: s.text })))
+        .flatMap((note) =>
+          note.segments.map((s, index) => ({
+            note: note.id,
+            index,
+            at: Number(note.startedAt) + Number(s.startMs),
+            end: Number(note.startedAt) + Number(s.endMs),
+            text: s.text,
+          })),
+        )
         .sort((a, b) => a.at - b.at),
     [voice],
   );
+  /** Saves a corrected line of the transcript; the words leave as the person fixed them. */
+  async function saveWords() {
+    const current = fixing;
+    setFixing(null);
+    const note = voice.find((v) => v.id === current?.note);
+    if (!current || !note || note.segments[current.index]?.text === current.text.trim()) return;
+    const segments = note.segments.map((s, i) => (i === current.index ? { ...s, text: current.text.trim() } : s));
+    try {
+      onVoice?.(await client.request({ method: 'updateVoiceNote', params: { id: note.id, segments } }));
+    } catch (error) {
+      setProblem(`The correction was not saved: ${(error as Error).message}`);
+    }
+  }
   const caption = words.find((w) => now >= w.at && now <= w.end + 500)?.text;
 
   // Drawing and highlighting over the replay. Shapes are kept in the recorded page's CSS pixels.
@@ -373,25 +429,64 @@ export function RecordingEditor({ client, capture, voice }: { client: LensClient
     return span ? Math.round(span.start + share * (span.end - span.start)) : 0;
   };
   const left = (at: number) => (span ? `${((at - span.start) / Math.max(1, span.end - span.start)) * 100}%` : '0%');
+  // Dragging scrubs through the replay; with the Cut tool on, it selects a part to cut instead.
+  const scrub = useRef<{ resume: boolean; frame: number; at: number } | null>(null);
   function trackDown(event: ReactPointerEvent<HTMLDivElement>) {
-    if ((event.target as HTMLElement).dataset.handle) return;
+    if ((event.target as HTMLElement).dataset.handle || (event.target as HTMLElement).closest('button')) return;
     event.currentTarget.setPointerCapture(event.pointerId);
-    dragging.current = { from: timeAt(event.clientX), moved: false };
+    const at = timeAt(event.clientX);
+    if (cutting) {
+      dragging.current = { from: at, moved: false };
+      return;
+    }
+    // Paused while scrubbing, so each frame shows the page at that moment; playing resumes after.
+    const resume = playing;
+    if (playing) {
+      player.current?.pause();
+      setPlaying(false);
+    }
+    scrub.current = { resume, frame: 0, at };
+    show(at);
   }
   function trackMove(event: ReactPointerEvent<HTMLDivElement>) {
+    if (scrub.current) {
+      const current = scrub.current;
+      current.at = timeAt(event.clientX);
+      setNow(current.at);
+      if (!current.frame) {
+        current.frame = requestAnimationFrame(() => {
+          current.frame = 0;
+          show(current.at);
+        });
+      }
+      return;
+    }
     const drag = dragging.current;
     if (!drag) return;
     const at = timeAt(event.clientX);
     if (Math.abs(at - drag.from) > (span ? (span.end - span.start) / 200 : 0)) drag.moved = true;
     if (drag.moved) setSelection({ from: Math.min(drag.from, at), to: Math.max(drag.from, at) });
   }
-  function trackUp(event: ReactPointerEvent<HTMLDivElement>) {
-    const drag = dragging.current;
-    dragging.current = null;
-    if (drag && !drag.moved) {
-      setSelection(null);
-      seek(timeAt(event.clientX));
+  function trackUp() {
+    const current = scrub.current;
+    if (current) {
+      scrub.current = null;
+      cancelAnimationFrame(current.frame);
+      show(current.at);
+      if (current.resume && span && player.current) {
+        player.current.goto(current.at - span.start, true);
+        setPlaying(true);
+      }
+      return;
     }
+    dragging.current = null;
+  }
+  /** The page as it was at a moment, without playing. */
+  function show(at: number) {
+    if (!span || !player.current) return;
+    const clamped = Math.min(Math.max(at, span.start), span.end);
+    player.current.goto(clamped - span.start, false);
+    setNow(clamped);
   }
   function trim(which: 'trimStart' | 'trimEnd', event: ReactPointerEvent<HTMLSpanElement>) {
     event.stopPropagation();
@@ -457,7 +552,7 @@ export function RecordingEditor({ client, capture, voice }: { client: LensClient
               <button
                 type="button"
                 className="btn btn-danger btn-sm"
-                onClick={() => (change({ ...edits, cuts: [...edits.cuts, selection] }), setSelection(null))}
+                onClick={() => (change({ ...edits, cuts: [...edits.cuts, selection] }), setSelection(null), setCutting(false))}
               >
                 Cut {clock(selection.to - selection.from)} out
               </button>
@@ -466,8 +561,18 @@ export function RecordingEditor({ client, capture, voice }: { client: LensClient
               </button>
             </>
           ) : (
-            <span className="small muted">Drag on the timeline to cut a part</span>
+            cutting && <span className="small muted">Drag across the part to cut</span>
           )}
+          <button
+            type="button"
+            className={cutting ? 'btn btn-primary btn-sm' : 'btn btn-secondary btn-sm'}
+            aria-pressed={cutting}
+            title="Select a part of the timeline to cut out"
+            onClick={() => (setCutting(!cutting), setSelection(null))}
+            disabled={!span}
+          >
+            <CutIcon /> Cut
+          </button>
           <button type="button" className="btn btn-secondary btn-sm" onClick={() => startNote()} disabled={!span}>
             <AddNoteIcon /> Note
           </button>
@@ -498,6 +603,7 @@ export function RecordingEditor({ client, capture, voice }: { client: LensClient
           aria-label="Timeline"
           onPointerDown={trackDown}
           onPointerMove={(e) => (trackMove(e), setPointer(timeAt(e.clientX)))}
+          data-cutting={cutting || undefined}
           onPointerUp={trackUp}
           onPointerLeave={() => setPointer(null)}
         >
@@ -591,13 +697,40 @@ export function RecordingEditor({ client, capture, voice }: { client: LensClient
           <h3 className="label">Your voice</h3>
           {words.length ? (
             <ol className="lines">
-              {words.map((w, i) => (
-                <li key={i} data-current={now >= w.at && now <= w.end + 500 || undefined}>
-                  <button type="button" className="line" onClick={() => seek(w.at)}>
-                    <span className="num muted">{span ? clock(w.at - span.start) : ''}</span> {w.text}
-                  </button>
-                </li>
-              ))}
+              {words.map((w) =>
+                fixing && fixing.note === w.note && fixing.index === w.index ? (
+                  <li key={`${w.note}-${w.index}`} className="fixing">
+                    <textarea
+                      className="textarea"
+                      rows={2}
+                      autoFocus
+                      aria-label="Correct the transcript"
+                      value={fixing.text}
+                      onChange={(e) => setFixing({ ...fixing, text: e.target.value })}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Escape') setFixing(null);
+                        if (e.key === 'Enter' && !e.shiftKey) (e.preventDefault(), void saveWords());
+                      }}
+                      onBlur={() => void saveWords()}
+                    />
+                  </li>
+                ) : (
+                  <li key={`${w.note}-${w.index}`} data-current={(now >= w.at && now <= w.end + 500) || undefined}>
+                    <button type="button" className="line" onClick={() => seek(w.at)}>
+                      <span className="num muted">{span ? clock(w.at - span.start) : ''}</span> {w.text}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-ghost btn-icon btn-sm line-edit"
+                      aria-label="Correct this line"
+                      title="Correct this line"
+                      onClick={() => setFixing({ note: w.note, index: w.index, text: w.text })}
+                    >
+                      <PenIcon size={14} />
+                    </button>
+                  </li>
+                ),
+              )}
             </ol>
           ) : (
             <p className="small muted">

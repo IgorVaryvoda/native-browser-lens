@@ -55,7 +55,7 @@ function Recording({ id }: { id: number }) {
               : 'Loading…')}
         </p>
       </header>
-      {capture && <RecordingEditor client={client} capture={capture} voice={voice} />}
+      {capture && <RecordingEditor client={client} capture={capture} voice={voice} onVoice={(note) => setVoice((all) => all.map((v) => (v.id === note.id ? note : v)))} />}
       {capture && (
         <div className="recording-actions">
           <button

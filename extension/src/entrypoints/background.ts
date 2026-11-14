@@ -327,8 +327,29 @@ async function pageSnapshot(tabId: number) {
       reducedMotion: matchMedia('(prefers-reduced-motion: reduce)').matches,
       online: navigator.onLine,
       userAgent: navigator.userAgent,
-      buildId:
-        document.querySelector('meta[name="build-sha"],meta[name="git-commit"]')?.getAttribute('content') ?? null,
+      // Which build ran: a version meta tag, Next.js's build ID, or a data attribute on <html>.
+      buildId: (() => {
+        const meta = document.querySelector(
+          ['build-sha', 'git-commit', 'git-sha', 'commit', 'commit-sha', 'build-id', 'build', 'version', 'app-version', 'release', 'sentry-release']
+            .map((name) => `meta[name="${name}"],meta[property="${name}"]`)
+            .join(','),
+        );
+        const fromMeta = meta?.getAttribute('content');
+        if (fromMeta) return fromMeta.slice(0, 120);
+        const html = document.documentElement;
+        const fromHtml = html.dataset.build ?? html.dataset.version ?? html.dataset.commit;
+        if (fromHtml) return fromHtml.slice(0, 120);
+        try {
+          const next = JSON.parse(document.getElementById('__NEXT_DATA__')?.textContent ?? 'null') as { buildId?: string } | null;
+          if (next?.buildId) return `next:${next.buildId}`.slice(0, 120);
+        } catch {
+          // Not a Next.js page.
+        }
+        // The App Router has no __NEXT_DATA__; its build ID names the manifest's folder.
+        const manifest = [...document.scripts].map((x) => x.src).find((src) => /\/_next\/static\/[^/]+\/_(build|ssg)Manifest\.js/.test(src));
+        const id = manifest?.match(/\/_next\/static\/([^/]+)\//)?.[1];
+        return id ? `next:${id}`.slice(0, 120) : null;
+      })(),
       // A site can say what the defect depends on: account role, feature flags, release.
       // <script type="application/json" id="lens-context">{...}</script>
       context: (() => {

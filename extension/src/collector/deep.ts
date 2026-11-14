@@ -1,4 +1,5 @@
 import type { EvidenceBuffer } from './buffer';
+import { isNoise } from './noise';
 import { bodyEvidence, requestBody } from './sanitize';
 
 type Params = Record<string, any>;
@@ -17,6 +18,8 @@ interface Request {
 export class DeepCollector {
   private readonly attached = new Set<number>();
   private readonly requests = new Map<string, Request>();
+  /** Requests left out as noise: their answers are left out too. */
+  private readonly ignored = new Set<string>();
 
   constructor(
     private readonly buffer: EvidenceBuffer,
@@ -67,8 +70,17 @@ export class DeepCollector {
 
   private async event(tabId: number, method: string, p: Params) {
     const key = `${tabId}:${p.requestId}`;
+    if (method.startsWith('Network.') && method !== 'Network.requestWillBeSent' && this.ignored.has(key)) {
+      if (method === 'Network.loadingFinished' || method === 'Network.loadingFailed') this.ignored.delete(key);
+      return;
+    }
     switch (method) {
       case 'Network.requestWillBeSent':
+        if (isNoise(p.request.url, p.type, typeof p.request.postData === 'string' ? p.request.postData : '')) {
+          if (this.ignored.size > 2048) this.ignored.clear();
+          this.ignored.add(key);
+          break;
+        }
         if (this.requests.size > 512) this.requests.delete(this.requests.keys().next().value!);
         this.requests.set(key, { url: p.request.url, resourceType: p.type });
         this.buffer.record(tabId, 'request', {

@@ -44,6 +44,8 @@ type ReplyTo = {
   addVoiceNote: 'voiceNote';
   listVoiceNotes: 'voiceNotes';
   deleteVoiceNote: 'deleted';
+  updateVoiceNote: 'voiceNote';
+  summarize: 'summary';
   speechStatus: 'speech';
   installSpeech: 'speech';
   shutdown: 'stopping';

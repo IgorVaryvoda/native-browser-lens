@@ -341,3 +341,17 @@
 .line:hover {
   background: var(--muted);
 }
+.line-edit {
+  opacity: 0;
+  flex: none;
+}
+.lines li:hover .line-edit,
+.line-edit:focus-visible {
+  opacity: 1;
+}
+.lines li.fixing {
+  display: block;
+}
+.timeline[data-cutting] {
+  cursor: crosshair;
+}

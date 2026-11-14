@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { LensClient } from '@/lens-client';
 import type { Capture } from '@/protocol/Capture';
 import type { Observation } from '@/protocol/Observation';
@@ -15,6 +15,7 @@ import type { VoiceNote } from '@/protocol/VoiceNote';
 import type { ReviewVoice } from '@/protocol/ReviewVoice';
 import { AlertIcon, DoneIcon, DraftIcon, ExportIcon, FileIcon, MaskIcon } from '@/ui/icons';
 import { RecordingEditor } from './RecordingEditor';
+import { Notes } from '../sidepanel/Notes';
 
 /**
  * What leaves the notebook: every capture with its recording, as the edits left it. The daemon freezes the
@@ -53,6 +54,41 @@ export function Review({ observation: id }: { observation: number }) {
     return () => client.disconnect();
   }, [client, id]);
 
+  // A title and findings from a small model, once the person's words are written down.
+  const [summary, setSummary] = useState<
+    { state: 'idle' } | { state: 'running' } | { state: 'done'; agent: Agent } | { state: 'failed'; reason: string }
+  >({ state: 'idle' });
+  const [notesVersion, setNotesVersion] = useState(0);
+  const summarized = useRef(false);
+  const summarize = useCallback(async () => {
+    setSummary({ state: 'running' });
+    try {
+      const found = await client.request({ method: 'summarize', params: { observation: id } });
+      const latest = await client.request({ method: 'getObservation', params: { id } });
+      // The findings go first in the notes; what the person wrote stays below them.
+      const previous = latest.notes.replace(/^Findings:\n(- .*\n?)+\n*/, '').trim();
+      const findings = found.findings.length ? `Findings:\n${found.findings.map((f) => `- ${f}`).join('\n')}` : '';
+      const saved = await client.request({
+        method: 'updateObservation',
+        params: { id, revision: latest.revision, title: found.title, notes: [findings, previous].filter(Boolean).join('\n\n') },
+      });
+      setObservation(saved);
+      setNotesVersion((v) => v + 1);
+      setSummary({ state: 'done', agent: found.agent });
+    } catch (error) {
+      setSummary({ state: 'failed', reason: (error as Error).message });
+    }
+  }, [client, id]);
+  const waitingForWords = voice.some((v) => v.state === 'transcribing' || (v.state === 'waiting' && !v.detail));
+  useEffect(() => {
+    if (review || !observation || summarized.current || waitingForWords || captures.length === 0) return;
+    // Only a title nobody chose: the page's own title, or its address.
+    const automatic = captures.some((c) => observation.title === c.pageTitle || observation.title === c.pageUrl) || !observation.title.trim();
+    if (!automatic) return;
+    summarized.current = true;
+    void summarize();
+  }, [review, observation, captures, waitingForWords, summarize]);
+
   // Transcripts finish in the daemon after the page opens: look again until each one is done.
   const transcribing = voice.some((v) => v.state === 'waiting' || v.state === 'transcribing');
   useEffect(() => {
@@ -69,11 +105,14 @@ export function Review({ observation: id }: { observation: number }) {
   async function freeze() {
     if (!observation) return;
     try {
+      // The title and notes are edited on this page: the review takes their latest revision.
+      const latest = await client.request({ method: 'getObservation', params: { id } });
+      setObservation(latest);
       const frozen = await client.request({
         method: 'createReview',
         params: {
           observation: observation.id,
-          revision: observation.revision,
+          revision: latest.revision,
           // Everything goes in: every capture with its recording.
           captures: captures.map((c) => c.id),
           recordings: captures.filter((c) => c.recording).map((c) => c.id),
@@ -169,9 +208,24 @@ export function Review({ observation: id }: { observation: number }) {
         <span className="step-pill pill" data-tone={review ? 'success' : 'info'}>
           {review ? 'Reviewed' : 'Review'}
         </span>
-        <h1>{observation.title}</h1>
-        {observation.notes ? <p className="notes-text">{observation.notes}</p> : <p className="muted">No notes.</p>}
+        {review && <h1>{observation.title}</h1>}
+        {review && (observation.notes ? <p className="notes-text">{observation.notes}</p> : <p className="muted">No notes.</p>)}
       </header>
+      {!review && (
+        <section className="summary" aria-label="Title and findings">
+          <Notes key={notesVersion} client={client} id={id} onSaved={() => {}} />
+          <p className="small muted summary-state" role="status" aria-label="Summary">
+            {summary.state === 'running' && <>Claude is writing a title and the findings…</>}
+            {summary.state === 'done' && <>{summary.agent === 'claude' ? 'Claude Haiku' : 'Codex'} wrote the title and the findings. Edit them as you like.</>}
+            {summary.state === 'failed' && <>No title was written: {summary.reason}</>}
+            {summary.state !== 'running' && (
+              <button type="button" className="btn btn-ghost btn-sm" onClick={() => void summarize()}>
+                <DraftIcon /> {summary.state === 'done' ? 'Write them again' : 'Write a title and findings'}
+              </button>
+            )}
+          </p>
+        </section>
+      )}
 
       {notice && (
         <div role="status" className="notice" data-tone="info">
@@ -352,7 +406,7 @@ export function Review({ observation: id }: { observation: number }) {
           {captures
             .filter((c) => c.kind === 'session' && c.recording)
             .map((c) => (
-              <RecordingEditor key={c.id} client={client} capture={c} voice={voice} />
+              <RecordingEditor key={c.id} client={client} capture={c} voice={voice} onVoice={(note) => setVoice((all) => all.map((v) => (v.id === note.id ? note : v)))} />
             ))}
           {captures.some((c) => c.kind !== 'session') && (
             <ol aria-label="Captures to review" className="review-list">

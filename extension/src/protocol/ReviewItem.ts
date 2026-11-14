@@ -4,6 +4,7 @@ import type { BlobRef } from "./BlobRef";
 import type { CaptureKind } from "./CaptureKind";
 import type { CaptureMode } from "./CaptureMode";
 import type { MarkTarget } from "./MarkTarget";
+import type { ScreenNote } from "./ScreenNote";
 import type { TimeRange } from "./TimeRange";
 
 export type ReviewItem = { capture: number, pageUrl: string, pageTitle: string, mode: CaptureMode, 
@@ -26,4 +27,8 @@ kept: Array<TimeRange>,
 /**
  * The person's notes and drawings at moments of the recording.
  */
-annotations: Array<Annotation>, };
+annotations: Array<Annotation>, 
+/**
+ * What the screen showed, read from the DOM recording: page loads and the result of clicks.
+ */
+screen: Array<ScreenNote>, };

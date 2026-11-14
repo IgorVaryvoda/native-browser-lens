@@ -480,6 +480,7 @@ impl Daemon {
                         .filter(|a| inside(a.at))
                         .cloned()
                         .collect();
+                    let screen = self.screen_notes(&capture, &kept);
                     let shared = repro::for_review(parsed, request.typed_values, &kept);
                     let shared = serde_json::to_vec(&shared).expect("evidence serializes");
                     items.push(ReviewItem {
@@ -502,6 +503,7 @@ impl Daemon {
                         kind: capture.kind,
                         kept,
                         annotations,
+                        screen,
                     });
                 }
                 Reply::Review(
@@ -746,6 +748,86 @@ impl Daemon {
                 }
                 Reply::Deleted
             }
+            Request::UpdateVoiceNote { id, segments } => {
+                let note = store
+                    .get_voice_note(id)
+                    .map_err(storage)?
+                    .ok_or_else(|| not_found("no such voice note"))?;
+                if segments.len() > 2000 || segments.iter().any(|s| s.text.len() > 4000) {
+                    return Err(bad("the transcript is too long"));
+                }
+                store
+                    .set_voice_state(
+                        id,
+                        VoiceState::Done,
+                        note.language.as_deref(),
+                        &segments,
+                        note.detail.as_deref(),
+                    )
+                    .map_err(storage)?;
+                Reply::VoiceNote(
+                    store
+                        .get_voice_note(id)
+                        .map_err(storage)?
+                        .expect("it exists"),
+                )
+            }
+            Request::Summarize { observation } => {
+                let found = store
+                    .get_observation(observation)
+                    .map_err(storage)?
+                    .ok_or_else(|| not_found("no such observation"))?;
+                let captures = store.list_captures(observation).map_err(storage)?;
+                let voice: Vec<ReviewVoice> = store
+                    .list_voice_notes(observation)
+                    .map_err(storage)?
+                    .into_iter()
+                    .filter(|v| v.state == VoiceState::Done)
+                    .map(|v| ReviewVoice {
+                        started_at: v.started_at,
+                        duration_ms: v.duration_ms,
+                        language: v.language,
+                        segments: v.segments,
+                    })
+                    .collect();
+                drop(store);
+                let mut items = Vec::new();
+                for capture in &captures {
+                    let Some(evidence) = self
+                        .blobs
+                        .read_all(&capture.evidence.sha256)
+                        .ok()
+                        .and_then(|b| repro::parse(&b))
+                    else {
+                        continue;
+                    };
+                    let kept = if capture.edits == Edits::default() {
+                        Vec::new()
+                    } else {
+                        capture.edits.kept(capture.started_at, capture.created_at)
+                    };
+                    let screen = self.screen_notes(capture, &kept);
+                    let context = repro::Context {
+                        voice: &voice,
+                        notes: &capture.edits.annotations,
+                        screen: &screen,
+                        kept: &kept,
+                    };
+                    let shared = repro::for_review(evidence, false, &kept);
+                    items.push(serde_json::json!({
+                        "pageUrl": capture.page_url,
+                        "pageTitle": capture.page_title,
+                        "timeline": repro::timeline(&shared, &context),
+                    }));
+                }
+                let context = serde_json::json!({
+                    "currentTitle": found.title,
+                    "personNotes": found.notes,
+                    "voiceTranscripts": voice.iter().map(export::voice_transcript).collect::<Vec<_>>(),
+                    "captures": items,
+                });
+                Reply::Summary(investigate::summarize(&context, &self.notebook).map_err(remote)?)
+            }
             Request::SpeechStatus => {
                 drop(store);
                 Reply::Speech(self.speech_status())
@@ -840,6 +922,28 @@ impl Daemon {
         }
         restart_soon(&self.paths, &executable);
         Ok(())
+    }
+
+    /// What the screen showed in a capture's DOM recording, inside the kept time.
+    fn screen_notes(&self, capture: &Capture, kept: &[TimeRange]) -> Vec<ScreenNote> {
+        let Some(recording) = &capture.recording else {
+            return Vec::new();
+        };
+        let Some(events) = self
+            .blobs
+            .read_all(&recording.sha256)
+            .ok()
+            .and_then(|b| serde_json::from_slice::<Vec<serde_json::Value>>(&b).ok())
+        else {
+            return Vec::new();
+        };
+        crate::digest::digest(&events)
+            .into_iter()
+            .filter(|n| {
+                n.at >= capture.started_at - 2000
+                    && (kept.is_empty() || kept.iter().any(|r| n.at >= r.from && n.at <= r.to))
+            })
+            .collect()
     }
 
     fn me(&self) -> Option<Arc<Daemon>> {

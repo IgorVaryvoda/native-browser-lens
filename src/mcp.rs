@@ -102,11 +102,7 @@ impl LensMcp {
             .map(|(index, item)| {
                 let n = index + 1;
                 let mut files = vec![
-                    if item.kind == crate::protocol::CaptureKind::Session {
-                        String::new()
-                    } else {
-                        format!("capture-{n}.png")
-                    },
+                    format!("capture-{n}.png"),
                     format!("capture-{n}-timeline.txt"),
                     format!("capture-{n}.spec.ts"),
                     format!("capture-{n}.har"),
@@ -190,9 +186,6 @@ impl LensMcp {
             .ok_or_else(|| failure(format!("review {review} has no capture {n}")))?;
         let generated = matches!(kind, "timeline" | "spec" | "har");
         let blob = match kind {
-            "png" if item.kind == crate::protocol::CaptureKind::Session => {
-                return Err(failure("a recording shares no screenshot"));
-            }
             "png" => &item.screenshot,
             "evidence" | "timeline" | "spec" | "har" => &item.evidence,
             _ => item
@@ -222,7 +215,11 @@ impl LensMcp {
                 .into_iter()
                 .find(|(name, _)| *name == file)
                 .map(|(_, contents)| contents)
-                .ok_or_else(|| failure("this capture's evidence is not readable"))?
+                .ok_or_else(|| {
+                    failure(format!(
+                        "capture {n} has no {file}: Lens recorded nothing for it"
+                    ))
+                })?
         } else {
             bytes
         };

@@ -24,6 +24,7 @@ import {
   Delete02Icon,
   NoteAddIcon,
   CursorPointer01Icon,
+  ScissorIcon,
 } from '@hugeicons/core-free-icons';
 
 /** Studio's icon set (Hugeicons) at Studio's 1.5px stroke. */
@@ -65,6 +66,7 @@ export const StopIcon = make(StopCircleIcon);
 export const DeleteIcon = make(Delete02Icon);
 export const AddNoteIcon = make(NoteAddIcon);
 export const TargetIcon = make(CursorPointer01Icon);
+export const CutIcon = make(ScissorIcon);
 
 /** The Lens logo: viewfinder corners around a lens. It takes the color of `.mark`. */
 export function LensMark() {

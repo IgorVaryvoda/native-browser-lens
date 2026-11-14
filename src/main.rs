@@ -1,6 +1,7 @@
 mod blobs;
 mod client;
 mod daemon;
+mod digest;
 mod export;
 mod filing;
 mod framing;

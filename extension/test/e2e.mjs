@@ -65,10 +65,26 @@ const fakeVibeq = createServer((request, response) => {
 await new Promise((ready) => fakeVibeq.listen(0, '127.0.0.1', ready));
 
 const work = mkdtempSync(join(tmpdir(), 'lens-e2e-'));
+// A stand-in for Claude Code: signed in, and it answers every summary with the same title. The
+// test must never spend a real model call. Windows would need a .cmd; there no agent is found.
+const fakeClaude = join(work, 'claude');
+writeFileSync(
+  fakeClaude,
+  `#!/usr/bin/env node
+if (process.argv.includes('auth')) { console.log(JSON.stringify({ loggedIn: true, authMethod: 'claude.ai' })); process.exit(0); }
+process.stdin.resume();
+process.stdin.on('end', () => console.log(JSON.stringify({ type: 'result', is_error: false,
+  structured_output: { title: 'Checkout: total shows NaN after Pay', findings: ['The total shows NaN after Pay'] } })));
+`,
+  { mode: 0o755 },
+);
+const summaries = process.platform !== 'win32';
 const env = {
   ...process.env,
   LENS_HOME: join(work, 'lens'),
   LENS_VIBEQ_TOKEN: 'e2e-token',
+  LENS_CLAUDE_BINARY: summaries ? fakeClaude : join(work, 'no-claude'),
+  LENS_CODEX_BINARY: join(work, 'no-codex'),
   ...(isolated ? { HOME: join(work, 'home'), XDG_CONFIG_HOME: join(work, 'config') } : {}),
 };
 const profile = {
@@ -276,6 +292,17 @@ try {
   ]);
   const freeze = review.getByRole('button', { name: 'Create review' });
   await freeze.waitFor({ timeout: 15_000 });
+  // The page title is not a title: a small model writes one, and the findings, before the review.
+  await review
+    .getByRole('status', { name: 'Summary' })
+    .filter({ hasText: summaries ? /wrote the title/ : /No title was written/ })
+    .waitFor({ timeout: 30_000 });
+  if (summaries) {
+    if ((await review.getByLabel('Title', { exact: true }).inputValue()) !== 'Checkout: total shows NaN after Pay') throw new Error('the title was not written');
+    if (!(await review.getByLabel('Notes', { exact: true }).inputValue()).startsWith('Findings:\n- The total shows NaN after Pay\n\n')) {
+      throw new Error(`the findings are not first: ${await review.getByLabel('Notes', { exact: true }).inputValue()}`);
+    }
+  }
   await freeze.click();
   await review.getByRole('list', { name: 'Reviewed captures' }).getByRole('img').first().waitFor({ timeout: 15_000 });
   await review.getByRole('button', { name: 'Export to Downloads' }).click();
@@ -391,7 +418,7 @@ try {
     const reviewed = (await rpc('tools/call', { name: 'get_review', arguments: { review: latest.id } })).content;
     if (!reviewed[0].text.includes('UNTRUSTED DATA')) throw new Error('MCP: page content is not marked untrusted');
     const detail = JSON.parse(reviewed[1].text);
-    if (detail.notesByThePerson !== notes || !detail.captures[0].untrustedPageContent.findings.some((f) => f.startsWith('HTTP 500'))) {
+    if (!detail.notesByThePerson.includes(notes) || !detail.captures[0].untrustedPageContent.findings.some((f) => f.startsWith('HTTP 500'))) {
       throw new Error(`MCP review: ${JSON.stringify(detail).slice(0, 300)}`);
     }
     if (speech && !/fellow Americans/i.test(detail.voiceNotesByThePerson[0]?.transcript ?? '')) {
@@ -423,7 +450,16 @@ try {
   const editorRegion = studio.getByRole('region', { name: 'Recording editor' });
   await editorRegion.waitFor({ timeout: 30_000 });
   await studio.getByRole('status', { name: 'Edits' }).filter({ hasText: /kept/ }).waitFor({ timeout: 15_000 });
-  if (speech) await studio.getByRole('region', { name: 'Transcript' }).getByText(/fellow Americans/i).first().waitFor({ timeout: 180_000 });
+  if (speech) {
+    const transcriptPanel = studio.getByRole('region', { name: 'Transcript' });
+    await transcriptPanel.getByText(/fellow Americans/i).first().waitFor({ timeout: 180_000 });
+    // The person corrects what Whisper heard before it leaves.
+    await transcriptPanel.getByRole('listitem').first().hover();
+    await transcriptPanel.getByRole('button', { name: 'Correct this line' }).first().click();
+    await transcriptPanel.getByLabel('Correct the transcript').fill('And so, my fellow testers, the total is wrong.');
+    await transcriptPanel.getByLabel('Correct the transcript').press('Enter');
+    await transcriptPanel.getByText('And so, my fellow testers, the total is wrong.').waitFor({ timeout: 10_000 });
+  }
   // Draw a circle around Pay in the replay.
   // Measure after Draw: the click may scroll the page.
   await studio.getByRole('button', { name: 'Draw' }).click();
@@ -454,7 +490,21 @@ try {
   await highlighted.getByText(/marks textbox “Coupon”/).waitFor({ timeout: 10_000 });
   await highlighted.getByLabel('Note').fill('The coupon is applied twice');
   await highlighted.getByRole('button', { name: 'Add note' }).click();
-  // Cut the last fifth of the timeline.
+  // Space plays and pauses.
+  await studio.keyboard.press(' ');
+  await studio.getByRole('button', { name: 'Pause' }).waitFor({ timeout: 5_000 });
+  await studio.keyboard.press(' ');
+  await studio.getByRole('button', { name: 'Play' }).waitFor({ timeout: 5_000 });
+  // Dragging scrubs: the clock follows the pointer.
+  const bar = await studio.getByLabel('Timeline').boundingBox();
+  await studio.mouse.move(bar.x + bar.width * 0.1, bar.y + bar.height / 2);
+  await studio.mouse.down();
+  await studio.mouse.move(bar.x + bar.width * 0.6, bar.y + bar.height / 2, { steps: 4 });
+  await studio.mouse.up();
+  const clockText = await studio.getByLabel('Time', { exact: true }).textContent();
+  if (clockText.startsWith('0:00')) throw new Error(`scrubbing did not move the replay: ${clockText}`);
+  // Cut the last fifth of the timeline, with the Cut tool.
+  await studio.getByRole('button', { name: 'Cut', exact: true }).click();
   const line = await studio.getByLabel('Timeline').boundingBox();
   await studio.mouse.move(line.x + line.width * 0.8, line.y + line.height / 2);
   await studio.mouse.down();
@@ -462,12 +512,19 @@ try {
   await studio.mouse.up();
   await studio.getByRole('button', { name: /^Cut .* out$/ }).click();
   await studio.getByRole('status', { name: 'Edits' }).filter({ hasText: /2 notes · Saved/ }).waitFor({ timeout: 15_000 });
+  await studio.getByRole('status', { name: 'Summary' }).filter({ hasText: summaries ? /wrote the title/ : /No title was written/ }).waitFor({ timeout: 30_000 });
   await studio.getByRole('button', { name: 'Create review' }).click();
   await studio.getByRole('button', { name: 'Export to Downloads' }).click();
   const recorded = studio.getByRole('status', { name: 'Export' });
   await recorded.waitFor({ timeout: 15_000 });
   const sessionFolder = (await recorded.textContent()).replace(/^Exported to /, '');
-  if (existsSync(join(sessionFolder, 'capture-1.png'))) throw new Error('a recording exported a screenshot');
+  if (!existsSync(join(sessionFolder, 'capture-1.png'))) throw new Error('the recording lacks its screenshot');
+  if (speech && !readFileSync(join(sessionFolder, 'voice-1.txt'), 'utf8').includes('my fellow testers, the total is wrong')) {
+    throw new Error('the corrected transcript did not leave');
+  }
+  const sessionReport = readFileSync(join(sessionFolder, 'report.md'), 'utf8');
+  // Findings first, the raw timeline last.
+  if (!(sessionReport.indexOf('Findings:') < sessionReport.indexOf('## Timeline'))) throw new Error(`the report order:\n${sessionReport}`);
   const sessionTimeline = readFileSync(join(sessionFolder, 'capture-1-timeline.txt'), 'utf8');
   const sessionSpec = readFileSync(join(sessionFolder, 'capture-1.spec.ts'), 'utf8');
   for (const [file, text] of [['timeline', sessionTimeline], ['spec', sessionSpec]]) {

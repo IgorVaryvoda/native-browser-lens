@@ -18,19 +18,28 @@ pub fn export(review: &Review, blobs: &Blobs, root: &Path) -> io::Result<PathBuf
     // cannot add links, images or HTML to a report someone opens later. The person's notes stay
     // Markdown.
     let mut report = format!("# {}\n\n", escape(&review.title));
+    // What a reader needs first: the findings in the notes, then the person's own words, then
+    // each capture; the raw timelines come last.
     if !review.notes.trim().is_empty() {
         let _ = write!(report, "{}\n\n", review.notes.trim());
     }
+    if !review.voice.is_empty() {
+        report.push_str("## What the person said\n\nTranscribed on this computer.\n\n");
+    }
+    for (index, note) in review.voice.iter().enumerate() {
+        let n = index + 1;
+        let transcript = voice_transcript(note);
+        let _ = writeln!(report, "{}", fenced(&transcript));
+        std::fs::write(folder.join(format!("voice-{n}.txt")), transcript)?;
+    }
+    let mut timelines = String::new();
     for (index, item) in review.items.iter().enumerate() {
         let n = index + 1;
         let session = item.kind == CaptureKind::Session;
-        // A recording speaks through its steps, the person's words and notes; no screenshot.
-        if !session {
-            std::fs::write(
-                folder.join(format!("capture-{n}.png")),
-                blobs.read_all(&item.screenshot.sha256)?,
-            )?;
-        }
+        std::fs::write(
+            folder.join(format!("capture-{n}.png")),
+            blobs.read_all(&item.screenshot.sha256)?,
+        )?;
         let evidence = blobs.read_all(&item.evidence.sha256)?;
         std::fs::write(folder.join(format!("capture-{n}-evidence.json")), &evidence)?;
         let parsed = repro::parse(&evidence);
@@ -48,21 +57,13 @@ pub fn export(review: &Review, blobs: &Blobs, root: &Path) -> io::Result<PathBuf
         } else {
             &item.page_title
         };
-        if session {
-            let _ = write!(
-                report,
-                "## Recording {n}: {}\n\nPage: {}\n\n",
-                escape(title),
-                code(&item.page_url)
-            );
-        } else {
-            let _ = write!(
-                report,
-                "## Capture {n}: {}\n\nPage: {}\n\n![Capture {n}](capture-{n}.png)\n\n",
-                escape(title),
-                code(&item.page_url)
-            );
-        }
+        let _ = write!(
+            report,
+            "## {} {n}: {}\n\nPage: {}\n\n![Capture {n}](capture-{n}.png)\n\n",
+            if session { "Recording" } else { "Capture" },
+            escape(title),
+            code(&item.page_url)
+        );
         if !item.annotations.is_empty() {
             report.push_str("The person's notes on the recording:\n\n");
             for note in &item.annotations {
@@ -89,23 +90,15 @@ pub fn export(review: &Review, blobs: &Blobs, root: &Path) -> io::Result<PathBuf
         }
         if let Some(evidence) = &parsed {
             let _ = write!(
-                report,
-                "Steps and events, oldest first. To repeat the steps: \
-                 `npx playwright test capture-{n}.spec.ts`\n\n{}\n",
+                timelines,
+                "### Capture {n}\n\nOldest first. `capture-{n}.spec.ts` repeats the steps; it does \
+                 not check the defect.\n\n{}\n",
                 fenced(&repro::timeline(evidence, &context(item, &review.voice)))
             );
         }
     }
-    if !review.voice.is_empty() {
-        report.push_str(
-            "## Voice notes\n\nTranscribed on this computer; the person's own words.\n\n",
-        );
-    }
-    for (index, note) in review.voice.iter().enumerate() {
-        let n = index + 1;
-        let transcript = voice_transcript(note);
-        let _ = write!(report, "Voice note {n}:\n\n{}\n", fenced(&transcript));
-        std::fs::write(folder.join(format!("voice-{n}.txt")), transcript)?;
+    if !timelines.is_empty() {
+        let _ = write!(report, "## Timeline\n\n{timelines}");
     }
     std::fs::write(folder.join("report.md"), report)?;
     std::fs::write(
@@ -119,6 +112,7 @@ fn context<'a>(item: &'a ReviewItem, voice: &'a [ReviewVoice]) -> repro::Context
     repro::Context {
         voice,
         notes: &item.annotations,
+        screen: &item.screen,
         kept: &item.kept,
     }
 }
@@ -158,11 +152,20 @@ pub fn reproduction(
             repro::playwright(evidence, &context(item, voice), n, title, &item.page_url)
                 .into_bytes(),
         ),
-        (
-            format!("capture-{n}.har"),
-            serde_json::to_vec_pretty(&repro::har(evidence)).expect("HAR serializes"),
-        ),
     ]
+    .into_iter()
+    .chain({
+        // A HAR without recorded answers replays nothing: it is left out.
+        let har = repro::har(evidence);
+        let empty = har["log"]["entries"].as_array().is_none_or(Vec::is_empty);
+        (!empty).then(|| {
+            (
+                format!("capture-{n}.har"),
+                serde_json::to_vec_pretty(&har).expect("HAR serializes"),
+            )
+        })
+    })
+    .collect()
 }
 
 /// A fenced code block whose fence is longer than any backtick run inside.

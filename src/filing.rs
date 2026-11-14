@@ -68,7 +68,7 @@ pub fn prepare(
     let mut files: Vec<PathBuf> = std::fs::read_dir(&folder)
         .map_err(|e| e.to_string())?
         .filter_map(|entry| entry.ok().map(|e| e.path()))
-        .filter(|path| path.is_file())
+        .filter(|path| path.is_file() && attach(path))
         .collect();
     files.sort();
     if files.len() > MAX_ATTACHMENTS {
@@ -201,6 +201,31 @@ fn validate(receipt: Receipt, submission: &Submission) -> Result<Receipt, String
     } else {
         Err("VibeQ answered with a receipt for a different submission".into())
     }
+}
+
+/// What a task needs as files: the export folder minus what the description already holds
+/// (the report, the timelines), Lens's own bookkeeping, recordings no task page can play, and
+/// evidence without a network or console event.
+fn attach(path: &Path) -> bool {
+    let name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or_default();
+    if name == "report.md"
+        || name == "review.json"
+        || name.ends_with("-timeline.txt")
+        || name.ends_with("-recording.json")
+    {
+        return false;
+    }
+    if name.ends_with("-evidence.json") {
+        return std::fs::read(path)
+            .ok()
+            .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok())
+            .and_then(|v| v["events"].as_array().map(|e| !e.is_empty()))
+            .unwrap_or(false);
+    }
+    true
 }
 
 fn content_type(filename: &str) -> &'static str {
@@ -343,6 +368,7 @@ mod tests {
                 kind: CaptureKind::Moment,
                 kept: vec![],
                 annotations: vec![],
+                screen: vec![],
             }],
             voice: vec![],
         };
@@ -368,7 +394,9 @@ mod tests {
         .unwrap();
         assert_eq!(attempt.submission.revision, 3);
         let files = attempt.submission.evidence_manifest.len();
-        assert_eq!(files, 4, "report, review, screenshot, evidence");
+        // The report is the description, review.json is bookkeeping, and this evidence holds no
+        // network or console event: only the screenshot goes as a file.
+        assert_eq!(files, 1, "the screenshot");
 
         fake.lock().unwrap().drop_next_submit_reply = true;
         let mut saved = Vec::new();
@@ -422,7 +450,7 @@ mod tests {
         );
 
         let mut changed = fresh();
-        std::fs::write(changed.folder.join("report.md"), "edited after review").unwrap();
+        std::fs::write(changed.folder.join("capture-1.png"), "edited after review").unwrap();
         assert!(
             deliver(&mut changed, &client, |_| Ok(()))
                 .unwrap_err()

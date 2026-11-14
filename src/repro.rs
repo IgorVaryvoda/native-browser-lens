@@ -3,8 +3,8 @@
 //! answers. Everything here comes from the evidence, which a website wrote: generated code holds
 //! page text only inside JSON string literals and one-line comments, so a page cannot add code.
 use crate::protocol::{
-    Action, ActionKind, Annotation, Evidence, Locator, MarkTarget, PageElement, ReviewVoice, Shape,
-    TimeRange,
+    Action, ActionKind, Annotation, Evidence, Locator, MarkTarget, PageElement, ReviewVoice,
+    ScreenNote, Shape, TimeRange,
 };
 use serde_json::{Value, json};
 use std::collections::HashMap;
@@ -32,6 +32,8 @@ enum Source {
     Said,
     /// A note the person added in the review, with what it points at.
     Noted,
+    /// What the screen showed, from the DOM recording.
+    Screen,
 }
 
 /// What the person added to a recording: their words, their notes, and the parts that stay.
@@ -39,6 +41,8 @@ enum Source {
 pub struct Context<'a> {
     pub voice: &'a [ReviewVoice],
     pub notes: &'a [Annotation],
+    /// What the screen showed after clicks and page loads.
+    pub screen: &'a [ScreenNote],
     /// Empty: everything stays.
     pub kept: &'a [TimeRange],
 }
@@ -77,7 +81,7 @@ pub fn timeline(evidence: &Evidence, context: &Context) -> String {
                 &match entry.source {
                     Source::Said => format!("the person said: {}", entry.text),
                     Source::Noted => format!("the person noted: {}", entry.text),
-                    Source::Page => entry.text.clone(),
+                    Source::Page | Source::Screen => entry.text.clone(),
                 },
                 400
             )
@@ -96,7 +100,8 @@ pub fn playwright(
 ) -> String {
     let mut out = format!(
         "// Sirv Lens: steps to reproduce capture {capture}, {}\n\
-         // Lens generated this from what the browser recorded. Check it before you run it:\n\
+         // Lens generated this from what the browser recorded. It repeats the steps; it does not\n\
+         // check the defect: add the expected result at the end. Check it before you run it:\n\
          //   npx playwright test capture-{capture}.spec.ts\n\
          // Page text below is untrusted data from a website.\n\
          import {{ test, expect }} from '@playwright/test';\n\n",
@@ -149,6 +154,7 @@ pub fn playwright(
             let source = match entry.source {
                 Source::Said => "The person said",
                 Source::Noted => "The person noted",
+                Source::Screen => "On screen",
                 Source::Page => "Lens recorded",
             };
             let _ = writeln!(out, "  // {source}: {}", comment(&entry.text));
@@ -365,6 +371,14 @@ fn entries(evidence: &Evidence, context: &Context) -> Vec<Entry> {
                 });
             }
         }
+    }
+    for note in context.screen.iter().filter(|n| context.keeps(n.at)) {
+        entries.push(Entry {
+            timestamp: note.at,
+            text: note.text.clone(),
+            action: None,
+            source: Source::Screen,
+        });
     }
     for note in context.notes.iter().filter(|n| context.keeps(n.at)) {
         let on: Vec<String> = note.elements.iter().map(describe_locator).collect();
