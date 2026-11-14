@@ -67,3 +67,70 @@ jobs:
         run: |
           pnpm build
           pnpm test:e2e
+
+  installer:
+    name: installer ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15, windows-2025]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Rust toolchain (from rust-toolchain.toml)
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - name: Build
+        run: cargo build --locked
+      - name: A local release folder, served over HTTP
+        shell: bash
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          echo "LENS_VERSION=$version" >> "$GITHUB_ENV"
+          case "$RUNNER_OS" in
+            Linux) target=x86_64-unknown-linux-musl ;;
+            macOS) target=aarch64-apple-darwin ;;
+            Windows) target=x86_64-pc-windows-msvc ;;
+          esac
+          name="sirv-lens-$version-$target"
+          mkdir -p "release/$name"
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            cp target/debug/lens.exe "release/$name/"
+            (cd release && 7z a -tzip "$name.zip" "$name" >/dev/null)
+          else
+            cp target/debug/lens "release/$name/"
+            tar -C release -czf "release/$name.tar.gz" "$name"
+          fi
+          rm -rf "release/$name"
+          (cd release && sha256sum * > SHA256SUMS)
+          (cd release && python3 -m http.server 8765 --bind 127.0.0.1 >/dev/null 2>&1 &)
+          sleep 2
+      - name: install.sh (macOS, Linux)
+        if: runner.os != 'Windows'
+        env:
+          LENS_DOWNLOAD_BASE: http://127.0.0.1:8765
+        run: |
+          home=$(mktemp -d)
+          mkdir -p "$home/.config/chromium" "$home/Library/Application Support/Chromium"
+          HOME="$home" XDG_CONFIG_HOME="$home/.config" LENS_HOME="$home/lens" LENS_BIN_DIR="$home/bin" \
+            sh scripts/install.sh "$LENS_VERSION"
+          test -x "$home/bin/lens"
+          ls "$home"/.config/chromium/NativeMessagingHosts/studio.sirv.lens.json \
+            "$home/Library/Application Support/Chromium/NativeMessagingHosts/studio.sirv.lens.json" 2>/dev/null | grep -q .
+      - name: install.ps1 under PowerShell 7 and Windows PowerShell 5.1
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          LENS_DOWNLOAD_BASE: http://127.0.0.1:8765
+        run: |
+          foreach ($shell in 'pwsh', 'powershell') {
+            & $shell -NoProfile -ExecutionPolicy Bypass -File scripts/install.ps1
+            if ($LASTEXITCODE -ne 0) { throw "install.ps1 failed under $shell" }
+            $exe = Join-Path $env:LOCALAPPDATA 'Programs\Sirv Lens\lens.exe'
+            if (-not (Test-Path $exe)) { throw "lens.exe is missing after $shell" }
+            $key = 'HKCU:\Software\Google\Chrome\NativeMessagingHosts\studio.sirv.lens'
+            if (-not (Test-Path $key)) { throw "the Chrome registration is missing after $shell" }
+            & $exe unregister
+            if (Test-Path $key) { throw 'lens unregister left the Chrome registration' }
+          }

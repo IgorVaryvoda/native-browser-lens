@@ -1,0 +1,160 @@
+name: Release
+
+# A v* tag builds every target natively, the extension for both stores, and a draft GitHub
+# release with SHA256SUMS. A person reviews the draft and publishes it.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+# Third-party actions are pinned to a commit; the comment records the tag. Move both together.
+jobs:
+  binary:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    env:
+      # Secrets are not allowed in `if`; this flag is.
+      CAN_SIGN_APPLE: ${{ secrets.APPLE_SIGNING_IDENTITY != '' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # musl: one static binary for every Linux distribution, no glibc floor.
+          - { os: ubuntu-24.04, target: x86_64-unknown-linux-musl }
+          - { os: ubuntu-24.04-arm, target: aarch64-unknown-linux-musl }
+          - { os: macos-15, target: aarch64-apple-darwin }
+          - { os: macos-15-intel, target: x86_64-apple-darwin }
+          - { os: windows-2025, target: x86_64-pc-windows-msvc }
+          - { os: windows-11-arm, target: aarch64-pc-windows-msvc }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Rust toolchain
+        shell: bash
+        run: |
+          rustup toolchain install
+          rustup target add ${{ matrix.target }}
+      - name: musl C toolchain (bundled SQLite)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends musl-tools
+
+      - name: Build
+        run: cargo build --release --locked --target ${{ matrix.target }}
+
+      - name: Smoke test
+        shell: bash
+        run: |
+          bin=target/${{ matrix.target }}/release/lens
+          [[ "$RUNNER_OS" == "Windows" ]] && bin="$bin.exe"
+          "$bin" version
+          if [[ "$RUNNER_OS" == "Linux" ]]; then
+            # Static: no dynamic section means no glibc or library dependency.
+            ! readelf -d "$bin" | grep -q NEEDED
+          fi
+
+      # Signing runs only where the publisher's secrets exist; nothing pretends otherwise.
+      - name: Sign and notarize (macOS)
+        if: runner.os == 'macOS' && env.CAN_SIGN_APPLE == 'true'
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          security create-keychain -p "" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "" "$keychain"
+          echo "$APPLE_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/certificate.p12"
+          security import "$RUNNER_TEMP/certificate.p12" -k "$keychain" -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security list-keychains -d user -s "$keychain"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "" "$keychain"
+          bin=target/${{ matrix.target }}/release/lens
+          codesign --force --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" "$bin"
+          ditto -c -k "$bin" "$RUNNER_TEMP/notarize.zip"
+          xcrun notarytool submit "$RUNNER_TEMP/notarize.zip" --apple-id "$APPLE_ID" \
+            --password "$APPLE_PASSWORD" --team-id "$APPLE_TEAM_ID" --wait
+
+      - name: Package
+        shell: bash
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          name="sirv-lens-$version-${{ matrix.target }}"
+          mkdir -p "dist/$name"
+          cp README.md "dist/$name/"
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            cp target/${{ matrix.target }}/release/lens.exe "dist/$name/"
+            (cd dist && 7z a -tzip "$name.zip" "$name" >/dev/null)
+          else
+            cp target/${{ matrix.target }}/release/lens "dist/$name/"
+            tar -C dist -czf "dist/$name.tar.gz" "$name"
+          fi
+          rm -rf "dist/$name"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: binary-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+
+  extension:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+        with:
+          package_json_file: extension/package.json
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: extension/pnpm-lock.yaml
+      - name: Store packages (Chrome, and Firefox with its source archive for AMO review)
+        working-directory: extension
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm compile
+          pnpm test
+          pnpm zip
+          pnpm zip:firefox
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: extension
+          path: extension/.output/*.zip
+          if-no-files-found: error
+
+  publish:
+    needs: [binary, extension]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: The tag matches both version numbers
+        run: |
+          crate="v$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
+          extension="v$(jq -r .version extension/package.json)"
+          test "$crate" = "$GITHUB_REF_NAME" && test "$extension" = "$GITHUB_REF_NAME"
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          path: release
+          merge-multiple: true
+      - name: Installers and checksums
+        run: |
+          cp scripts/install.sh scripts/install.ps1 release/
+          cd release && sha256sum * > SHA256SUMS && cat SHA256SUMS
+      - name: Draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" --draft --verify-tag --generate-notes release/*
