@@ -51,6 +51,10 @@ impl Blobs {
         Ok((chunk, total))
     }
 
+    pub fn read_all(&self, sha256: &str) -> io::Result<Vec<u8>> {
+        std::fs::read(self.path(sha256)?)
+    }
+
     fn path(&self, sha256: &str) -> io::Result<PathBuf> {
         let valid = sha256.len() == 64
             && sha256

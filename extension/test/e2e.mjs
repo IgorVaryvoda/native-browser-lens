@@ -83,8 +83,8 @@ try {
   await status.filter({ hasNotText: 'Connecting' }).waitFor({ timeout: 15_000 });
   const statusText = await status.textContent();
   if (!statusText?.startsWith('Connected')) {
-    const log = join(env.LENS_HOME, 'lensd.log');
-    throw new Error(`side panel: ${statusText}\nlensd.log: ${existsSync(log) ? readFileSync(log, 'utf8') : '(none)'}`);
+    const read = (name) => (existsSync(join(env.LENS_HOME, name)) ? readFileSync(join(env.LENS_HOME, name), 'utf8') : '(none)');
+    throw new Error(`side panel: ${statusText}\nlensd.log: ${read('lensd.log')}\nhost.log: ${read('host.log')}`);
   }
 
   // Track the site: a project for its origin, and the debugger attaches to the tab.
@@ -166,7 +166,32 @@ try {
   await reloaded.waitFor({ timeout: 15_000 });
   if ((await reloaded.inputValue()) !== notes) throw new Error(`notes after reload: ${await reloaded.inputValue()}`);
 
-  console.log(`e2e: ok (${evidence.events.length} events, screenshot ${imageWidth}px wide, 2 marks, replay, notes kept)`);
+  // Review and export: only after the person confirms the screenshots; the export holds the
+  // daemon-rendered images and a report of what failed.
+  const [review] = await Promise.all([
+    context.waitForEvent('page'),
+    panel.getByRole('button', { name: 'Review and export' }).click(),
+  ]);
+  const freeze = review.getByRole('button', { name: 'Create review' });
+  await freeze.waitFor({ timeout: 15_000 });
+  if (await freeze.isEnabled()) throw new Error('a review was possible without the screenshot confirmation');
+  await review.getByLabel(/I checked every/).check();
+  await freeze.click();
+  await review.getByRole('list', { name: 'Reviewed captures' }).getByRole('img').first().waitFor({ timeout: 15_000 });
+  await review.getByRole('button', { name: 'Export to Downloads' }).click();
+  const exportStatus = review.getByRole('status', { name: 'Export' });
+  await exportStatus.waitFor({ timeout: 15_000 });
+  const folder = (await exportStatus.textContent()).replace(/^Exported to /, '');
+  const report = readFileSync(join(folder, 'report.md'), 'utf8');
+  for (const expected of ['HTTP 500 from', 'Console error: total is NaN', notes, '![Capture 1](capture-1.png)']) {
+    if (!report.includes(expected)) throw new Error(`report.md lacks ${expected}:\n${report}`);
+  }
+  for (const file of ['capture-1.png', 'capture-1-evidence.json', 'capture-1-recording.json', 'review.json']) {
+    if (!existsSync(join(folder, file))) throw new Error(`the export lacks ${file}`);
+  }
+  if (!isolated) rmSync(folder, { recursive: true, force: true });
+
+  console.log(`e2e: ok (${evidence.events.length} events, screenshot ${imageWidth}px wide, 2 marks, replay, notes kept, reviewed and exported)`);
 } finally {
   // Cleanup must not hide the failure above, and must not hang the job.
   await Promise.race([context.close(), new Promise((done) => setTimeout(done, 20_000))]).catch(() => {});

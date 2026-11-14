@@ -20,6 +20,8 @@ type ReplyTo = {
   getCapture: 'capture';
   saveAnnotations: 'capture';
   readBlob: 'blob';
+  createReview: 'review';
+  exportReview: 'exported';
   shutdown: 'stopping';
 };
 type ReplyData<M extends Request['method']> = Extract<Reply, { type: ReplyTo[M] }> extends { data: infer D } ? D : never;

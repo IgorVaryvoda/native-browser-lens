@@ -44,6 +44,14 @@ impl Paths {
         Ok(())
     }
 
+    /// Where exports go: the person's Downloads folder, else `~/Downloads`.
+    pub fn downloads(&self) -> PathBuf {
+        directories::UserDirs::new()
+            .and_then(|dirs| dirs.download_dir().map(PathBuf::from))
+            .or_else(|| directories::BaseDirs::new().map(|b| b.home_dir().join("Downloads")))
+            .unwrap_or_else(|| self.data.join("exports"))
+    }
+
     pub fn database(&self) -> PathBuf {
         self.data.join("lens.sqlite")
     }

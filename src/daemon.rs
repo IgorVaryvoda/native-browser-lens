@@ -5,7 +5,7 @@ use crate::framing::{read_frame, write_frame};
 use crate::paths::Paths;
 use crate::protocol::*;
 use crate::store::{CaptureRow, Store, Updated};
-use crate::{ipc, secrets};
+use crate::{export, ipc, render, secrets};
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use interprocess::local_socket::{Stream, prelude::*};
@@ -17,6 +17,7 @@ pub struct Daemon {
     store: Mutex<Store>,
     blobs: Blobs,
     data_dir: String,
+    downloads: std::path::PathBuf,
 }
 
 /// A screenshot of a 4K display at 2x is about 10 MiB of PNG; the request limit leaves room for base64.
@@ -123,6 +124,7 @@ impl Daemon {
             store: Mutex::new(store),
             blobs: Blobs::new(paths.blobs()),
             data_dir: paths.data.display().to_string(),
+            downloads: paths.downloads(),
         }
     }
 
@@ -291,6 +293,79 @@ impl Daemon {
                         .map_err(storage)?
                         .ok_or_else(|| not_found("no such capture"))?,
                 )
+            }
+            Request::CreateReview(request) => {
+                if !request.screenshots_checked {
+                    return Err(bad(
+                        "confirm that you checked every screenshot for private data",
+                    ));
+                }
+                let mut ids = request.captures.clone();
+                ids.sort_unstable();
+                ids.dedup();
+                if ids.is_empty() || ids.len() > 50 {
+                    return Err(bad("choose between 1 and 50 captures"));
+                }
+                let observation = store
+                    .get_observation(request.observation)
+                    .map_err(storage)?
+                    .ok_or_else(|| not_found("no such observation"))?;
+                if observation.revision != request.revision {
+                    return Err(ProtocolError::new(
+                        ErrorCode::Conflict,
+                        "the notes changed after you reviewed them; review again",
+                    ));
+                }
+                let mut items = Vec::new();
+                for id in &request.captures {
+                    let capture = store
+                        .get_capture(*id)
+                        .map_err(storage)?
+                        .filter(|c| c.observation == observation.id)
+                        .ok_or_else(|| {
+                            not_found(format!("capture {id} is not in this observation"))
+                        })?;
+                    let original = self
+                        .blobs
+                        .read_all(&capture.screenshot.sha256)
+                        .map_err(storage)?;
+                    let rendered =
+                        render::render(&original, &capture.annotations).map_err(storage)?;
+                    items.push(ReviewItem {
+                        capture: capture.id,
+                        page_url: capture.page_url,
+                        page_title: capture.page_title,
+                        mode: capture.mode,
+                        screenshot: self.blobs.put(&rendered, "image/png").map_err(storage)?,
+                        evidence: capture.evidence,
+                        recording: capture.recording,
+                    });
+                }
+                Reply::Review(
+                    store
+                        .create_review(Review {
+                            id: 0,
+                            observation: observation.id,
+                            revision: observation.revision,
+                            created_at: now_ms(),
+                            title: observation.title,
+                            notes: observation.notes,
+                            items,
+                        })
+                        .map_err(storage)?,
+                )
+            }
+            Request::ExportReview { review } => {
+                let review = store
+                    .get_review(review)
+                    .map_err(storage)?
+                    .ok_or_else(|| not_found("no such review"))?;
+                drop(store);
+                let folder =
+                    export::export(&review, &self.blobs, &self.downloads).map_err(storage)?;
+                Reply::Exported(Exported {
+                    folder: folder.display().to_string(),
+                })
             }
             Request::ReadBlob {
                 sha256,

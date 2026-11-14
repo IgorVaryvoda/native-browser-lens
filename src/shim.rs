@@ -11,14 +11,39 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 pub fn run(paths: &Paths) -> io::Result<()> {
-    let stream = Arc::new(connect_or_start(paths)?);
+    let stream =
+        Arc::new(connect_or_start(paths).inspect_err(|e| log(paths, &format!("connect: {e}")))?);
     let to_daemon = stream.clone();
+    let log_paths = paths.clone();
     std::thread::spawn(move || {
         // The browser closed the port: nothing more will come, so the shim ends.
-        let _ = relay(&mut io::stdin().lock(), &mut &*to_daemon, MAX_REQUEST_BYTES);
+        if let Err(e) = relay(&mut io::stdin().lock(), &mut &*to_daemon, MAX_REQUEST_BYTES) {
+            log(&log_paths, &format!("browser to daemon: {e}"));
+        }
         std::process::exit(0);
     });
     relay(&mut &*stream, &mut io::stdout().lock(), MAX_REPLY_BYTES)
+        .inspect_err(|e| log(paths, &format!("daemon to browser: {e}")))
+}
+
+/// Browsers discard a host's stderr (Chrome on Windows always), so errors go to `host.log` in the
+/// data folder. It restarts empty past 1 MiB.
+fn log(paths: &Paths, line: &str) {
+    let path = paths.data.join("host.log");
+    let full = std::fs::metadata(&path).is_ok_and(|m| m.len() > 1024 * 1024);
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(!full)
+        .write(true)
+        .truncate(full)
+        .open(&path);
+    if let Ok(mut file) = file {
+        let seconds = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let _ = writeln!(file, "{seconds} pid {}: {line}", std::process::id());
+    }
 }
 
 fn relay(from: &mut impl Read, to: &mut impl Write, limit: usize) -> io::Result<()> {

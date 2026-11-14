@@ -142,6 +142,12 @@ export function App() {
                       onSaved={() => void client.request({ method: 'listObservations' }).then(setObservations)}
                     />
                     <Captures client={client} observation={o.id} />
+                    <button
+                      type="button"
+                      onClick={() => void browser.tabs.create({ url: browser.runtime.getURL(`/review.html?observation=${o.id}`) })}
+                    >
+                      Review and export
+                    </button>
                   </>
                 )}
               </li>

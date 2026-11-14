@@ -1,10 +1,12 @@
 mod blobs;
 mod daemon;
+mod export;
 mod framing;
 mod ipc;
 mod paths;
 mod protocol;
 mod register;
+mod render;
 mod secrets;
 mod shim;
 mod store;

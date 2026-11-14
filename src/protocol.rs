@@ -58,6 +58,14 @@ pub enum Request {
         capture: i64,
         shapes: Vec<Shape>,
     },
+    /// Freezes what may leave the notebook: chosen captures, rendered with their marks and masks,
+    /// at the observation's current revision. The person must confirm they checked the screenshots.
+    CreateReview(ReviewRequest),
+    /// Writes a review to a new folder in Downloads.
+    ExportReview {
+        #[ts(type = "number")]
+        review: i64,
+    },
     /// One chunk of a stored blob. Replies stay under 1 MiB, so large blobs take several reads.
     ReadBlob {
         sha256: String,
@@ -98,7 +106,61 @@ pub enum Reply {
     Capture(Capture),
     Captures(Vec<Capture>),
     Blob(BlobChunk),
+    Review(Review),
+    Exported(Exported),
     Stopping,
+}
+
+#[derive(Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ReviewRequest {
+    #[ts(type = "number")]
+    pub observation: i64,
+    /// The revision the person reviewed; a newer one means they did not see the latest notes.
+    pub revision: u32,
+    #[ts(type = "Array<number>")]
+    pub captures: Vec<i64>,
+    pub screenshots_checked: bool,
+}
+
+/// What a person approved to leave the notebook. Never changes after it is created.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct Review {
+    #[ts(type = "number")]
+    pub id: i64,
+    #[ts(type = "number")]
+    pub observation: i64,
+    pub revision: u32,
+    #[ts(type = "number")]
+    pub created_at: i64,
+    pub title: String,
+    pub notes: String,
+    pub items: Vec<ReviewItem>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ReviewItem {
+    #[ts(type = "number")]
+    pub capture: i64,
+    pub page_url: String,
+    pub page_title: String,
+    pub mode: CaptureMode,
+    /// The screenshot with its marks drawn and its masks burned in.
+    pub screenshot: BlobRef,
+    pub evidence: BlobRef,
+    pub recording: Option<BlobRef>,
+}
+
+#[derive(Debug, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct Exported {
+    pub folder: String,
 }
 
 pub const MAX_BLOB_CHUNK: u32 = 512 * 1024;

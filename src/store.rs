@@ -1,5 +1,5 @@
 use crate::protocol::{
-    BlobRef, Capture, CaptureMode, Observation, ObservationSummary, Project, Shape,
+    BlobRef, Capture, CaptureMode, Observation, ObservationSummary, Project, Review, Shape,
 };
 use rusqlite::{Connection, params};
 use std::path::Path;
@@ -40,6 +40,11 @@ const MIGRATIONS: &[&str] = &[
     UPDATE observations SET updated_at = created_at;",
     "ALTER TABLE captures ADD COLUMN recording_sha256 TEXT;
     ALTER TABLE captures ADD COLUMN recording_size INTEGER;",
+    "CREATE TABLE reviews (
+        id INTEGER PRIMARY KEY,
+        observation_id INTEGER NOT NULL REFERENCES observations(id) ON DELETE CASCADE,
+        body TEXT NOT NULL
+    );",
 ];
 
 /// What an update found.
@@ -232,6 +237,30 @@ impl Store {
             (1, Some(saved)) => Updated::Saved(saved),
             (_, Some(current)) => Updated::Conflict(current),
             (_, None) => Updated::Missing,
+        })
+    }
+
+    /// Stores a review; `review.id` is replaced by the new row's ID.
+    pub fn create_review(&self, mut review: Review) -> rusqlite::Result<Review> {
+        self.db.execute(
+            "INSERT INTO reviews (observation_id, body) VALUES (?1, '')",
+            [review.observation],
+        )?;
+        review.id = self.db.last_insert_rowid();
+        let body = serde_json::to_string(&review).expect("reviews serialize");
+        self.db.execute(
+            "UPDATE reviews SET body = ?2 WHERE id = ?1",
+            params![review.id, body],
+        )?;
+        Ok(review)
+    }
+
+    pub fn get_review(&self, id: i64) -> rusqlite::Result<Option<Review>> {
+        let mut statement = self.db.prepare("SELECT body FROM reviews WHERE id = ?1")?;
+        let mut rows = statement.query_map([id], |row| row.get::<_, String>(0))?;
+        Ok(match rows.next().transpose()? {
+            Some(body) => serde_json::from_str(&body).ok(),
+            None => None,
         })
     }
 
