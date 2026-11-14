@@ -31,7 +31,7 @@ export default defineContentScript({
 
     let previous: eventWithTime[] = [];
     let current: eventWithTime[] = [];
-    record({
+    const stopRecording = record({
       emit(event, isCheckout) {
         scrubRecording(event);
         if (isCheckout) {
@@ -54,10 +54,23 @@ export default defineContentScript({
     // Steps go to the background as they happen, so they outlive this document.
     let collecting: Action[] | null = null;
     const steps = new ActionRecorder(document, (action) => {
-      if (collecting) collecting.push(action);
-      else void browser.runtime.sendMessage({ kind: 'lens-action', action } satisfies RecorderMessage).catch(() => {});
+      if (collecting) return void collecting.push(action);
+      // After the extension reloads or updates, this script stays in the page without an
+      // extension: sending then throws at once. It stops itself instead of failing on each click.
+      try {
+        if (!browser.runtime?.id) return retire();
+        void browser.runtime.sendMessage({ kind: 'lens-action', action } satisfies RecorderMessage).catch(() => {});
+      } catch {
+        retire();
+      }
     });
     steps.start();
+    function retire() {
+      steps.stop();
+      stopRecording?.();
+      previous = [];
+      current = [];
+    }
 
     browser.runtime.onMessage.addListener((message: RecorderRequest, _sender, reply) => {
       if (message?.kind !== 'lens-prepare') return;

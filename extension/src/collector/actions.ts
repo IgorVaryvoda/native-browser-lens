@@ -191,6 +191,7 @@ export class ActionRecorder {
   private readonly pending = new Set<HTMLInputElement | HTMLTextAreaElement | HTMLElement>();
   private lastScroll = 0;
   private scrollTimer: ReturnType<typeof setTimeout> | undefined;
+  private readonly listening = new AbortController();
 
   constructor(
     private readonly doc: Document,
@@ -199,14 +200,25 @@ export class ActionRecorder {
 
   start() {
     const on = <K extends keyof DocumentEventMap>(type: K, handler: (event: DocumentEventMap[K]) => void) =>
-      this.doc.addEventListener(type, (event) => event.isTrusted && handler(event), { capture: true, passive: true });
+      this.doc.addEventListener(type, (event) => event.isTrusted && handler(event), {
+        capture: true,
+        passive: true,
+        signal: this.listening.signal,
+      });
     on('click', (e) => this.click(e));
     on('input', (e) => this.typed(e));
     on('change', (e) => this.changed(e));
     on('keydown', (e) => this.key(e));
     on('focusout', (e) => this.flush(e.target));
     this.lastScroll = scrollY;
-    addEventListener('scroll', () => this.scrolled(), { passive: true });
+    addEventListener('scroll', () => this.scrolled(), { passive: true, signal: this.listening.signal });
+  }
+
+  /** Stops listening for good. */
+  stop() {
+    this.listening.abort();
+    clearTimeout(this.scrollTimer);
+    this.pending.clear();
   }
 
   /** Reports typing that has not ended yet; Lens calls this before a capture. */
