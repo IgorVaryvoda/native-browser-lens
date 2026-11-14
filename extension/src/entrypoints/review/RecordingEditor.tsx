@@ -12,7 +12,7 @@ import type { Locator } from '@/protocol/Locator';
 import type { Point } from '@/protocol/Point';
 import type { TimeRange } from '@/protocol/TimeRange';
 import type { VoiceNote } from '@/protocol/VoiceNote';
-import { AddNoteIcon, DeleteIcon, PenIcon, PlayIcon, StopIcon, TargetIcon } from '@/ui/icons';
+import { AddNoteIcon, DeleteIcon, PenIcon, TargetIcon } from '@/ui/icons';
 
 type Player = InstanceType<typeof rrwebPlayer>;
 type Mark = { at: number; kind: 'step' | 'error' | 'note'; label: string };
@@ -50,6 +50,7 @@ export function RecordingEditor({ client, capture, voice }: { client: LensClient
   const [draft, setDraft] = useState<{ at: number; text: string; drawing: Stroke[]; elements: Locator[] } | null>(null);
   const [steps, setSteps] = useState<{ at: number; text: string; error: boolean }[]>([]);
   const [problem, setProblem] = useState<string | null>(null);
+  const [pointer, setPointer] = useState<number | null>(null);
   const audio = useRef<Map<number, HTMLAudioElement>>(new Map());
 
   // The replay and the steps.
@@ -437,11 +438,18 @@ export function RecordingEditor({ client, capture, voice }: { client: LensClient
         </div>
 
         <div className="controls" role="toolbar" aria-label="Playback">
-          <button type="button" className="btn btn-secondary btn-icon" aria-label={playing ? 'Pause' : 'Play'} onClick={toggle} disabled={!span}>
-            {playing ? <StopIcon /> : <PlayIcon />}
+          <button type="button" className="play" aria-label={playing ? 'Pause' : 'Play'} onClick={toggle} disabled={!span}>
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              {playing ? (
+                <path d="M7 5h3.5v14H7zM13.5 5H17v14h-3.5z" />
+              ) : (
+                <path d="M8 5.6v12.8a1 1 0 0 0 1.5.86l10.2-6.4a1 1 0 0 0 0-1.72L9.5 4.74A1 1 0 0 0 8 5.6z" />
+              )}
+            </svg>
           </button>
-          <span className="num small" aria-label="Time">
-            {span ? `${clock(now - span.start)} / ${clock(span.end - span.start)}` : '…'}
+          <span className="clock num" aria-label="Time">
+            {span ? clock(now - span.start) : '0:00'}
+            <span className="muted"> / {span ? clock(span.end - span.start) : '0:00'}</span>
           </span>
           <span className="spacer" />
           {selection ? (
@@ -489,11 +497,22 @@ export function RecordingEditor({ client, capture, voice }: { client: LensClient
           className="timeline"
           aria-label="Timeline"
           onPointerDown={trackDown}
-          onPointerMove={trackMove}
+          onPointerMove={(e) => (trackMove(e), setPointer(timeAt(e.clientX)))}
           onPointerUp={trackUp}
+          onPointerLeave={() => setPointer(null)}
         >
           {span && (
             <>
+              <span className="ruler" aria-hidden="true">
+                {ticks(span.end - span.start).map((t) => (
+                  <span key={t} className="tick" style={{ left: left(span.start + t) }}>
+                    {clock(t)}
+                  </span>
+                ))}
+              </span>
+              <span className="lane lane-marks" aria-hidden="true" />
+              <span className="lane lane-speech" aria-hidden="true" />
+              <span className="played" style={{ left: left(trimStart), width: `max(0px, calc(${left(now)} - ${left(trimStart)}))` }} />
               <span className="trimmed" style={{ left: 0, width: left(trimStart) }} />
               <span className="trimmed" style={{ left: left(trimEnd), right: 0 }} />
               {edits.cuts.map((c, i) => (
@@ -521,6 +540,11 @@ export function RecordingEditor({ client, capture, voice }: { client: LensClient
               )}
               <span className="handle" data-handle="start" style={{ left: left(trimStart) }} onPointerDown={(e) => trim('trimStart', e)} title="Drag to trim the start" />
               <span className="handle" data-handle="end" style={{ left: left(trimEnd) }} onPointerDown={(e) => trim('trimEnd', e)} title="Drag to trim the end" />
+              {pointer !== null && !dragging.current && (
+                <span className="hover-time num" style={{ left: left(pointer) }}>
+                  {clock(pointer - span.start)}
+                </span>
+              )}
               <span className="playhead" style={{ left: left(now) }} />
             </>
           )}
@@ -621,6 +645,14 @@ export function RecordingEditor({ client, capture, voice }: { client: LensClient
       </aside>
     </section>
   );
+}
+
+/** Ruler labels: about eight of them, at round steps. Offsets in milliseconds. */
+function ticks(total: number): number[] {
+  const step = [1, 2, 5, 10, 15, 30, 60, 120, 300, 600].map((s) => s * 1000).find((s) => total / s <= 8) ?? 1_200_000;
+  const out: number[] = [];
+  for (let t = 0; t <= total; t += step) out.push(t);
+  return out;
 }
 
 function keptRanges(edits: Edits, span: { start: number; end: number }): TimeRange[] {

@@ -69,92 +69,220 @@
   align-items: center;
   gap: 8px;
 }
+.play {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  flex: none;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--primary);
+  color: var(--on-primary);
+  cursor: pointer;
+  box-shadow: var(--app-shadow-xs);
+  transition: background-color 120ms var(--ease), transform 100ms var(--ease);
+}
+.play:hover:not(:disabled) {
+  background: var(--primary-hover);
+}
+.play:active:not(:disabled) {
+  transform: scale(0.95);
+}
+.play:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.play svg {
+  width: 20px;
+  height: 20px;
+  fill: currentColor;
+}
+.clock {
+  font: 600 15px var(--font-heading);
+  letter-spacing: -0.01em;
+}
+.clock .muted {
+  font-weight: 500;
+}
+
+/* The timeline: a ruler, a lane for steps and notes, a lane for speech. */
 .timeline {
   position: relative;
-  height: 44px;
-  border-radius: var(--radius);
+  height: 76px;
+  border-radius: var(--radius-card);
   background: var(--card);
   box-shadow: var(--app-shadow-hairline);
   cursor: pointer;
   touch-action: none;
   user-select: none;
+  overflow: visible;
 }
 .timeline > span {
   position: absolute;
 }
-.timeline .trimmed {
+.ruler {
   top: 0;
+  left: 0;
+  right: 0;
+  height: 20px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.tick {
+  position: absolute;
+  top: 0;
+  height: 20px;
+  padding-left: 4px;
+  border-left: 1px solid var(--border);
+  font: 500 10px/20px var(--font-ui);
+  font-variant-numeric: tabular-nums;
+  color: var(--muted-foreground);
+  pointer-events: none;
+}
+.lane {
+  left: 0;
+  right: 0;
+}
+.lane-marks {
+  top: 28px;
+  height: 16px;
+}
+.lane-speech {
+  top: 52px;
+  height: 14px;
+  border-radius: 7px;
+  background: color-mix(in oklch, var(--muted) 60%, transparent);
+}
+.timeline .played {
+  top: 20px;
   bottom: 0;
-  background: repeating-linear-gradient(135deg, var(--muted) 0 6px, transparent 6px 12px);
-  opacity: 0.9;
+  background: color-mix(in oklch, var(--primary) 9%, transparent);
+  pointer-events: none;
+}
+.timeline .trimmed {
+  top: 20px;
+  bottom: 0;
+  background: color-mix(in oklch, var(--background) 72%, transparent);
+  backdrop-filter: grayscale(1);
+  z-index: 2;
+  pointer-events: none;
 }
 .timeline .cut {
-  top: 0;
+  top: 20px;
   bottom: 0;
-  background: color-mix(in oklch, var(--danger) 18%, transparent);
+  z-index: 2;
+  background: repeating-linear-gradient(135deg, color-mix(in oklch, var(--danger) 22%, transparent) 0 6px, color-mix(in oklch, var(--danger) 10%, transparent) 6px 12px);
   border-inline: 1px solid var(--danger);
 }
 .cut-remove {
   position: absolute;
-  top: 2px;
-  right: 2px;
-  width: 16px;
-  height: 16px;
+  top: 3px;
+  right: 3px;
+  width: 18px;
+  height: 18px;
   padding: 0;
   border: 0;
-  border-radius: 4px;
+  border-radius: 50%;
   background: var(--danger);
   color: var(--on-danger, #fff);
-  font: 600 11px/16px var(--font-ui);
+  font: 700 12px/18px var(--font-ui);
   cursor: pointer;
 }
 .timeline .speech {
-  bottom: 4px;
-  height: 6px;
-  border-radius: 3px;
-  background: color-mix(in oklch, var(--primary) 55%, transparent);
+  top: 54px;
+  height: 10px;
+  border-radius: 5px;
+  background: var(--primary);
+  opacity: 0.75;
 }
 .timeline .mark {
-  top: 6px;
-  width: 2px;
-  height: 18px;
-  margin-left: -1px;
+  top: 32px;
+  width: 8px;
+  height: 8px;
+  margin-left: -4px;
+  border-radius: 50%;
   background: var(--muted-foreground);
+  box-shadow: 0 0 0 2px var(--card);
 }
 .timeline .mark[data-kind='error'] {
   background: var(--danger);
-  width: 3px;
 }
 .timeline .mark[data-kind='note'] {
-  top: 4px;
-  width: 10px;
-  height: 10px;
-  margin-left: -5px;
-  border-radius: 50%;
+  top: 28px;
+  width: 12px;
+  height: 12px;
+  margin-left: -6px;
+  border-radius: 3px;
   background: var(--warning, #f5a524);
+  transform: rotate(45deg);
 }
 .timeline .selection {
-  top: 0;
+  top: 20px;
   bottom: 0;
-  background: color-mix(in oklch, var(--primary) 22%, transparent);
-  border-inline: 1px solid var(--primary);
+  z-index: 2;
+  background: color-mix(in oklch, var(--primary) 20%, transparent);
+  border-inline: 2px solid var(--primary);
 }
 .timeline .handle {
-  top: -3px;
-  bottom: -3px;
-  width: 8px;
-  margin-left: -4px;
-  border-radius: 3px;
+  top: 18px;
+  bottom: -2px;
+  z-index: 3;
+  width: 12px;
+  margin-left: -6px;
+  border-radius: 4px;
   background: var(--foreground);
   cursor: ew-resize;
+  box-shadow: var(--app-shadow-xs);
+}
+.timeline .handle::before,
+.timeline .handle::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  width: 1.5px;
+  height: 14px;
+  margin-top: -7px;
+  border-radius: 1px;
+  background: var(--background);
+}
+.timeline .handle::before {
+  left: 3.5px;
+}
+.timeline .handle::after {
+  right: 3.5px;
 }
 .timeline .playhead {
-  top: -4px;
+  top: 4px;
   bottom: -4px;
+  z-index: 4;
   width: 2px;
   margin-left: -1px;
   background: var(--primary);
   pointer-events: none;
+}
+.timeline .playhead::before {
+  content: '';
+  position: absolute;
+  top: -2px;
+  left: -5px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--primary);
+  box-shadow: 0 0 0 2px var(--card);
+}
+.hover-time {
+  top: -24px;
+  z-index: 5;
+  padding: 2px 6px;
+  border-radius: 6px;
+  transform: translateX(-50%);
+  background: var(--foreground);
+  color: var(--background);
+  font: 600 11px/16px var(--font-ui);
+  pointer-events: none;
+  white-space: nowrap;
 }
 .note-draft {
   display: grid;
