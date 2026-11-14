@@ -5,8 +5,9 @@
 #   sh install.sh 0.2.0        # a specific version
 #   LENS_DOWNLOAD_BASE=http://127.0.0.1:8000 sh install.sh 0.2.0   # a local release folder (tests)
 #
-# It writes one file, ~/.local/bin/lens (LENS_BIN_DIR changes it), plus the browsers' per-user
-# native messaging manifests. Remove Lens with: lens unregister && rm ~/.local/bin/lens
+# It writes one file, ~/.local/bin/lens (LENS_BIN_DIR changes it), the browsers' per-user native
+# messaging manifests, and a login service for this user (launchd or systemd, no root).
+# Remove Lens with: lens service uninstall && lens unregister && rm ~/.local/bin/lens
 set -eu
 
 repo=${LENS_REPO:-VKrachun/native-browser-lens}
@@ -54,6 +55,7 @@ install -m 0755 "$work/sirv-lens-$version-$target/lens" "$bin_dir/.lens.new"
 mv -f "$bin_dir/.lens.new" "$bin_dir/lens"
 "$bin_dir/lens" stop >/dev/null 2>&1 || true
 "$bin_dir/lens" register
+"$bin_dir/lens" service install
 
 echo
 echo "Lens $version is installed in $bin_dir/lens."

@@ -96,7 +96,7 @@ jobs:
           name="sirv-lens-$version-$target"
           mkdir -p "release/$name"
           if [[ "$RUNNER_OS" == "Windows" ]]; then
-            cp target/debug/lens.exe "release/$name/"
+            cp target/debug/lens.exe target/debug/lensw.exe "release/$name/"
             (cd release && 7z a -tzip "$name.zip" "$name" >/dev/null)
           else
             cp target/debug/lens "release/$name/"
@@ -131,6 +131,45 @@ jobs:
             if (-not (Test-Path $exe)) { throw "lens.exe is missing after $shell" }
             $key = 'HKCU:\Software\Google\Chrome\NativeMessagingHosts\studio.sirv.lens'
             if (-not (Test-Path $key)) { throw "the Chrome registration is missing after $shell" }
+            & $exe service uninstall
+            & $exe stop
             & $exe unregister
             if (Test-Path $key) { throw 'lens unregister left the Chrome registration' }
           }
+
+  service:
+    name: service ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15, windows-2025]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Rust toolchain (from rust-toolchain.toml)
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - name: Build lens and lensw
+        run: cargo build --locked
+      - name: Install, stop, start, restart, uninstall
+        shell: bash
+        run: |
+          set -x
+          lens=target/debug/lens
+          [[ "$RUNNER_OS" == "Windows" ]] && lens=target/debug/lens.exe
+          wait_for() { for _ in $(seq 50); do "$lens" status | grep -q "daemon           $1" && return; sleep 0.2; done; "$lens" status; return 1; }
+          "$lens" service install
+          "$lens" status | grep "service          starts at login"
+          wait_for running
+          "$lens" stop
+          wait_for stopped
+          sleep 3   # a service manager that restarted a clean exit would bring it back here
+          wait_for stopped
+          "$lens" start
+          wait_for running
+          "$lens" restart
+          wait_for running
+          "$lens" service uninstall
+          "$lens" status | grep "service          not installed"
+          "$lens" stop

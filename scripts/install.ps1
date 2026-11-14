@@ -4,7 +4,7 @@
 #
 # It writes %LOCALAPPDATA%\Programs\Sirv Lens\lens.exe, adds that folder to the user PATH, and
 # registers the browsers in HKCU. No administrator rights. Remove Lens with:
-#   lens unregister; Remove-Item -Recurse "$env:LOCALAPPDATA\Programs\Sirv Lens"
+#   lens service uninstall; lens unregister; Remove-Item -Recurse "$env:LOCALAPPDATA\Programs\Sirv Lens"
 $ErrorActionPreference = 'Stop'
 # Windows PowerShell 5.1 runs `irm | iex` by default: no PowerShell 7 syntax below, and TLS 1.2 on.
 [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
@@ -46,12 +46,14 @@ try {
     $exe = Join-Path $dir 'lens.exe'
     if (Test-Path $exe) { & $exe stop 2>$null | Out-Null }
     Copy-Item -Force "$work\sirv-lens-$version-$target\lens.exe" $exe
+    Copy-Item -Force "$work\sirv-lens-$version-$target\lensw.exe" (Join-Path $dir 'lensw.exe')
 
     $path = [Environment]::GetEnvironmentVariable('Path', 'User')
     if (($path -split ';') -notcontains $dir) {
         [Environment]::SetEnvironmentVariable('Path', ($path.TrimEnd(';') + ";$dir").TrimStart(';'), 'User')
     }
     & $exe register
+    & $exe service install
     Write-Host ''
     Write-Host "Lens $version is installed in $exe."
     Write-Host 'Next: add the Lens extension to your browser, open a site, and click the Lens button.'

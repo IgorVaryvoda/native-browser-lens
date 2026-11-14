@@ -39,7 +39,22 @@ fn saved_token() -> Result<Option<String>, ProtocolError> {
 const MAX_SCREENSHOT_BYTES: usize = 12 * 1024 * 1024;
 
 /// Returns `Ok(())` at once when another daemon already holds the lock: the caller then connects to it.
-pub fn run(paths: &Paths) -> std::io::Result<()> {
+/// Appends one line to `lensd.log`; the daemon has no terminal once a service or browser starts it.
+pub fn log(paths: &Paths, line: &str) {
+    use std::io::Write;
+    if let Ok(mut file) = paths.log("lensd.log") {
+        let _ = writeln!(
+            file,
+            "{} pid {}: {line}",
+            now_ms() / 1000,
+            std::process::id()
+        );
+    }
+}
+
+/// `service`: started by the login service, so refresh the browser registrations first. A browser
+/// installed after Lens, or a binary that moved, is then fixed at the next login.
+pub fn run(paths: &Paths, service: bool) -> std::io::Result<()> {
     paths.ensure()?;
     let lock = File::options()
         .create(true)
@@ -51,6 +66,16 @@ pub fn run(paths: &Paths) -> std::io::Result<()> {
         Err(TryLockError::WouldBlock) => return Ok(()),
         Err(TryLockError::Error(e)) => return Err(e),
     }
+    if service {
+        match std::env::current_exe().and_then(|exe| crate::register::register(paths, &exe)) {
+            Ok(_) => {}
+            Err(e) => log(paths, &format!("registration refresh failed: {e}")),
+        }
+    }
+    log(
+        paths,
+        &format!("started, version {}", env!("CARGO_PKG_VERSION")),
+    );
     let store = Store::open(&paths.database()).map_err(std::io::Error::other)?;
     let daemon = Arc::new(Daemon::new(store, paths));
     let listener = ipc::listen(paths).map_err(|e| {
@@ -66,13 +91,14 @@ pub fn run(paths: &Paths) -> std::io::Result<()> {
         match connection {
             Ok(stream) => {
                 let daemon = daemon.clone();
+                let paths = paths.clone();
                 std::thread::spawn(move || {
                     if let Err(e) = serve(&daemon, stream) {
-                        eprintln!("lensd: connection ended: {e}");
+                        log(&paths, &format!("connection ended: {e}"));
                     }
                 });
             }
-            Err(e) => eprintln!("lensd: accept failed: {e}"),
+            Err(e) => log(paths, &format!("accept failed: {e}")),
         }
     }
     drop(lock);
@@ -637,6 +663,7 @@ mod tests {
         let paths = Paths {
             data: dir.path().to_path_buf(),
             runtime: dir.path().join("run"),
+            logs: dir.path().join("logs"),
         };
         let daemon = Daemon::new(store, &paths);
         (dir, daemon)

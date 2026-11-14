@@ -7,6 +7,7 @@ use std::path::PathBuf;
 pub struct Paths {
     pub data: PathBuf,
     pub runtime: PathBuf,
+    pub logs: PathBuf,
 }
 
 impl Paths {
@@ -15,6 +16,7 @@ impl Paths {
             let data = PathBuf::from(home);
             return Ok(Self {
                 runtime: data.join("run"),
+                logs: data.join("logs"),
                 data,
             });
         }
@@ -34,11 +36,25 @@ impl Paths {
             .unwrap_or_else(|| data.join("run"));
         #[cfg(not(all(unix, not(target_os = "macos"))))]
         let runtime = data.join("run");
-        Ok(Self { data, runtime })
+        #[cfg(target_os = "macos")]
+        let logs = base.home_dir().join("Library/Logs/Sirv Lens");
+        #[cfg(windows)]
+        let logs = data.join("logs");
+        // $XDG_STATE_HOME is where the XDG spec puts logs; ~/.local/state when unset.
+        #[cfg(all(unix, not(target_os = "macos")))]
+        let logs = base
+            .state_dir()
+            .map(|s| s.join("sirv-lens"))
+            .unwrap_or_else(|| base.home_dir().join(".local/state/sirv-lens"));
+        Ok(Self {
+            data,
+            runtime,
+            logs,
+        })
     }
 
     pub fn ensure(&self) -> io::Result<()> {
-        for dir in [&self.data, &self.runtime, &self.blobs()] {
+        for dir in [&self.data, &self.runtime, &self.blobs(), &self.logs] {
             private_dir(dir)?;
         }
         Ok(())
@@ -63,6 +79,19 @@ impl Paths {
 
     pub fn blobs(&self) -> PathBuf {
         self.data.join("blobs")
+    }
+
+    /// A log file; it restarts empty when it passes 1 MiB, so logs never grow without bound.
+    pub fn log(&self, name: &str) -> std::io::Result<std::fs::File> {
+        private_dir(&self.logs)?;
+        let path = self.logs.join(name);
+        let full = std::fs::metadata(&path).is_ok_and(|m| m.len() > 1024 * 1024);
+        std::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .append(!full)
+            .truncate(full)
+            .open(path)
     }
 
     pub fn lock(&self) -> PathBuf {

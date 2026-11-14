@@ -1043,6 +1043,7 @@ dependencies = [
  "directories",
  "interprocess",
  "keyring",
+ "libc",
  "rmcp",
  "rusqlite",
  "schemars",

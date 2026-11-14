@@ -121,7 +121,8 @@ try {
   await status.filter({ hasNotText: 'Connecting' }).waitFor({ timeout: 15_000 });
   const statusText = await status.textContent();
   if (!statusText?.startsWith('Connected')) {
-    const read = (name) => (existsSync(join(env.LENS_HOME, name)) ? readFileSync(join(env.LENS_HOME, name), 'utf8') : '(none)');
+    const log = (name) => join(env.LENS_HOME, 'logs', name);
+    const read = (name) => (existsSync(log(name)) ? readFileSync(log(name), 'utf8') : '(none)');
     throw new Error(`side panel: ${statusText}\nlensd.log: ${read('lensd.log')}\nhost.log: ${read('host.log')}`);
   }
 

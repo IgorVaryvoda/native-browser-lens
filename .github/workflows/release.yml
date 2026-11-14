@@ -92,7 +92,7 @@ jobs:
           mkdir -p "dist/$name"
           cp README.md "dist/$name/"
           if [[ "$RUNNER_OS" == "Windows" ]]; then
-            cp target/${{ matrix.target }}/release/lens.exe "dist/$name/"
+            cp target/${{ matrix.target }}/release/lens.exe target/${{ matrix.target }}/release/lensw.exe "dist/$name/"
             (cd dist && 7z a -tzip "$name.zip" "$name" >/dev/null)
           else
             cp target/${{ matrix.target }}/release/lens "dist/$name/"

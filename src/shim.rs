@@ -27,17 +27,9 @@ pub fn run(paths: &Paths) -> io::Result<()> {
 }
 
 /// Browsers discard a host's stderr (Chrome on Windows always), so errors go to `host.log` in the
-/// data folder. It restarts empty past 1 MiB.
+/// log folder.
 fn log(paths: &Paths, line: &str) {
-    let path = paths.data.join("host.log");
-    let full = std::fs::metadata(&path).is_ok_and(|m| m.len() > 1024 * 1024);
-    let file = std::fs::OpenOptions::new()
-        .create(true)
-        .append(!full)
-        .write(true)
-        .truncate(full)
-        .open(&path);
-    if let Ok(mut file) = file {
+    if let Ok(mut file) = paths.log("host.log") {
         let seconds = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs())
@@ -74,13 +66,10 @@ pub fn connect_or_start(paths: &Paths) -> io::Result<Stream> {
 }
 
 /// The daemon outlives the shim: its own process group (Unix), detached and out of the browser's
-/// job object (Windows). Its stderr goes to `lensd.log` in the data folder.
+/// job object (Windows). Its stderr goes to `lensd.log` in the log folder.
 fn spawn_daemon(paths: &Paths) -> io::Result<()> {
     paths.ensure()?;
-    let log = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(paths.data.join("lensd.log"))?;
+    let log = paths.log("lensd.log")?;
     let mut command = Command::new(std::env::current_exe()?);
     command
         .arg("daemon")
