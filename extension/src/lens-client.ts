@@ -4,6 +4,8 @@ import type { Reply } from './protocol/Reply';
 import type { BlobRef } from './protocol/BlobRef';
 
 export const HOST_NAME = 'studio.sirv.lens';
+/** Must equal PROTOCOL_VERSION in src/protocol.rs; a Rust test reads this line. */
+export const PROTOCOL_VERSION = 1;
 
 /** The reply type that answers each request method. */
 type ReplyTo = {
@@ -31,6 +33,8 @@ type ReplyTo = {
   getFiling: 'filing';
   listAgents: 'agents';
   investigate: 'suggestion';
+  announce: 'done';
+  setupStatus: 'setup';
   shutdown: 'stopping';
 };
 // Every protocol method must name its reply here; a new Rust request fails this line first.

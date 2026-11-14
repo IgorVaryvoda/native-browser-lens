@@ -66,6 +66,10 @@ pub enum Request {
         #[ts(type = "number")]
         review: i64,
     },
+    /// The extension says who it is after it connects, and again when its granted sites change.
+    Announce(ClientInfo),
+    /// Every setup step, checked against the real state: service, browsers, extensions, sites.
+    SetupStatus,
     /// Which agent CLIs are installed and signed in.
     ListAgents,
     /// A draft report from Codex or Claude Code over one frozen review. Nothing is saved.
@@ -140,6 +144,8 @@ pub enum Reply {
     Members(Vec<crate::vibeq::Member>),
     Filing(Filing),
     Agents(Vec<crate::investigate::AgentInfo>),
+    Done,
+    Setup(Box<SetupStatus>),
     Suggestion(crate::investigate::Suggestion),
     Stopping,
 }
@@ -208,6 +214,59 @@ pub struct ReviewItem {
     pub recording: Option<BlobRef>,
     /// What failed, as the report states it: HTTP errors, failed requests, console errors.
     pub findings: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ClientInfo {
+    /// chrome, edge, brave, chromium, firefox, or another name the extension detects.
+    pub browser: String,
+    pub extension_version: String,
+    /// A random ID kept in the browser profile, so two profiles count as two clients.
+    pub profile: String,
+    pub protocol: u32,
+    pub granted_origins: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ClientSeen {
+    pub client: ClientInfo,
+    #[ts(type = "number")]
+    pub last_seen: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct BrowserCheck {
+    pub name: String,
+    pub installed: bool,
+    /// The browser can start this Lens binary for the Lens extension.
+    pub registered: bool,
+    /// What is wrong, and what fixes it, when it is not registered.
+    pub problem: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct SetupStatus {
+    pub version: String,
+    pub protocol: u32,
+    pub binary: String,
+    /// launchd, systemd, autostart or login item; null when Lens does not start at login.
+    pub service: Option<String>,
+    pub browsers: Vec<BrowserCheck>,
+    /// Extensions that connected, newest first.
+    pub extensions: Vec<ClientSeen>,
+    pub projects: u32,
+    pub captures: u32,
+    pub vibeq_configured: bool,
+    /// The checklist the terminal and the side panel show, computed here once.
+    pub steps: Vec<crate::setup::Step>,
 }
 
 #[derive(Debug, Serialize, Deserialize, TS)]
@@ -555,5 +614,21 @@ impl ProtocolError {
             code,
             message: message.into(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn the_extension_speaks_this_protocol_version() {
+        let client = include_str!("../extension/src/lens-client.ts");
+        let line = format!(
+            "export const PROTOCOL_VERSION = {};",
+            super::PROTOCOL_VERSION
+        );
+        assert!(
+            client.contains(&line),
+            "extension/src/lens-client.ts must say: {line}"
+        );
     }
 }

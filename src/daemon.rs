@@ -21,6 +21,7 @@ pub struct Daemon {
     downloads: std::path::PathBuf,
     filings: std::path::PathBuf,
     notebook: std::path::PathBuf,
+    paths: Paths,
 }
 
 const TOKEN_ACCOUNT: &str = "vibeq-token";
@@ -168,6 +169,7 @@ impl Daemon {
             downloads: paths.downloads(),
             filings: paths.filings(),
             notebook: paths.data.clone(),
+            paths: paths.clone(),
         }
     }
 
@@ -406,6 +408,34 @@ impl Daemon {
                         })
                         .map_err(storage)?,
                 )
+            }
+            Request::Announce(client) => {
+                if client.profile.is_empty() || client.profile.len() > 64 {
+                    return Err(bad("the profile ID must be 1 to 64 characters"));
+                }
+                store.save_client(&client, now_ms()).map_err(storage)?;
+                Reply::Done
+            }
+            Request::SetupStatus => {
+                let executable = std::env::current_exe().map_err(storage)?;
+                let service = match crate::service::state(&self.paths) {
+                    crate::service::State::Installed { manager } => Some(manager.to_string()),
+                    crate::service::State::NotInstalled => None,
+                };
+                let mut status = SetupStatus {
+                    version: env!("CARGO_PKG_VERSION").into(),
+                    protocol: PROTOCOL_VERSION,
+                    binary: executable.display().to_string(),
+                    service,
+                    browsers: crate::register::check(&self.paths, &executable),
+                    extensions: store.list_clients().map_err(storage)?,
+                    projects: store.count("projects").map_err(storage)?,
+                    captures: store.count("captures").map_err(storage)?,
+                    vibeq_configured: store.setting("vibeq.endpoint").map_err(storage)?.is_some(),
+                    steps: Vec::new(),
+                };
+                status.steps = crate::setup::steps(&status, &self.paths);
+                Reply::Setup(Box::new(status))
             }
             Request::ListAgents => {
                 drop(store);

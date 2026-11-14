@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
-import { LensClient, type LensError } from '@/lens-client';
+import { LensClient, PROTOCOL_VERSION, type LensError } from '@/lens-client';
+import { InstallApp, SetupCard } from './Onboarding';
 import { originOf, send, type Broadcast, type CaptureResult, type TabStatus } from '@/messages';
 import type { Capture } from '@/protocol/Capture';
 import type { Hello } from '@/protocol/Hello';
@@ -31,6 +32,7 @@ export function App() {
   const [site, setSite] = useState<TabStatus | null>(null);
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
+  const [attempt, setAttempt] = useState(0);
 
   const refreshSite = useCallback(async () => {
     const id = await targetTab();
@@ -39,13 +41,23 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    const fail = (error: LensError) => setConnection({ state: 'failed', message: error.message });
+    // Until the app answers, try again every few seconds: installing it continues this panel.
+    let retry: ReturnType<typeof setTimeout> | undefined;
+    let failed = false;
+    const fail = (error: LensError) => {
+      if (failed) return;
+      failed = true;
+      setConnection({ state: 'failed', message: error.message });
+      retry = setTimeout(() => setAttempt((n) => n + 1), 3000);
+    };
     const lens = new LensClient(fail);
     setClient(lens);
     Promise.all([lens.request({ method: 'hello' }), lens.request({ method: 'listObservations' })])
       .then(([hello, list]) => {
         setConnection({ state: 'ready', hello });
         setObservations(list);
+        // The background script connects and announces too, now that the app exists.
+        void send({ kind: 'projectsChanged' }).catch(() => {});
       })
       .catch(fail);
     void refreshSite();
@@ -58,10 +70,11 @@ export function App() {
     };
     browser.runtime.onMessage.addListener(listener);
     return () => {
+      clearTimeout(retry);
       browser.runtime.onMessage.removeListener(listener);
       lens.disconnect();
     };
-  }, [refreshSite]);
+  }, [refreshSite, attempt]);
 
   async function track() {
     if (!client || !site?.origin) return;
@@ -108,6 +121,15 @@ export function App() {
           {connection.state === 'failed' && `Not connected: ${connection.message}`}
         </p>
       </header>
+      {connection.state === 'failed' && <InstallApp reason={connection.message} />}
+      {connection.state === 'ready' && connection.hello.protocol !== PROTOCOL_VERSION && (
+        <p role="alert">
+          {connection.hello.protocol < PROTOCOL_VERSION
+            ? 'The Lens app is older than this extension. Run the install line again to update it.'
+            : 'This extension is older than the Lens app. Update the extension.'}
+        </p>
+      )}
+      {connection.state === 'ready' && client && <SetupCard client={client} refresh={site?.mode ? 1 : 0} />}
       {connection.state === 'ready' && client && (
         <>
           <section aria-label="This site" className="site">

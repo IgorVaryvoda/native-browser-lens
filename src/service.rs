@@ -186,9 +186,11 @@ pub fn install(paths: &Paths, executable: &Path) -> io::Result<()> {
         run("systemctl", &["--user", "daemon-reload"])?;
         // A daemon the browser started earlier holds the lock; stop it so the service owns Lens.
         let _ = crate::stop_daemon(paths);
+        // An absolute path makes systemd link the unit itself, wherever its own config folder is
+        // (a custom XDG_CONFIG_HOME in this shell need not match the user manager's).
         return run(
             "systemctl",
-            &["--user", "enable", "--now", "sirv-lens.service"],
+            &["--user", "enable", "--now", &path.display().to_string()],
         )
         .map(drop);
     }

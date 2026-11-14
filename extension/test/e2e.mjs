@@ -72,7 +72,6 @@ const profile = {
   win32: () => join(work, 'profile'),
 }[process.platform]();
 mkdirSync(profile, { recursive: true });
-execFileSync(bin, ['register'], { env, stdio: 'inherit' });
 
 // The fixture: a checkout whose price request fails with a body that holds a secret.
 const fixture = createServer((request, response) => {
@@ -115,16 +114,28 @@ try {
     site,
   );
 
+  // Extension first: before the app is registered, the panel explains how to install it, and
+  // continues by itself once the app is there.
   const panel = await context.newPage();
   await panel.goto(`chrome-extension://${extensionId}/sidepanel.html?tab=${tabId}`);
+  await panel.getByRole('heading', { name: 'One more step: the Lens app' }).waitFor({ timeout: 15_000 });
+  execFileSync(bin, ['register'], { env, stdio: 'inherit' });
   const status = panel.getByRole('status', { name: 'Connection' });
-  await status.filter({ hasNotText: 'Connecting' }).waitFor({ timeout: 15_000 });
-  const statusText = await status.textContent();
-  if (!statusText?.startsWith('Connected')) {
+  const connected = await status
+    .filter({ hasText: /^Connected/ })
+    .waitFor({ timeout: 20_000 })
+    .then(() => true, () => false);
+  if (!connected) {
     const log = (name) => join(env.LENS_HOME, 'logs', name);
     const read = (name) => (existsSync(log(name)) ? readFileSync(log(name), 'utf8') : '(none)');
-    throw new Error(`side panel: ${statusText}\nlensd.log: ${read('lensd.log')}\nhost.log: ${read('host.log')}`);
+    throw new Error(`side panel: ${await status.textContent()}\nlensd.log: ${read('lensd.log')}\nhost.log: ${read('host.log')}`);
   }
+
+  // The setup card shows the app's checklist; the background script announced the extension.
+  await panel
+    .getByRole('region', { name: 'Setup' })
+    .locator('li[data-mark="done"]', { hasText: 'Browser extension' })
+    .waitFor({ timeout: 15_000 });
 
   // Track the site: a project for its origin, and the debugger attaches to the tab.
   await panel.getByRole('button', { name: 'Collect evidence on this site' }).click();

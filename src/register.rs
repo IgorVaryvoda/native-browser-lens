@@ -2,6 +2,7 @@
 //! macOS and Linux: one manifest file per browser. Windows: the manifest in the data folder plus
 //! an HKCU registry key per browser that points at it.
 use crate::paths::Paths;
+use crate::protocol::BrowserCheck;
 use serde_json::json;
 use std::io;
 use std::path::Path;
@@ -238,6 +239,125 @@ pub fn unregister(paths: &Paths) -> io::Result<Report> {
     Ok(report)
 }
 
+/// Whether a manifest registers this binary for the Lens extensions.
+fn manifest_problem(path: &Path, family: Family, executable: &Path) -> Option<String> {
+    let Ok(bytes) = std::fs::read(path) else {
+        return Some("not registered; run lens register".into());
+    };
+    let Ok(found) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
+        return Some("the registration is damaged; run lens register".into());
+    };
+    let expected = manifest(family, executable);
+    if found["path"] != expected["path"] {
+        return Some(format!(
+            "registered for {}, not this Lens; run lens register",
+            found["path"].as_str().unwrap_or("another program")
+        ));
+    }
+    let key = match family {
+        Family::Chromium => "allowed_origins",
+        Family::Firefox => "allowed_extensions",
+    };
+    let allowed = found[key].as_array().cloned().unwrap_or_default();
+    let missing = expected[key]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .any(|id| !allowed.contains(id));
+    missing.then(|| "registered for an older Lens extension; run lens register".into())
+}
+
+/// Every browser this system has, and whether it can start this binary for the extension.
+#[cfg(unix)]
+pub fn check(_paths: &Paths, executable: &Path) -> Vec<BrowserCheck> {
+    let Ok((home, config)) = home_and_config() else {
+        return Vec::new();
+    };
+    let mut checks: Vec<BrowserCheck> = browsers(&home, &config)
+        .iter()
+        .filter(|b| b.root.is_dir())
+        .map(|b| {
+            let problem = manifest_problem(&manifest_path(b), b.family, executable);
+            BrowserCheck {
+                name: b.name.into(),
+                installed: true,
+                registered: problem.is_none(),
+                problem,
+            }
+        })
+        .collect();
+    // Sandboxed packages cannot start a program outside their sandbox through a plain manifest.
+    #[cfg(not(target_os = "macos"))]
+    for (name, folder) in [
+        ("Firefox (Flatpak)", ".var/app/org.mozilla.firefox"),
+        ("Google Chrome (Flatpak)", ".var/app/com.google.Chrome"),
+        ("Chromium (Flatpak)", ".var/app/org.chromium.Chromium"),
+        ("Brave (Flatpak)", ".var/app/com.brave.Browser"),
+        ("Firefox (Snap)", "snap/firefox"),
+        ("Chromium (Snap)", "snap/chromium"),
+    ] {
+        if home.join(folder).is_dir() {
+            checks.push(BrowserCheck {
+                name: name.into(),
+                installed: true,
+                registered: false,
+                problem: Some(
+                    "a sandboxed browser cannot start Lens yet; use this browser's system package"
+                        .into(),
+                ),
+            });
+        }
+    }
+    checks
+}
+
+#[cfg(windows)]
+pub fn check(_paths: &Paths, executable: &Path) -> Vec<BrowserCheck> {
+    use winreg::{
+        RegKey,
+        enums::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE},
+    };
+    let app_path = |exe: &str| {
+        [HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE]
+            .into_iter()
+            .any(|root| {
+                RegKey::predef(root)
+                    .open_subkey(format!(
+                        r"Software\Microsoft\Windows\CurrentVersion\App Paths\{exe}"
+                    ))
+                    .is_ok()
+            })
+    };
+    let local = std::env::var_os("LOCALAPPDATA").map(PathBuf::from);
+    browsers()
+        .into_iter()
+        .filter(|b| match b.name {
+            "Google Chrome" => app_path("chrome.exe"),
+            "Microsoft Edge" => app_path("msedge.exe"),
+            "Brave" => app_path("brave.exe"),
+            "Firefox" => app_path("firefox.exe"),
+            _ => local
+                .as_ref()
+                .is_some_and(|l| l.join(r"Chromium\Application\chrome.exe").is_file()),
+        })
+        .map(|b| {
+            let manifest = RegKey::predef(HKEY_CURRENT_USER)
+                .open_subkey(format!(r"{}\{HOST_NAME}", b.registry_key))
+                .and_then(|k| k.get_value::<String, _>(""));
+            let problem = match manifest {
+                Ok(path) => manifest_problem(Path::new(&path), b.family, executable),
+                Err(_) => Some("not registered; run lens register".into()),
+            };
+            BrowserCheck {
+                name: b.name.into(),
+                installed: true,
+                registered: problem.is_none(),
+                problem,
+            }
+        })
+        .collect()
+}
+
 fn write_atomically(path: &Path, body: &[u8]) -> io::Result<()> {
     let temporary = path.with_extension("json.tmp");
     std::fs::write(&temporary, body)?;
@@ -279,6 +399,34 @@ mod tests {
                 .root
                 .exists()
         );
+    }
+
+    #[test]
+    fn checks_find_missing_moved_and_current_registrations() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("host.json");
+        let lens = Path::new("/opt/lens/lens");
+        assert!(
+            manifest_problem(&path, Family::Chromium, lens)
+                .unwrap()
+                .contains("not registered")
+        );
+        std::fs::write(
+            &path,
+            serde_json::to_vec(&manifest(Family::Chromium, Path::new("/old/lens"))).unwrap(),
+        )
+        .unwrap();
+        assert!(
+            manifest_problem(&path, Family::Chromium, lens)
+                .unwrap()
+                .contains("/old/lens")
+        );
+        std::fs::write(
+            &path,
+            serde_json::to_vec(&manifest(Family::Chromium, lens)).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(manifest_problem(&path, Family::Chromium, lens), None);
     }
 
     #[test]

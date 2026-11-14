@@ -1,7 +1,7 @@
 use crate::filing::Attempt;
 use crate::protocol::{
-    BlobRef, Capture, CaptureMode, Observation, ObservationSummary, Project, Review, ReviewSummary,
-    Shape,
+    BlobRef, Capture, CaptureMode, ClientInfo, ClientSeen, Observation, ObservationSummary,
+    Project, Review, ReviewSummary, Shape,
 };
 use rusqlite::{Connection, params};
 use std::path::Path;
@@ -52,6 +52,11 @@ const MIGRATIONS: &[&str] = &[
         review_id INTEGER PRIMARY KEY REFERENCES reviews(id) ON DELETE CASCADE,
         observation_id INTEGER NOT NULL,
         body TEXT NOT NULL
+    );",
+    "CREATE TABLE clients (
+        profile TEXT PRIMARY KEY,
+        body TEXT NOT NULL,
+        last_seen INTEGER NOT NULL
     );",
 ];
 
@@ -291,6 +296,39 @@ impl Store {
             }
         }
         Ok(reviews)
+    }
+
+    pub fn save_client(&self, client: &ClientInfo, now: i64) -> rusqlite::Result<()> {
+        let body = serde_json::to_string(client).expect("clients serialize");
+        self.db.execute(
+            "INSERT INTO clients (profile, body, last_seen) VALUES (?1, ?2, ?3)
+             ON CONFLICT(profile) DO UPDATE SET body = excluded.body, last_seen = excluded.last_seen",
+            params![client.profile, body, now],
+        )?;
+        Ok(())
+    }
+
+    pub fn list_clients(&self) -> rusqlite::Result<Vec<ClientSeen>> {
+        let mut statement = self
+            .db
+            .prepare("SELECT body, last_seen FROM clients ORDER BY last_seen DESC")?;
+        let rows = statement.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get(1)?)))?;
+        let mut clients = Vec::new();
+        for row in rows {
+            let (body, last_seen) = row?;
+            if let Ok(client) = serde_json::from_str(&body) {
+                clients.push(ClientSeen { client, last_seen });
+            }
+        }
+        Ok(clients)
+    }
+
+    pub fn count(&self, table: &str) -> rusqlite::Result<u32> {
+        // `table` is one of this file's own names, never input.
+        self.db
+            .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+                row.get(0)
+            })
     }
 
     pub fn setting(&self, key: &str) -> rusqlite::Result<Option<String>> {

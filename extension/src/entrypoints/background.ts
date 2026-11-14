@@ -3,6 +3,7 @@ import { DeepCollector } from '@/collector/deep';
 import { LimitedCollector } from '@/collector/limited';
 import { sanitizeUrl } from '@/collector/sanitize';
 import { LensClient } from '@/lens-client';
+import { clientInfo } from '@/identity';
 import { originOf, type BackgroundRequest, type Broadcast, type CaptureResult, type TabStatus } from '@/messages';
 import type { Project } from '@/protocol/Project';
 import type { JsonValue } from '@/protocol/serde_json/JsonValue';
@@ -100,6 +101,8 @@ export default defineBackground(() => {
   async function loadProjects() {
     try {
       projects = await client().request({ method: 'listProjects' });
+      // Setup's checklist learns from this that the extension is installed, connected and current.
+      await client().request({ method: 'announce', params: await clientInfo() });
     } catch {
       projects = [];
     }
@@ -189,8 +192,8 @@ export default defineBackground(() => {
     urls.delete(tabId);
     void deep?.detach(tabId);
   });
-  browser.permissions.onAdded.addListener(() => void syncAll());
-  browser.permissions.onRemoved.addListener(() => void syncAll());
+  browser.permissions.onAdded.addListener(() => void loadProjects());
+  browser.permissions.onRemoved.addListener(() => void loadProjects());
 
   // The toolbar button opens the notebook beside the page; the shortcut also captures at once.
   if (import.meta.env.FIREFOX) {
