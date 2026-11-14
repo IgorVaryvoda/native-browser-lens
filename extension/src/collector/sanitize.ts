@@ -28,14 +28,20 @@ export function sanitizeText(text: string): string {
   return redactContent(text.slice(0, MAX_TEXT));
 }
 
-/** The content rules without the length cap, for text that must stay whole (DOM recordings). */
+/**
+ * The content rules without the length cap, for text that must stay whole (DOM recordings). Every
+ * pattern is linear: the one open-ended prefix starts at a word boundary and is bounded, so a long
+ * run of word characters cannot make it backtrack quadratically.
+ */
 export function redactContent(text: string): string {
   return text
     .replace(/\b(Bearer|Basic)\s+[A-Za-z0-9._~+/-]+=*/gi, `$1 ${REDACTED}`)
     .replace(
-      /((?:authorization|cookie|password|passwd|secret|[\w-]*token|api[_-]?key|session[_-]?id|csrf|xsrf)\s*["']?\s*[:=]\s*["']?)[^\s"'&,;}]+/gi,
+      /((?:authorization|cookie|password|passwd|secret|\b[\w-]{0,64}?token|api[_-]?key|session[_-]?id|csrf|xsrf)\s{0,8}["']?\s{0,8}[:=]\s{0,8}["']?)[^\s"'&,;}]+/gi,
       `$1${REDACTED}`,
     )
+    // Signed-URL and OAuth query keys wherever a URL sits inside text: CSS url(), srcset, scripts.
+    .replace(/([?&;](?:code|state|sig|signature|key|auth|jwt|otp|x-(?:amz|goog)-[\w-]{1,40})=)[^&\s"'#)]+/gi, `$1${REDACTED}`)
     .replace(/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g, REDACTED)
     .replace(/\bsk-[A-Za-z0-9_-]{16,}\b/g, REDACTED);
 }
