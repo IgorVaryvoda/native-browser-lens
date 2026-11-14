@@ -1,16 +1,41 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { LensClient, type LensError } from '@/lens-client';
+import { originOf, send, type Broadcast, type CaptureResult, type TabStatus } from '@/messages';
+import type { Capture } from '@/protocol/Capture';
 import type { Hello } from '@/protocol/Hello';
 import type { Observation } from '@/protocol/Observation';
 
 type Connection = { state: 'connecting' } | { state: 'ready'; hello: Hello } | { state: 'failed'; message: string };
 
+const MODE_LABEL = {
+  deep: 'Collecting network, console and errors',
+  limited: 'Collecting network metadata (this browser has no debugger)',
+  screenshotOnly: 'Screenshots only: the browser refused the debugger',
+} as const;
+
+/** The tab this panel works on: `?tab=` when given, else the active tab of the panel's window. */
+async function targetTab(): Promise<number | null> {
+  const pinned = Number(new URLSearchParams(location.search).get('tab'));
+  if (pinned) return pinned;
+  const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
+  return tab?.id ?? null;
+}
+
 export function App() {
   const [client, setClient] = useState<LensClient | null>(null);
   const [connection, setConnection] = useState<Connection>({ state: 'connecting' });
   const [observations, setObservations] = useState<Observation[]>([]);
-  const [title, setTitle] = useState('');
+  const [selected, setSelected] = useState<number | null>(null);
+  const [tabId, setTabId] = useState<number | null>(null);
+  const [site, setSite] = useState<TabStatus | null>(null);
+  const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
+
+  const refreshSite = useCallback(async () => {
+    const id = await targetTab();
+    setTabId(id);
+    setSite(id === null ? null : await send<TabStatus>({ kind: 'tabStatus', tabId: id }).catch(() => null));
+  }, []);
 
   useEffect(() => {
     const fail = (error: LensError) => setConnection({ state: 'failed', message: error.message });
@@ -22,24 +47,49 @@ export function App() {
         setObservations(list);
       })
       .catch(fail);
-    return () => lens.disconnect();
-  }, []);
+    void refreshSite();
+    const listener = (message: Broadcast) => {
+      if (message.kind === 'tabChanged') void refreshSite();
+      if (message.kind === 'captured') {
+        void lens.request({ method: 'listObservations' }).then(setObservations);
+        setSelected(message.capture.observation);
+      }
+    };
+    browser.runtime.onMessage.addListener(listener);
+    return () => {
+      browser.runtime.onMessage.removeListener(listener);
+      lens.disconnect();
+    };
+  }, [refreshSite]);
 
-  async function create(event: FormEvent) {
-    event.preventDefault();
-    if (!client) return;
+  async function track() {
+    if (!client || !site?.origin) return;
+    const origin = site.origin;
+    // The permission prompt must open inside the click, before any other await.
+    const granted = await browser.permissions.request({ origins: [`${origin}/*`] });
+    if (!granted) return setProblem(`Lens may not read ${origin}.`);
     try {
-      const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
-      const observation = await client.request({
-        method: 'createObservation',
-        params: { title, url: tab?.url?.startsWith('http') ? tab.url : null },
-      });
-      setObservations((list) => [observation, ...list]);
-      setTitle('');
+      if (site.projectId === null) {
+        await client.request({
+          method: 'saveProject',
+          params: { id: null, name: new URL(origin).host, origins: [origin], enabled: true },
+        });
+      }
+      await send({ kind: 'projectsChanged' });
+      await refreshSite();
       setProblem(null);
     } catch (error) {
       setProblem((error as Error).message);
     }
+  }
+
+  async function capture() {
+    if (tabId === null) return;
+    setBusy(true);
+    const result = await send<CaptureResult>({ kind: 'capture', tabId, observation: selected });
+    setBusy(false);
+    if (!result.ok) return setProblem(`Capture failed: ${result.error}`);
+    setProblem(null);
   }
 
   return (
@@ -52,23 +102,38 @@ export function App() {
           {connection.state === 'failed' && `Not connected: ${connection.message}`}
         </p>
       </header>
-      {connection.state === 'ready' && (
+      {connection.state === 'ready' && client && (
         <>
-          <form onSubmit={create}>
-            <label htmlFor="title">New observation</label>
-            <div className="row">
-              <input id="title" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="What is wrong?" />
-              <button type="submit" disabled={!title.trim()}>
-                Add
-              </button>
-            </div>
+          <section aria-label="This site" className="site">
+            {site?.origin ? (
+              <>
+                <p className="origin">{site.origin}</p>
+                {site.mode ? (
+                  <p className="mode" data-mode={site.mode}>
+                    {MODE_LABEL[site.mode]}
+                  </p>
+                ) : (
+                  <button type="button" onClick={track}>
+                    Collect evidence on this site
+                  </button>
+                )}
+              </>
+            ) : (
+              <p className="mode">Lens works on http and https pages.</p>
+            )}
+            <button type="button" className="primary" onClick={capture} disabled={busy || !site?.origin}>
+              {busy ? 'Capturing…' : selected === null ? 'Capture to a new observation' : 'Capture to this observation'}
+            </button>
             {problem && <p role="alert">{problem}</p>}
-          </form>
+          </section>
           <ul aria-label="Observations">
             {observations.map((o) => (
-              <li key={o.id}>
-                <strong>{o.title}</strong>
-                {o.url && <span className="url">{o.url}</span>}
+              <li key={o.id} aria-current={o.id === selected}>
+                <button type="button" className="observation" onClick={() => setSelected(o.id === selected ? null : o.id)}>
+                  <strong>{o.title}</strong>
+                  {o.url && <span className="url">{originOf(o.url) ?? o.url}</span>}
+                </button>
+                {o.id === selected && <Captures client={client} observation={o.id} />}
               </li>
             ))}
           </ul>
@@ -76,4 +141,42 @@ export function App() {
       )}
     </main>
   );
+}
+
+function Captures({ client, observation }: { client: LensClient; observation: number }) {
+  const [captures, setCaptures] = useState<Capture[]>([]);
+  useEffect(() => {
+    const load = () => void client.request({ method: 'listCaptures', params: { observation } }).then(setCaptures);
+    load();
+    const listener = (message: Broadcast) => {
+      if (message.kind === 'captured' && message.capture.observation === observation) load();
+    };
+    browser.runtime.onMessage.addListener(listener);
+    return () => browser.runtime.onMessage.removeListener(listener);
+  }, [client, observation]);
+  if (!captures.length) return <p className="empty">No captures yet.</p>;
+  return (
+    <ol aria-label="Captures" className="captures">
+      {captures.map((c) => (
+        <li key={c.id}>
+          <Screenshot client={client} capture={c} />
+          <span className="facts">
+            {c.eventCount} events · {c.gapCount} gaps · {c.mode}
+          </span>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+function Screenshot({ client, capture }: { client: LensClient; capture: Capture }) {
+  const [src, setSrc] = useState<string | null>(null);
+  useEffect(() => {
+    let url: string | null = null;
+    void client.readBlob(capture.screenshot).then((blob) => setSrc((url = URL.createObjectURL(blob))));
+    return () => {
+      if (url) URL.revokeObjectURL(url);
+    };
+  }, [client, capture.screenshot]);
+  return src ? <img src={src} alt={`Screenshot of ${capture.pageTitle || capture.pageUrl}`} /> : <div className="placeholder" />;
 }

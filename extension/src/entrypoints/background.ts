@@ -1,10 +1,177 @@
+import { EvidenceBuffer } from '@/collector/buffer';
+import { DeepCollector } from '@/collector/deep';
+import { LimitedCollector } from '@/collector/limited';
+import { sanitizeUrl } from '@/collector/sanitize';
+import { LensClient } from '@/lens-client';
+import { originOf, type BackgroundRequest, type Broadcast, type CaptureResult, type TabStatus } from '@/messages';
+import type { Project } from '@/protocol/Project';
+import type { JsonValue } from '@/protocol/serde_json/JsonValue';
+
 export default defineBackground(() => {
-  // The toolbar button opens the notebook beside the page.
+  const buffer = new EvidenceBuffer();
+  const urls = new Map<number, string>();
+  const deep = DeepCollector.available() ? new DeepCollector(buffer, (tabId) => urls.get(tabId)) : undefined;
+  if (!deep) new LimitedCollector(buffer, (tabId) => buffer.mode(tabId) !== undefined).listen();
+
+  let projects: Project[] = [];
+  let lens: LensClient | null = null;
+  const client = () => (lens ??= new LensClient(() => (lens = null)));
+
+  const projectFor = (origin: string | null) =>
+    origin ? projects.find((p) => p.enabled && p.origins.includes(origin)) : undefined;
+  const permitted = (origin: string | null) =>
+    origin ? browser.permissions.contains({ origins: [`${origin}/*`] }) : Promise.resolve(false);
+
+  /** Starts or stops collection on a tab to match the projects and the granted origins. */
+  async function sync(tabId: number, url: string | undefined) {
+    if (url) urls.set(tabId, url);
+    const origin = originOf(url);
+    if (!projectFor(origin) || !(await permitted(origin))) {
+      buffer.stop(tabId);
+      await deep?.detach(tabId);
+      return;
+    }
+    if (buffer.mode(tabId) !== undefined && (!deep || deep.isAttached(tabId))) return;
+    if (!deep) return buffer.start(tabId, 'limited');
+    buffer.start(tabId, 'deep');
+    try {
+      await deep.attach(tabId);
+    } catch (error) {
+      buffer.start(tabId, 'screenshotOnly');
+      buffer.gap(tabId, 'debugger', `The browser refused the debugger: ${(error as Error).message}`);
+    }
+  }
+
+  async function syncAll() {
+    for (const tab of await browser.tabs.query({})) if (tab.id !== undefined) await sync(tab.id, tab.url);
+  }
+
+  async function loadProjects() {
+    try {
+      projects = await client().request({ method: 'listProjects' });
+    } catch {
+      projects = [];
+    }
+    await syncAll();
+  }
+
+  async function status(tabId: number): Promise<TabStatus> {
+    const tab = await browser.tabs.get(tabId);
+    const origin = originOf(tab.url);
+    return {
+      origin,
+      projectId: projectFor(origin)?.id ?? null,
+      permitted: await permitted(origin),
+      mode: buffer.mode(tabId) ?? null,
+    };
+  }
+
+  async function capture(tabId: number, observation: number | null): Promise<CaptureResult> {
+    try {
+      const tab = await browser.tabs.get(tabId);
+      const screenshot = await takeScreenshot(tab);
+      const snapshot = buffer.snapshot(tabId) ?? {
+        mode: 'screenshotOnly' as const,
+        events: [],
+        gaps: [{ channel: 'collector', reason: 'Lens does not collect evidence on this site', startedAt: Date.now(), endedAt: null }],
+      };
+      const page = await pageSnapshot(tabId).catch((error: Error) => {
+        snapshot.gaps.push({ channel: 'page', reason: error.message, startedAt: Date.now(), endedAt: null });
+        return null;
+      });
+      const saved = await client().request({
+        method: 'createCapture',
+        params: {
+          observation,
+          pageUrl: sanitizeUrl(tab.url ?? ''),
+          pageTitle: tab.title ?? '',
+          screenshot,
+          evidence: { ...snapshot, page },
+        },
+      });
+      void broadcast({ kind: 'captured', capture: saved });
+      return { ok: true, capture: saved };
+    } catch (error) {
+      return { ok: false, error: (error as Error).message };
+    }
+  }
+
+  /** Through the debugger when attached; else the visible tab, which needs activeTab (a toolbar
+   * click or the shortcut) and the tab in front. */
+  async function takeScreenshot(tab: Browser.tabs.Tab): Promise<string> {
+    if (tab.id !== undefined && deep?.isAttached(tab.id)) return deep.screenshot(tab.id);
+    if (!tab.active && tab.id !== undefined) await browser.tabs.update(tab.id, { active: true });
+    const image = await browser.tabs.captureVisibleTab(tab.windowId, { format: 'png' });
+    return image.slice(image.indexOf(',') + 1);
+  }
+
+  browser.runtime.onMessage.addListener((message: BackgroundRequest, _sender, reply) => {
+    const work =
+      message.kind === 'capture'
+        ? capture(message.tabId, message.observation)
+        : message.kind === 'tabStatus'
+          ? status(message.tabId)
+          : loadProjects();
+    work.then(reply, (error: Error) => reply({ ok: false, error: error.message }));
+    return true;
+  });
+
+  browser.tabs.onUpdated.addListener((tabId, change, tab) => {
+    if (change.url && buffer.mode(tabId) !== undefined) buffer.record(tabId, 'navigation', { url: change.url });
+    if (change.url || change.status === 'complete') void sync(tabId, tab.url).then(() => broadcast({ kind: 'tabChanged', tabId }));
+  });
+  browser.tabs.onActivated.addListener(({ tabId }) => void broadcast({ kind: 'tabChanged', tabId }));
+  browser.tabs.onRemoved.addListener((tabId) => {
+    buffer.stop(tabId);
+    urls.delete(tabId);
+    void deep?.detach(tabId);
+  });
+  browser.permissions.onAdded.addListener(() => void syncAll());
+  browser.permissions.onRemoved.addListener(() => void syncAll());
+
+  // The toolbar button opens the notebook beside the page; the shortcut also captures at once.
   if (import.meta.env.FIREFOX) {
-    // Firefox-only API, absent from WXT's Chrome-based types.
-    const { sidebarAction } = browser as unknown as { sidebarAction: { toggle(): Promise<void> } };
+    const { sidebarAction } = browser as unknown as { sidebarAction: { toggle(): Promise<void>; open(): Promise<void> } };
     browser.action.onClicked.addListener(() => sidebarAction.toggle());
+    browser.commands.onCommand.addListener((command, tab) => {
+      if (command !== 'capture' || tab?.id === undefined) return;
+      void sidebarAction.open();
+      void capture(tab.id, null);
+    });
   } else {
     void browser.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
+    browser.commands.onCommand.addListener((command, tab) => {
+      if (command !== 'capture' || tab?.id === undefined) return;
+      void browser.sidePanel.open({ tabId: tab.id });
+      void capture(tab.id, null);
+    });
   }
+
+  void loadProjects();
 });
+
+function broadcast(message: Broadcast) {
+  return browser.runtime.sendMessage(message).catch(() => {});
+}
+
+/** Facts about the page that the screenshot cannot show. Runs in the page's isolated world. */
+async function pageSnapshot(tabId: number) {
+  const [result] = await browser.scripting.executeScript({
+    target: { tabId },
+    func: () => ({
+      title: document.title,
+      viewport: {
+        width: innerWidth,
+        height: innerHeight,
+        devicePixelRatio,
+        scrollX,
+        scrollY,
+      },
+      language: navigator.language,
+      userAgent: navigator.userAgent,
+      buildId:
+        document.querySelector('meta[name="build-sha"],meta[name="git-commit"]')?.getAttribute('content') ?? null,
+    }),
+  });
+  return (result?.result ?? null) as JsonValue | null;
+}

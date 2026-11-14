@@ -15,7 +15,7 @@ lens register                   # target/debug/lens: register with your installe
 cd extension
 pnpm install
 pnpm build                      # .output/chrome-mv3; pnpm build:firefox for Firefox
-pnpm test:e2e                   # real Chromium + extension + shim + daemon, in a temporary home
+LENS_E2E=1 pnpm build && pnpm test:e2e   # real Chromium, extension, shim, daemon, fixture site
 ```
 
 Load `extension/.output/chrome-mv3` with **Load unpacked** in `chrome://extensions` and click the

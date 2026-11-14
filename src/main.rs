@@ -1,3 +1,4 @@
+mod blobs;
 mod daemon;
 mod framing;
 mod ipc;

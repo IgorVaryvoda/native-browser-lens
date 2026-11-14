@@ -1,6 +1,7 @@
 import type { ReplyFrame } from './protocol/ReplyFrame';
 import type { Request } from './protocol/Request';
 import type { Reply } from './protocol/Reply';
+import type { BlobRef } from './protocol/BlobRef';
 
 export const HOST_NAME = 'studio.sirv.lens';
 
@@ -9,6 +10,12 @@ type ReplyTo = {
   hello: 'hello';
   createObservation: 'observation';
   listObservations: 'observations';
+  listProjects: 'projects';
+  saveProject: 'project';
+  deleteProject: 'deleted';
+  createCapture: 'capture';
+  listCaptures: 'captures';
+  readBlob: 'blob';
   shutdown: 'stopping';
 };
 type ReplyData<M extends Request['method']> = Extract<Reply, { type: ReplyTo[M] }> extends { data: infer D } ? D : never;
@@ -57,5 +64,18 @@ export class LensClient {
 
   disconnect() {
     this.port.disconnect();
+  }
+
+  /** A stored blob, read in chunks because host replies stay under 1 MiB. */
+  async readBlob(ref: BlobRef): Promise<Blob> {
+    const parts: Uint8Array<ArrayBuffer>[] = [];
+    for (let offset = 0; offset < ref.size; ) {
+      const chunk = await this.request({ method: 'readBlob', params: { sha256: ref.sha256, offset, length: 512 * 1024 } });
+      const bytes = Uint8Array.from(atob(chunk.data), (c) => c.charCodeAt(0));
+      if (bytes.length === 0) break;
+      parts.push(bytes);
+      offset += bytes.length;
+    }
+    return new Blob(parts, { type: ref.mediaType });
   }
 }

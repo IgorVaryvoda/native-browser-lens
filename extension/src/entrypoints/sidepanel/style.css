@@ -50,3 +50,60 @@ li {
   font-size: 12px;
   overflow-wrap: anywhere;
 }
+button {
+  font: inherit;
+  cursor: pointer;
+}
+.site {
+  display: grid;
+  gap: 6px;
+  padding-bottom: 12px;
+}
+.origin {
+  margin: 0;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.mode {
+  margin: 0;
+  color: var(--muted);
+}
+.primary {
+  padding: 8px;
+  font-weight: 600;
+}
+.observation {
+  all: unset;
+  display: grid;
+  cursor: pointer;
+}
+li[aria-current='true'] > .observation strong {
+  text-decoration: underline;
+}
+.captures {
+  list-style: none;
+  padding: 0;
+  margin: 8px 0 0;
+  display: grid;
+  gap: 8px;
+}
+.captures li {
+  border: 0;
+  padding: 0;
+  gap: 4px;
+}
+.captures img,
+.placeholder {
+  width: 100%;
+  aspect-ratio: 16 / 10;
+  object-fit: cover;
+  object-position: top;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+}
+.facts,
+.empty {
+  color: var(--muted);
+  font-size: 12px;
+  margin: 0;
+}

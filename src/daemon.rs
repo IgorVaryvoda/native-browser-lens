@@ -1,10 +1,13 @@
 //! `lensd`: the one process per user that owns the notebook. Every client talks to it; nothing else
 //! opens the database.
+use crate::blobs::Blobs;
 use crate::framing::{read_frame, write_frame};
 use crate::paths::Paths;
 use crate::protocol::*;
-use crate::store::Store;
+use crate::store::{CaptureRow, Store};
 use crate::{ipc, secrets};
+use base64::Engine;
+use base64::engine::general_purpose::STANDARD as BASE64;
 use interprocess::local_socket::{Stream, prelude::*};
 use std::fs::{File, TryLockError};
 use std::sync::{Arc, Mutex};
@@ -12,8 +15,12 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 pub struct Daemon {
     store: Mutex<Store>,
+    blobs: Blobs,
     data_dir: String,
 }
+
+/// A screenshot of a 4K display at 2x is about 10 MiB of PNG; the request limit leaves room for base64.
+const MAX_SCREENSHOT_BYTES: usize = 12 * 1024 * 1024;
 
 /// Returns `Ok(())` at once when another daemon already holds the lock: the caller then connects to it.
 pub fn run(paths: &Paths) -> std::io::Result<()> {
@@ -29,10 +36,7 @@ pub fn run(paths: &Paths) -> std::io::Result<()> {
         Err(TryLockError::Error(e)) => return Err(e),
     }
     let store = Store::open(&paths.database()).map_err(std::io::Error::other)?;
-    let daemon = Arc::new(Daemon {
-        store: Mutex::new(store),
-        data_dir: paths.data.display().to_string(),
-    });
+    let daemon = Arc::new(Daemon::new(store, paths));
     let listener = ipc::listen(paths)?;
     for connection in listener.incoming() {
         match connection {
@@ -106,39 +110,160 @@ impl Daemon {
         )
     }
 
+    pub fn new(store: Store, paths: &Paths) -> Self {
+        Self {
+            store: Mutex::new(store),
+            blobs: Blobs::new(paths.blobs()),
+            data_dir: paths.data.display().to_string(),
+        }
+    }
+
     fn handle(&self, request: Request) -> Outcome {
-        let store = self
+        match self.reply(request) {
+            Ok(result) => Outcome::Ok { result },
+            Err(error) => Outcome::Error { error },
+        }
+    }
+
+    fn reply(&self, request: Request) -> Result<Reply, ProtocolError> {
+        let mut store = self
             .store
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let result = match request {
-            Request::Hello => Ok(Reply::Hello(Hello {
+        Ok(match request {
+            Request::Hello => Reply::Hello(Hello {
                 version: env!("CARGO_PKG_VERSION").into(),
                 protocol: PROTOCOL_VERSION,
                 data_dir: self.data_dir.clone(),
                 secret_store: secrets::status(),
-            })),
+            }),
             Request::CreateObservation { title, url } => {
                 let title = title.trim();
                 if title.is_empty() {
-                    return Outcome::Error {
-                        error: ProtocolError::new(ErrorCode::BadRequest, "the title is empty"),
-                    };
+                    return Err(bad("the title is empty"));
                 }
-                store
-                    .create_observation(title, url.as_deref(), now_ms())
-                    .map(Reply::Observation)
+                Reply::Observation(
+                    store
+                        .create_observation(title, url.as_deref(), now_ms())
+                        .map_err(storage)?,
+                )
             }
-            Request::ListObservations => store.list_observations().map(Reply::Observations),
-            Request::Shutdown => Ok(Reply::Stopping),
-        };
-        match result {
-            Ok(result) => Outcome::Ok { result },
-            Err(e) => Outcome::Error {
-                error: ProtocolError::new(ErrorCode::Storage, e.to_string()),
+            Request::ListObservations => {
+                Reply::Observations(store.list_observations().map_err(storage)?)
+            }
+            Request::ListProjects => Reply::Projects(store.list_projects().map_err(storage)?),
+            Request::SaveProject(input) => {
+                let name = input.name.trim();
+                if name.is_empty() {
+                    return Err(bad("the project name is empty"));
+                }
+                let mut origins = Vec::new();
+                for origin in &input.origins {
+                    let origin = normalize_origin(origin)?;
+                    if !origins.contains(&origin) {
+                        origins.push(origin);
+                    }
+                }
+                if origins.is_empty() {
+                    return Err(bad("a project needs at least one origin"));
+                }
+                let saved = store
+                    .save_project(input.id, name, &origins, input.enabled)
+                    .map_err(storage)?;
+                Reply::Project(saved.ok_or_else(|| not_found("no such project"))?)
+            }
+            Request::DeleteProject { id } => match store.delete_project(id).map_err(storage)? {
+                true => Reply::Deleted,
+                false => return Err(not_found("no such project")),
             },
-        }
+            Request::CreateCapture(capture) => {
+                let screenshot = BASE64
+                    .decode(capture.screenshot.as_bytes())
+                    .map_err(|e| bad(format!("the screenshot is not base64: {e}")))?;
+                if !screenshot.starts_with(b"\x89PNG\r\n\x1a\n") {
+                    return Err(bad("the screenshot is not a PNG"));
+                }
+                if screenshot.len() > MAX_SCREENSHOT_BYTES {
+                    return Err(ProtocolError::new(
+                        ErrorCode::TooLarge,
+                        "the screenshot exceeds 12 MiB",
+                    ));
+                }
+                let page_url = url::Url::parse(&capture.page_url)
+                    .map_err(|e| bad(format!("the page URL is not valid: {e}")))?;
+                let evidence = serde_json::to_vec(&capture.evidence).expect("evidence serializes");
+                let row = CaptureRow {
+                    created_at: now_ms(),
+                    page_url: page_url.into(),
+                    page_title: capture.page_title,
+                    mode: capture.evidence.mode,
+                    screenshot: self.blobs.put(&screenshot, "image/png").map_err(storage)?,
+                    evidence: self
+                        .blobs
+                        .put(&evidence, "application/json")
+                        .map_err(storage)?,
+                    event_count: capture.evidence.events.len() as u32,
+                    gap_count: capture.evidence.gaps.len() as u32,
+                };
+                let saved = store
+                    .create_capture(capture.observation, row)
+                    .map_err(storage)?;
+                Reply::Capture(saved.ok_or_else(|| not_found("no such observation"))?)
+            }
+            Request::ListCaptures { observation } => {
+                Reply::Captures(store.list_captures(observation).map_err(storage)?)
+            }
+            Request::ReadBlob {
+                sha256,
+                offset,
+                length,
+            } => {
+                drop(store);
+                let (chunk, total_size) = self
+                    .blobs
+                    .read(&sha256, offset, length.min(MAX_BLOB_CHUNK))
+                    .map_err(|e| match e.kind() {
+                        std::io::ErrorKind::NotFound => not_found("no such blob"),
+                        std::io::ErrorKind::InvalidInput => bad(e.to_string()),
+                        _ => storage(e),
+                    })?;
+                Reply::Blob(BlobChunk {
+                    data: BASE64.encode(chunk),
+                    total_size,
+                })
+            }
+            Request::Shutdown => Reply::Stopping,
+        })
     }
+}
+
+fn bad(message: impl Into<String>) -> ProtocolError {
+    ProtocolError::new(ErrorCode::BadRequest, message)
+}
+
+fn not_found(message: impl Into<String>) -> ProtocolError {
+    ProtocolError::new(ErrorCode::NotFound, message)
+}
+
+fn storage(error: impl std::fmt::Display) -> ProtocolError {
+    ProtocolError::new(ErrorCode::Storage, error.to_string())
+}
+
+/// `https://Shop.Example.com:443/` becomes `https://shop.example.com`. Paths, queries, fragments,
+/// credentials and schemes other than http and https are refused, so an origin means one origin.
+pub fn normalize_origin(input: &str) -> Result<String, ProtocolError> {
+    let refused = || {
+        bad(format!(
+            "{input:?} is not an origin such as https://shop.example.com"
+        ))
+    };
+    let url = url::Url::parse(input.trim()).map_err(|_| refused())?;
+    let plain = url.path() == "/" && url.query().is_none() && url.fragment().is_none();
+    let anonymous = url.username().is_empty() && url.password().is_none();
+    if !matches!(url.scheme(), "http" | "https") || !plain || !anonymous || url.host().is_none() {
+        return Err(refused());
+    }
+    Ok(url.origin().ascii_serialization())
 }
 
 fn now_ms() -> i64 {
@@ -155,10 +280,11 @@ mod tests {
     fn daemon() -> (tempfile::TempDir, Daemon) {
         let dir = tempfile::tempdir().unwrap();
         let store = Store::open(&dir.path().join("lens.sqlite")).unwrap();
-        let daemon = Daemon {
-            store: Mutex::new(store),
-            data_dir: dir.path().display().to_string(),
+        let paths = Paths {
+            data: dir.path().to_path_buf(),
+            runtime: dir.path().join("run"),
         };
+        let daemon = Daemon::new(store, &paths);
         (dir, daemon)
     }
 
@@ -194,5 +320,73 @@ mod tests {
 
         assert!(daemon.answer(br#"{"id":11,"method":"shutdown"}"#).1);
         assert!(!daemon.answer(br#"{"id":12,"method":"hello"}"#).1);
+    }
+
+    #[test]
+    fn normalizes_origins_and_refuses_anything_else() {
+        assert_eq!(
+            normalize_origin(" https://Shop.Example.com:443/ ").unwrap(),
+            "https://shop.example.com"
+        );
+        assert_eq!(
+            normalize_origin("http://127.0.0.1:8080").unwrap(),
+            "http://127.0.0.1:8080"
+        );
+        for bad in [
+            "shop.example.com",
+            "https://a.test/cart",
+            "https://a.test/?q=1",
+            "https://u:p@a.test",
+            "file:///etc",
+            "chrome://settings",
+        ] {
+            assert!(normalize_origin(bad).is_err(), "{bad} was accepted");
+        }
+    }
+
+    #[test]
+    fn stores_a_capture_and_serves_its_blobs_in_chunks() {
+        let (_dir, daemon) = daemon();
+        let png = [b"\x89PNG\r\n\x1a\n".as_slice(), &[7u8; 600 * 1024]].concat();
+        let request = serde_json::json!({
+            "id": 1, "method": "createCapture", "params": {
+                "observation": null, "pageUrl": "http://127.0.0.1:4100/cart", "pageTitle": "Cart",
+                "screenshot": BASE64.encode(&png),
+                "evidence": { "mode": "deep", "page": null, "gaps": [],
+                    "events": [{ "timestamp": 1, "kind": "console", "data": { "level": "error" } }] }
+            }
+        });
+        let reply = ask(&daemon, &request.to_string());
+        assert_eq!(reply["status"], "ok", "{reply}");
+        let capture = &reply["result"]["data"];
+        assert_eq!(
+            (capture["eventCount"].as_u64(), capture["mode"].as_str()),
+            (Some(1), Some("deep"))
+        );
+
+        let sha = capture["screenshot"]["sha256"].as_str().unwrap();
+        let mut read = Vec::new();
+        while read.len() < png.len() {
+            let chunk = ask(
+                &daemon,
+                &serde_json::json!({ "id": 2, "method": "readBlob",
+                "params": { "sha256": sha, "offset": read.len(), "length": 1_000_000 } })
+                .to_string(),
+            );
+            let data = BASE64
+                .decode(chunk["result"]["data"]["data"].as_str().unwrap())
+                .unwrap();
+            assert!(data.len() as u32 <= MAX_BLOB_CHUNK && !data.is_empty());
+            read.extend(data);
+        }
+        assert_eq!(read, png);
+
+        let not_png = serde_json::json!({ "id": 3, "method": "createCapture", "params": {
+            "observation": null, "pageUrl": "http://a.test/", "pageTitle": "", "screenshot": BASE64.encode(b"GIF89a"),
+            "evidence": { "mode": "screenshotOnly", "page": null, "gaps": [], "events": [] } } });
+        assert_eq!(
+            ask(&daemon, &not_png.to_string())["error"]["code"],
+            "badRequest"
+        );
     }
 }

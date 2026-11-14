@@ -57,8 +57,11 @@ jobs:
       - name: Chromium for the end-to-end test
         working-directory: extension
         run: pnpm exec playwright-core install chromium
-      - name: End to end (Chromium, extension, shim, daemon)
+      - name: End to end (Chromium, extension, shim, daemon, fixture site)
         working-directory: extension
         env:
+          LENS_E2E: '1'
           LENS_BIN: ${{ github.workspace }}/target/debug/lens${{ runner.os == 'Windows' && '.exe' || '' }}
-        run: pnpm test:e2e
+        run: |
+          pnpm build
+          pnpm test:e2e
