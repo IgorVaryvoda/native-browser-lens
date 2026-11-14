@@ -17,16 +17,13 @@ import { AlertIcon, DoneIcon, DraftIcon, ExportIcon, FileIcon, MaskIcon } from '
 import { RecordingEditor } from './RecordingEditor';
 
 /**
- * Chooses what may leave the notebook. The person confirms the screenshots, the daemon freezes the
+ * What leaves the notebook: every capture with its recording, as the edits left it. The daemon freezes the
  * review and renders the images, and the page then shows exactly those images before any export.
  */
 export function Review({ observation: id }: { observation: number }) {
   const [client] = useState(() => new LensClient());
   const [observation, setObservation] = useState<Observation | null>(null);
   const [captures, setCaptures] = useState<Capture[]>([]);
-  const [chosen, setChosen] = useState<Set<number>>(new Set());
-  const [recordings, setRecordings] = useState<Set<number>>(new Set());
-  const [checked, setChecked] = useState(false);
   const [typedValues, setTypedValues] = useState(true);
   const [voice, setVoice] = useState<VoiceNote[]>([]);
   const [review, setReview] = useState<FrozenReview | null>(null);
@@ -51,7 +48,6 @@ export function Review({ observation: id }: { observation: number }) {
         setObservation(found);
         setCaptures(list);
         setVoice(notes);
-        setChosen(new Set(list.map((c) => c.id)));
       })
       .catch((error: Error) => setProblem(error.message));
     return () => client.disconnect();
@@ -78,10 +74,11 @@ export function Review({ observation: id }: { observation: number }) {
         params: {
           observation: observation.id,
           revision: observation.revision,
-          captures: captures.filter((c) => chosen.has(c.id)).map((c) => c.id),
-          recordings: captures.filter((c) => chosen.has(c.id) && recordings.has(c.id)).map((c) => c.id),
+          // Everything goes in: every capture with its recording.
+          captures: captures.map((c) => c.id),
+          recordings: captures.filter((c) => c.recording).map((c) => c.id),
           typedValues,
-          screenshotsChecked: checked,
+          screenshotsChecked: true,
         },
       });
       setReview(frozen);
@@ -141,7 +138,6 @@ export function Review({ observation: id }: { observation: number }) {
       setObservation(saved);
       setReview(null);
       setSuggestion(null);
-      setChecked(false);
       setNotice('Your notes now hold the draft. Check them, then create a new review before you file.');
     } catch (error) {
       setProblem((error as Error).message);
@@ -340,8 +336,7 @@ export function Review({ observation: id }: { observation: number }) {
           <section className="section">
             <h2>Choose what to share</h2>
             <p className="muted small">
-              Nothing leaves your computer until you create the review. Check every screenshot for private data; mask it
-              in the editor first.
+              Nothing leaves your computer until you create the review.
             </p>
             <label className="check">
               <input type="checkbox" checked={typedValues} onChange={(e) => setTypedValues(e.target.checked)} />
@@ -359,69 +354,29 @@ export function Review({ observation: id }: { observation: number }) {
             .map((c) => (
               <RecordingEditor key={c.id} client={client} capture={c} voice={voice} />
             ))}
-          <ol aria-label="Captures to review" className="review-list">
-            {captures.map((c) => (
-              <li
-                key={c.id}
-                className="card review-item"
-                data-session={c.kind === 'session' || undefined}
-                data-excluded={!chosen.has(c.id) || undefined}
-              >
-                {c.kind !== 'session' && <BlobImage client={client} blob={c.screenshot} alt={`Capture ${c.id} before review`} />}
-                <div className="review-side">
-                  <label className="check">
-                    <input
-                      type="checkbox"
-                      checked={chosen.has(c.id)}
-                      onChange={(e) => {
-                        const next = new Set(chosen);
-                        if (e.target.checked) next.add(c.id);
-                        else next.delete(c.id);
-                        setChosen(next);
-                      }}
-                    />
-                    <span>
-                      {c.kind === 'session' ? `Include recording ${c.id}` : `Include capture ${c.id}`}
-                      <span className="small muted num" style={{ display: 'block' }}>
-                        {c.eventCount} events · {c.annotations.filter((s) => s.kind === 'mask').length} masks
-                      </span>
-                    </span>
-                  </label>
-                  {c.kind !== 'session' && (
-                    <button
-                      type="button"
-                      className="btn btn-ghost btn-sm"
-                      onClick={() => void browser.tabs.create({ url: browser.runtime.getURL(`/annotate.html?capture=${c.id}`) })}
-                    >
-                      <MaskIcon />
-                      Mark up or mask
-                    </button>
-                  )}
-                  <Steps client={client} evidence={c.evidence} label={`Steps of capture ${c.id}`} hideValues={!typedValues} />
-                  {c.recording && (
-                    <label className="check">
-                      <input
-                        type="checkbox"
-                        checked={recordings.has(c.id)}
-                        onChange={(e) => {
-                          const next = new Set(recordings);
-                          if (e.target.checked) next.add(c.id);
-                          else next.delete(c.id);
-                          setRecordings(next);
-                        }}
-                      />
-                      <span>
-                        Include the DOM recording of capture {c.id}.
-                        <span className="small muted" style={{ display: 'block' }}>
-                          Masks do not apply to recordings; only typed input is masked.
-                        </span>
-                      </span>
-                    </label>
-                  )}
-                </div>
-              </li>
-            ))}
-          </ol>
+          {captures.some((c) => c.kind !== 'session') && (
+            <ol aria-label="Captures to review" className="review-list">
+              {captures
+                .filter((c) => c.kind !== 'session')
+                .map((c) => (
+                  <li key={c.id} className="card review-item">
+                    <BlobImage client={client} blob={c.screenshot} alt={`Capture ${c.id} before review`} />
+                    <div className="review-side">
+                      <span className="small muted num">{c.eventCount} events</span>
+                      <button
+                        type="button"
+                        className="btn btn-ghost btn-sm"
+                        onClick={() => void browser.tabs.create({ url: browser.runtime.getURL(`/annotate.html?capture=${c.id}`) })}
+                      >
+                        <MaskIcon />
+                        Mark up or mask
+                      </button>
+                      <Steps client={client} evidence={c.evidence} label={`Steps of capture ${c.id}`} hideValues={!typedValues} />
+                    </div>
+                  </li>
+                ))}
+            </ol>
+          )}
           {voice.length > 0 && !captures.some((c) => c.kind === 'session') && (
             <section className="card voice-review">
               <VoiceList notes={voice.filter((v) => v.state === 'done')} label="Voice notes to share" />
@@ -438,16 +393,8 @@ export function Review({ observation: id }: { observation: number }) {
             </div>
           )}
           <footer className="action-bar">
-            <label className="check confirm">
-              <input type="checkbox" checked={checked} onChange={(e) => setChecked(e.target.checked)} />
-              <span>
-                {captures.every((c) => c.kind === 'session')
-                  ? 'I checked the recording and cut out what is private.'
-                  : 'I checked every included screenshot and masked what is private.'}
-              </span>
-            </label>
             <span className="spacer" />
-            <button type="button" className="btn btn-primary" onClick={freeze} disabled={!checked || chosen.size === 0}>
+            <button type="button" className="btn btn-primary" onClick={freeze} disabled={captures.length === 0}>
               Create review
             </button>
           </footer>

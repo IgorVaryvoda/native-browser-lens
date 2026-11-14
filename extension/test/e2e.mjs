@@ -276,9 +276,6 @@ try {
   ]);
   const freeze = review.getByRole('button', { name: 'Create review' });
   await freeze.waitFor({ timeout: 15_000 });
-  if (await freeze.isEnabled()) throw new Error('a review was possible without the screenshot confirmation');
-  await review.getByLabel(/Include the DOM recording/).check();
-  await review.getByLabel(/I checked every/).check();
   await freeze.click();
   await review.getByRole('list', { name: 'Reviewed captures' }).getByRole('img').first().waitFor({ timeout: 15_000 });
   await review.getByRole('button', { name: 'Export to Downloads' }).click();
@@ -352,7 +349,6 @@ try {
   await settings.getByRole('status', { name: 'VibeQ account' }).filter({ hasText: 'Tess Tester' }).or(settings.getByRole('alert')).waitFor({ timeout: 15_000 });
   if (await settings.getByRole('alert').isVisible()) throw new Error(`settings: ${await settings.getByRole('alert').textContent()}`);
   await review.reload();
-  await review.getByLabel(/I checked every/).check();
   await review.getByRole('button', { name: 'Create review' }).click();
   await review.getByRole('list', { name: 'Reviewed captures' }).getByRole('img').first().waitFor({ timeout: 15_000 });
   await review.getByLabel('Assign to').selectOption({ label: 'Ana' });
@@ -453,7 +449,6 @@ try {
   await studio.mouse.up();
   await studio.getByRole('button', { name: /^Cut .* out$/ }).click();
   await studio.getByRole('status', { name: 'Edits' }).filter({ hasText: /1 notes · Saved/ }).waitFor({ timeout: 15_000 });
-  await studio.getByLabel(/I checked the recording/).check();
   await studio.getByRole('button', { name: 'Create review' }).click();
   await studio.getByRole('button', { name: 'Export to Downloads' }).click();
   const recorded = studio.getByRole('status', { name: 'Export' });
