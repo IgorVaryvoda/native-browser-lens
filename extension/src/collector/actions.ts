@@ -86,7 +86,7 @@ export function roleOf(el: Element): string | null {
 function labelText(label: Element): string {
   let text = '';
   const walk = (node: Node) => {
-    if (node instanceof Element && node.matches('select, textarea, input, [contenteditable]')) return;
+    if (node.nodeType === Node.ELEMENT_NODE && (node as Element).matches('select, textarea, input, [contenteditable]')) return;
     if (node.nodeType === Node.TEXT_NODE) text += node.textContent;
     node.childNodes.forEach(walk);
   };
@@ -106,13 +106,16 @@ export function nameOf(el: Element, role: string | null): string | null {
       .join(' ');
     if (cleanName(text)) return cleanName(text);
   }
-  if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement) {
-    const label = [...(el.labels ?? [])].map(labelText).join(' ');
+  // Tag names, not instanceof: the review names elements inside a replay, which is another realm.
+  const tag = el.tagName;
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') {
+    const control = el as HTMLInputElement;
+    const label = [...(control.labels ?? [])].map(labelText).join(' ');
     if (cleanName(label)) return cleanName(label);
-    if (el instanceof HTMLInputElement && ['button', 'submit', 'reset'].includes(el.type)) return cleanName(el.value);
+    if (tag === 'INPUT' && ['button', 'submit', 'reset'].includes(control.type)) return cleanName(control.value);
     return cleanName(el.getAttribute('placeholder')) ?? cleanName(el.getAttribute('title'));
   }
-  if (el instanceof HTMLImageElement) return cleanName(el.alt);
+  if (tag === 'IMG') return cleanName(el.getAttribute('alt'));
   if (role && NAMED_BY_TEXT.has(role) && !editable(el)) {
     return cleanName((el as HTMLElement).innerText ?? el.textContent) ?? cleanName(el.getAttribute('title'));
   }

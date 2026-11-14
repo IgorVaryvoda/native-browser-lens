@@ -12,11 +12,13 @@ import type { Locator } from '@/protocol/Locator';
 import type { Point } from '@/protocol/Point';
 import type { TimeRange } from '@/protocol/TimeRange';
 import type { VoiceNote } from '@/protocol/VoiceNote';
-import { AddNoteIcon, DeleteIcon, PenIcon, PlayIcon, StopIcon } from '@/ui/icons';
+import { AddNoteIcon, DeleteIcon, PenIcon, PlayIcon, StopIcon, TargetIcon } from '@/ui/icons';
 
 type Player = InstanceType<typeof rrwebPlayer>;
 type Mark = { at: number; kind: 'step' | 'error' | 'note'; label: string };
 type Stroke = Point[];
+/** Draw: free lines; Highlight: one element, outlined, under the pointer. */
+type Tool = 'draw' | 'highlight' | null;
 
 const clock = (ms: number) => {
   const s = Math.max(0, Math.floor(ms / 1000));
@@ -42,7 +44,8 @@ export function RecordingEditor({ client, capture, voice }: { client: LensClient
   const [edits, setEdits] = useState<Edits>(capture.edits);
   const [saved, setSaved] = useState(true);
   const [selection, setSelection] = useState<TimeRange | null>(null);
-  const [drawing, setDrawing] = useState(false);
+  const [tool, setTool] = useState<Tool>(null);
+  const [hover, setHover] = useState<{ x: number; y: number; width: number; height: number; label: string } | null>(null);
   const [strokes, setStrokes] = useState<Stroke[]>([]);
   const [draft, setDraft] = useState<{ at: number; text: string; drawing: Stroke[]; elements: Locator[] } | null>(null);
   const [steps, setSteps] = useState<{ at: number; text: string; error: boolean }[]>([]);
@@ -209,7 +212,7 @@ export function RecordingEditor({ client, capture, voice }: { client: LensClient
   );
   const caption = words.find((w) => now >= w.at && now <= w.end + 500)?.text;
 
-  // Drawing over the replay. Strokes are kept in the recorded page's CSS pixels.
+  // Drawing and highlighting over the replay. Shapes are kept in the recorded page's CSS pixels.
   const frameGeometry = () => {
     const iframe = stage.current?.querySelector('iframe');
     if (!iframe) return null;
@@ -219,31 +222,62 @@ export function RecordingEditor({ client, capture, voice }: { client: LensClient
   };
   useEffect(() => {
     const canvas = overlay.current;
-    const geometry = frameGeometry();
-    if (!canvas || !stage.current) return;
-    const box = stage.current.getBoundingClientRect();
-    canvas.width = box.width;
-    canvas.height = box.height;
+    if (!canvas) return;
+    // The canvas covers the stage; its own box is the one to size and to draw against.
+    const box = canvas.getBoundingClientRect();
+    const ratio = devicePixelRatio || 1;
+    if (canvas.width !== Math.round(box.width * ratio) || canvas.height !== Math.round(box.height * ratio)) {
+      canvas.width = Math.round(box.width * ratio);
+      canvas.height = Math.round(box.height * ratio);
+    }
     const context = canvas.getContext('2d')!;
-    context.clearRect(0, 0, canvas.width, canvas.height);
+    context.setTransform(ratio, 0, 0, ratio, 0, 0);
+    context.clearRect(0, 0, box.width, box.height);
+    const geometry = frameGeometry();
     if (!geometry) return;
+    const toCanvas = (p: Point) => ({
+      x: geometry.rect.left - box.left + p.x * geometry.scale,
+      y: geometry.rect.top - box.top + p.y * geometry.scale,
+    });
+    const line = (stroke: Stroke, color: string, width: number) => {
+      context.strokeStyle = color;
+      context.lineWidth = width;
+      context.lineCap = context.lineJoin = 'round';
+      context.beginPath();
+      stroke.forEach((p, i) => {
+        const at = toCanvas(p);
+        if (i) context.lineTo(at.x, at.y);
+        else context.moveTo(at.x, at.y);
+      });
+      context.stroke();
+    };
     const visible = [
       ...edits.annotations.filter((a) => Math.abs(now - Number(a.at)) < DRAWING_SHOWS_MS).flatMap((a) => a.drawing),
       ...(draft?.drawing ?? []),
       ...strokes,
     ];
-    context.lineWidth = 3;
-    context.lineCap = context.lineJoin = 'round';
-    context.strokeStyle = '#ff3355';
     for (const stroke of visible) {
-      context.beginPath();
-      stroke.forEach((p, i) => {
-        const x = geometry.rect.left - box.left + p.x * geometry.scale;
-        const y = geometry.rect.top - box.top + p.y * geometry.scale;
-        if (i) context.lineTo(x, y);
-        else context.moveTo(x, y);
-      });
-      context.stroke();
+      // A light halo under the red line keeps it readable on dark and light pages.
+      line(stroke, 'rgba(255,255,255,0.9)', 6);
+      line(stroke, '#ff2d55', 3);
+    }
+    if (hover) {
+      const a = toCanvas({ x: hover.x, y: hover.y });
+      const w = hover.width * geometry.scale;
+      const h = hover.height * geometry.scale;
+      context.fillStyle = 'rgba(0, 85, 240, 0.16)';
+      context.fillRect(a.x, a.y, w, h);
+      context.strokeStyle = '#0055f0';
+      context.lineWidth = 2;
+      context.strokeRect(a.x, a.y, w, h);
+      context.font = '600 12px Inter, system-ui, sans-serif';
+      const label = hover.label;
+      const textWidth = context.measureText(label).width + 12;
+      const top = a.y >= 24 ? a.y - 22 : a.y + h + 2;
+      context.fillStyle = '#0055f0';
+      context.fillRect(a.x, top, textWidth, 20);
+      context.fillStyle = '#fff';
+      context.fillText(label, a.x + 6, top + 14);
     }
   });
 
@@ -252,28 +286,54 @@ export function RecordingEditor({ client, capture, voice }: { client: LensClient
     if (!geometry) return null;
     return { x: (event.clientX - geometry.rect.left) / geometry.scale, y: (event.clientY - geometry.rect.top) / geometry.scale };
   };
-  function drawStart(event: ReactPointerEvent<HTMLCanvasElement>) {
-    if (!drawing) return;
+  /** The element a person means at a point of the replay: the nearest control or text block. */
+  function elementAt(p: Point): Element | null {
+    const doc = frameGeometry()?.iframe.contentDocument;
+    const at = doc?.elementFromPoint(p.x, p.y);
+    if (!doc || !at || at === doc.body || at === doc.documentElement) return null;
+    return at.closest('a,button,input,select,textarea,label,[role],[data-testid],h1,h2,h3,h4,h5,h6,img,li,td,p') ?? at;
+  }
+  function pointerDown(event: ReactPointerEvent<HTMLCanvasElement>) {
     const p = toPage(event);
     if (!p) return;
+    if (tool === 'highlight') {
+      const target = elementAt(p);
+      if (!target) return;
+      const r = target.getBoundingClientRect();
+      const box: Stroke = [
+        { x: r.left, y: r.top },
+        { x: r.right, y: r.top },
+        { x: r.right, y: r.bottom },
+        { x: r.left, y: r.bottom },
+        { x: r.left, y: r.top },
+      ];
+      setTool(null);
+      setHover(null);
+      return startNote([box], [locatorOf(target)]);
+    }
+    if (tool !== 'draw') return;
     event.currentTarget.setPointerCapture(event.pointerId);
     setStrokes((s) => [...s, [p]]);
   }
-  function drawMove(event: ReactPointerEvent<HTMLCanvasElement>) {
-    if (!drawing || !(event.buttons & 1)) return;
+  function pointerMove(event: ReactPointerEvent<HTMLCanvasElement>) {
     const p = toPage(event);
     if (!p) return;
+    if (tool === 'highlight') {
+      const target = elementAt(p);
+      if (!target) return setHover(null);
+      const r = target.getBoundingClientRect();
+      const name = describe(locatorOf(target));
+      return setHover({ x: r.left, y: r.top, width: r.width, height: r.height, label: name.length > 60 ? `${name.slice(0, 57)}…` : name });
+    }
+    if (tool !== 'draw' || !(event.buttons & 1)) return;
     setStrokes((s) => (s.length ? [...s.slice(0, -1), [...s.at(-1)!, p].slice(0, 2000)] : s));
   }
   /** The page elements under a drawing, found in the replay's own DOM. */
   function elementsUnder(lines: Stroke[]): Locator[] {
-    const doc = frameGeometry()?.iframe.contentDocument;
-    if (!doc) return [];
     const found = new Map<string, Locator>();
     for (const p of lines.flatMap((line) => line.filter((_, i) => i % 6 === 0))) {
-      const at = doc.elementFromPoint(p.x, p.y);
-      if (!at || at === doc.body || at === doc.documentElement) continue;
-      const target = at.closest('a,button,input,select,textarea,label,[role],[data-testid],h1,h2,h3,h4,h5,h6,img,li,td,p') ?? at;
+      const target = elementAt(p);
+      if (!target) continue;
       const locator = locatorOf(target);
       if (!found.has(locator.css)) found.set(locator.css, locator);
       if (found.size >= ELEMENTS_PER_NOTE) break;
@@ -281,15 +341,20 @@ export function RecordingEditor({ client, capture, voice }: { client: LensClient
     return [...found.values()];
   }
 
-  function startNote(withDrawing: Stroke[] = []) {
+  function startNote(withDrawing: Stroke[] = [], elements?: Locator[]) {
     player.current?.pause();
     setPlaying(false);
-    setDraft({ at: now, text: '', drawing: withDrawing, elements: withDrawing.length ? elementsUnder(withDrawing) : [] });
+    setDraft({ at: now, text: '', drawing: withDrawing, elements: elements ?? (withDrawing.length ? elementsUnder(withDrawing) : []) });
   }
-  function finishDrawing() {
-    setDrawing(false);
-    if (strokes.length) startNote(strokes);
+  function choose(next: Tool) {
+    if (tool === 'draw' && strokes.length) startNote(strokes);
     setStrokes([]);
+    setHover(null);
+    if (next && next !== tool) {
+      player.current?.pause();
+      setPlaying(false);
+    }
+    setTool(next === tool ? null : next);
   }
   function saveNote() {
     if (!draft || (!draft.text.trim() && !draft.drawing.length)) return setDraft(null);
@@ -362,10 +427,11 @@ export function RecordingEditor({ client, capture, voice }: { client: LensClient
           <canvas
             ref={overlay}
             className="draw-layer"
-            data-drawing={drawing || undefined}
-            aria-label={drawing ? 'Drawing layer' : undefined}
-            onPointerDown={drawStart}
-            onPointerMove={drawMove}
+            data-tool={tool ?? undefined}
+            aria-label={tool ? 'Drawing layer' : undefined}
+            onPointerDown={pointerDown}
+            onPointerMove={pointerMove}
+            onPointerLeave={() => setHover(null)}
           />
           {caption && <p className="caption">{caption}</p>}
         </div>
@@ -399,12 +465,22 @@ export function RecordingEditor({ client, capture, voice }: { client: LensClient
           </button>
           <button
             type="button"
-            className={drawing ? 'btn btn-primary btn-sm' : 'btn btn-secondary btn-sm'}
-            aria-pressed={drawing}
-            onClick={() => (drawing ? finishDrawing() : (player.current?.pause(), setPlaying(false), setDrawing(true)))}
+            className={tool === 'highlight' ? 'btn btn-primary btn-sm' : 'btn btn-secondary btn-sm'}
+            aria-pressed={tool === 'highlight'}
+            title="Point at an element and click it"
+            onClick={() => choose('highlight')}
             disabled={!span}
           >
-            <PenIcon /> {drawing ? 'Done drawing' : 'Draw'}
+            <TargetIcon /> {tool === 'highlight' ? 'Click an element' : 'Highlight'}
+          </button>
+          <button
+            type="button"
+            className={tool === 'draw' ? 'btn btn-primary btn-sm' : 'btn btn-secondary btn-sm'}
+            aria-pressed={tool === 'draw'}
+            onClick={() => choose('draw')}
+            disabled={!span}
+          >
+            <PenIcon /> {tool === 'draw' ? 'Done drawing' : 'Draw'}
           </button>
         </div>
 

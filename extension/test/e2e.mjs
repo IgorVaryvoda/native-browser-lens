@@ -436,11 +436,24 @@ try {
   await studio.mouse.down();
   for (const [dx, dy] of [[3, -3], [3, 3], [-3, 3], [-3, -3], [0, 0]]) await studio.mouse.move(cx + dx, cy + dy, { steps: 3 });
   await studio.mouse.up();
+  if (process.env.E2E_GALLERY) await studio.screenshot({ path: join(process.env.E2E_GALLERY, 'editor-drawing.png') });
   await studio.getByRole('button', { name: 'Done drawing' }).click();
   const draft = studio.getByRole('dialog', { name: 'New note' });
   await draft.getByText(/marks button “Pay”/).waitFor({ timeout: 10_000 });
   await draft.getByLabel('Note').fill('Total turns into NaN after Pay');
   await draft.getByRole('button', { name: 'Add note' }).click();
+  // Highlight: the element under the pointer is outlined and named; a click notes it.
+  await studio.getByRole('button', { name: 'Highlight' }).click();
+  await studio.evaluate(() => scrollTo(0, 0));
+  const coupon = await studio.frameLocator('.stage iframe').getByRole('textbox', { name: 'Coupon' }).boundingBox();
+  await studio.mouse.move(coupon.x + coupon.width / 2, coupon.y + coupon.height / 2, { steps: 3 });
+  if (process.env.E2E_GALLERY) await studio.screenshot({ path: join(process.env.E2E_GALLERY, 'editor-highlight.png') });
+  await studio.mouse.down();
+  await studio.mouse.up();
+  const highlighted = studio.getByRole('dialog', { name: 'New note' });
+  await highlighted.getByText(/marks textbox “Coupon”/).waitFor({ timeout: 10_000 });
+  await highlighted.getByLabel('Note').fill('The coupon is applied twice');
+  await highlighted.getByRole('button', { name: 'Add note' }).click();
   // Cut the last fifth of the timeline.
   const line = await studio.getByLabel('Timeline').boundingBox();
   await studio.mouse.move(line.x + line.width * 0.8, line.y + line.height / 2);
@@ -448,7 +461,7 @@ try {
   await studio.mouse.move(line.x + line.width * 0.99, line.y + line.height / 2, { steps: 5 });
   await studio.mouse.up();
   await studio.getByRole('button', { name: /^Cut .* out$/ }).click();
-  await studio.getByRole('status', { name: 'Edits' }).filter({ hasText: /1 notes · Saved/ }).waitFor({ timeout: 15_000 });
+  await studio.getByRole('status', { name: 'Edits' }).filter({ hasText: /2 notes · Saved/ }).waitFor({ timeout: 15_000 });
   await studio.getByRole('button', { name: 'Create review' }).click();
   await studio.getByRole('button', { name: 'Export to Downloads' }).click();
   const recorded = studio.getByRole('status', { name: 'Export' });
