@@ -147,7 +147,7 @@ pub fn steps(status: &SetupStatus, paths: &Paths) -> Vec<Step> {
         step(
             "VibeQ",
             Mark::Optional,
-            "to file defects: Lens Settings, VibeQ address and personal token".into(),
+            "to file defects: Lens Settings, Sign in with VibeQ".into(),
         )
     });
     steps
