@@ -38,6 +38,7 @@ type ReplyTo = {
   listAgents: 'agents';
   investigate: 'suggestion';
   announce: 'done';
+  installService: 'done';
   setupStatus: 'setup';
   getUpdates: 'updates';
   setAutomaticUpdates: 'updates';

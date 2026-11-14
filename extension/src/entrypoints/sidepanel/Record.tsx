@@ -3,6 +3,8 @@ import type { LensClient } from '@/lens-client';
 import { send, type CaptureResult, type SessionStart, type TabStatus } from '@/messages';
 import { MicIcon, StopIcon } from '@/ui/icons';
 import { MicrophoneBlocked, record, type Recording } from '@/voice';
+import type { SpeechStatus } from '@/protocol/SpeechStatus';
+import { ModelNotice } from './Voice';
 
 export type PanelMode = 'record' | 'capture';
 
@@ -64,6 +66,24 @@ export function RecordControls({
   const microphone = useRef<Recording | null>(null);
   const running = site?.session ?? null;
   const screenAccess = useScreenAccess();
+  // With the voice on, the speech model must be there to write it down: offer it here, once.
+  const [speech, setSpeech] = useState<SpeechStatus | null>(null);
+  const downloading = speech?.model.state === 'downloading';
+  useEffect(() => {
+    if (!voice) return;
+    let alive = true;
+    const load = () =>
+      client
+        .request({ method: 'speechStatus' })
+        .then((s) => alive && setSpeech(s))
+        .catch(() => {});
+    void load();
+    const timer = downloading ? setInterval(load, 1000) : undefined;
+    return () => {
+      alive = false;
+      clearInterval(timer);
+    };
+  }, [client, voice, downloading]);
 
   useEffect(() => {
     if (running === null) return;
@@ -157,6 +177,9 @@ export function RecordControls({
           <MicIcon size={14} /> Record my voice
         </span>
       </label>
+      {voice && speech && speech.model.state !== 'ready' && (
+        <ModelNotice speech={speech} onInstall={() => void client.request({ method: 'installSpeech' }).then(setSpeech)} />
+      )}
       <button
         type="button"
         className="btn btn-primary btn-lg btn-block"

@@ -9,7 +9,7 @@ import type { BlobRef } from '@/protocol/BlobRef';
 import { Notes } from './Notes';
 import { VoiceNotes } from './Voice';
 import { RecordControls, SCREEN_ACCESS_REFUSED, useScreenAccess, useStored, type PanelMode } from './Record';
-import { InstallApp, SetupCard } from './Onboarding';
+import { InstallApp, SetupCard, appMissing } from './Onboarding';
 
 type Connection = { state: 'connecting' } | { state: 'ready'; hello: Hello } | { state: 'failed'; message: string };
 
@@ -175,7 +175,7 @@ export function App() {
         >
           {connection.state === 'connecting' && 'Connecting…'}
           {connection.state === 'ready' && `Connected · Lens ${connection.hello.version}`}
-          {connection.state === 'failed' && `Not connected: ${connection.message}`}
+          {connection.state === 'failed' && (appMissing(connection.message) ? 'App not installed' : 'App not running')}
         </span>
         <button
           type="button"
@@ -253,7 +253,7 @@ export function App() {
                   ) : null}
                 </div>
                 {!site.paused && !site.mode && (
-                  <button type="button" className="btn btn-secondary btn-block" onClick={track}>
+                  <button type="button" className="btn btn-primary btn-block" onClick={track}>
                     Collect evidence on this site
                   </button>
                 )}
@@ -378,10 +378,12 @@ function Observations({
       {list.length === 0 ? (
         <div className="empty">
           <p>Nothing recorded yet.</p>
-          <p className="small muted">
-            Press Record, use the site and say what you see; or make the defect happen and press Capture, which keeps
-            the last ten minutes.
-          </p>
+          <ol className="first-steps small muted">
+            <li>Press Record and use the site as usual.</li>
+            <li>Say what you see as you go: what is wrong, what you expected.</li>
+            <li>Press Stop. Lens opens the recording with your words, to cut, annotate and file.</li>
+          </ol>
+          <p className="small muted">Missed the moment? Capture keeps the last ten minutes of a collected tab.</p>
         </div>
       ) : (
         days.map(([day, items]) => (

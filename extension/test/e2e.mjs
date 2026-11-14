@@ -165,7 +165,8 @@ try {
   // continues by itself once the app is there.
   const panel = await context.newPage();
   await panel.goto(`chrome-extension://${extensionId}/sidepanel.html?tab=${tabId}`);
-  await panel.getByRole('heading', { name: 'One more step: the Lens app' }).waitFor({ timeout: 15_000 });
+  await panel.getByRole('heading', { name: 'Install the Lens app' }).waitFor({ timeout: 15_000 });
+  await panel.getByRole('status', { name: 'Connection' }).filter({ hasText: 'App not installed' }).waitFor();
   execFileSync(bin, ['register'], { env, stdio: 'inherit' });
   const status = panel.getByRole('status', { name: 'Connection' });
   const connected = await status
@@ -181,8 +182,9 @@ try {
   // The setup card lists only the open steps; the background script announced the extension, so its step leaves.
   const setup = panel.getByRole('region', { name: 'Setup' });
   await setup.waitFor({ timeout: 15_000 });
-  await setup.locator('li', { hasText: 'Browser extension' }).waitFor({ state: 'detached', timeout: 15_000 });
-  await setup.locator('li[data-mark="todo"]', { hasText: 'A site to collect on' }).waitFor({ timeout: 15_000 });
+  // Setup shows only what the panel cannot: starting at login (a button), and VibeQ (optional).
+  await setup.getByRole('button', { name: 'Turn on' }).waitFor({ timeout: 15_000 });
+  if (await setup.getByText(/Browser extension|A site to collect on/).count()) throw new Error('setup repeats what the panel shows');
 
   // Track the site: a project for its origin, and the debugger attaches to the tab.
   await panel.getByRole('button', { name: 'Collect evidence on this site' }).click();

@@ -142,22 +142,43 @@
   list-style: none;
 }
 .setup li {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.setup li + li {
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+.setup-text {
   display: grid;
-  grid-template-columns: 16px minmax(0, 1fr);
-  gap: 8px;
-  align-items: start;
-}
-.setup li[data-mark='done'] {
-  color: var(--muted-foreground);
-}
-.setup li[data-mark='done'] .step-mark {
-  color: var(--success);
-}
-.setup li[data-mark='todo'] .step-mark {
-  color: var(--warning);
+  flex: 1;
+  gap: 2px;
+  min-width: 0;
 }
 .setup li strong {
-  font-weight: 500;
+  font-weight: 600;
+}
+.setup-actions {
+  display: flex;
+  flex: none;
+  gap: 4px;
+}
+.setup li > .btn {
+  flex: none;
+}
+.install-steps {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0 0 0 20px;
+}
+.install-steps li::marker {
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+}
+.install-steps .command {
+  margin-top: 6px;
 }
 .step-detail {
   display: block;
@@ -174,7 +195,9 @@
 .command code {
   flex: 1;
   min-width: 0;
-  overflow-wrap: anywhere;
+  font-size: 12px;
+  line-height: 1.5;
+  word-break: break-all;
 }
 .waiting {
   display: flex;
@@ -309,8 +332,14 @@
 }
 .empty {
   display: grid;
-  gap: 4px;
+  gap: 8px;
   padding: 16px 0;
+}
+.first-steps {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding-left: 18px;
 }
 .list-skeleton {
   display: grid;

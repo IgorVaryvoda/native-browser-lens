@@ -648,6 +648,19 @@ impl Daemon {
                 store.save_client(&client, now_ms()).map_err(storage)?;
                 Reply::Done
             }
+            Request::InstallService => {
+                // A separate process: on Linux the install stops this daemon so that the service
+                // owns Lens, which would end the install halfway if it ran in here.
+                let executable = std::env::current_exe().map_err(storage)?;
+                std::process::Command::new(executable)
+                    .args(["service", "install"])
+                    .stdin(std::process::Stdio::null())
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .spawn()
+                    .map_err(storage)?;
+                Reply::Done
+            }
             Request::SetupStatus => {
                 let executable = std::env::current_exe().map_err(storage)?;
                 let service = match crate::service::state(&self.paths) {

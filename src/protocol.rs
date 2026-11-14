@@ -98,6 +98,9 @@ pub enum Request {
     Announce(ClientInfo),
     /// Every setup step, checked against the real state: service, browsers, extensions, sites.
     SetupStatus,
+    /// Makes Lens start at login, as `lens service install` does. The daemon restarts under the
+    /// service manager, so the extension reconnects.
+    InstallService,
     /// Pauses or resumes evidence collection in every browser.
     SetPaused {
         paused: bool,

@@ -207,7 +207,7 @@ export function ModelNotice({ speech, onInstall }: { speech: SpeechStatus; onIns
       <span>
         {model.state === 'failed'
           ? `The speech model did not download: ${model.reason}`
-          : `Lens writes down voice notes on this computer with ${speech.modelName}. It downloads the model once (${mb(Number(speech.downloadBytes))} MB).`}{' '}
+          : `Your voice needs the speech model, a one-time ${mb(Number(speech.downloadBytes))} MB download. It runs on this computer.`}{' '}
         <button type="button" className="btn btn-secondary btn-sm" onClick={onInstall}>
           {model.state === 'failed' ? 'Try again' : 'Download the speech model'}
         </button>

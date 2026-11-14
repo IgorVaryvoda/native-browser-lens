@@ -46,7 +46,7 @@ pub fn steps(status: &SetupStatus, paths: &Paths) -> Vec<Step> {
         None => step(
             "Starts at login",
             Mark::Todo,
-            "run: lens service install".into(),
+            "so recordings and filing work after a restart; run: lens service install".into(),
         ),
     });
 
@@ -122,22 +122,23 @@ pub fn steps(status: &SetupStatus, paths: &Paths) -> Vec<Step> {
         step(
             "A site to collect on",
             Mark::Todo,
-            "open the site you test, click the Lens button, then Collect evidence on this site"
+            "open the site you test, click the Lens button in the toolbar, then Collect evidence on this site"
                 .into(),
         )
     });
 
     steps.push(if status.captures > 0 {
         step(
-            "First capture",
+            "First recording",
             Mark::Done,
             format!("{} capture(s)", status.captures),
         )
     } else {
         step(
-            "First capture",
+            "First recording",
             Mark::Optional,
-            "on that site, click Capture in the Lens side panel, or press Alt+Shift+L".into(),
+            "on that site, press Record in the Lens side panel, use the site and say what you see"
+                .into(),
         )
     });
 
@@ -147,7 +148,7 @@ pub fn steps(status: &SetupStatus, paths: &Paths) -> Vec<Step> {
         step(
             "VibeQ",
             Mark::Optional,
-            "to file defects: Lens Settings, Sign in with VibeQ".into(),
+            "to file tasks: Lens Settings, then Sign in with VibeQ".into(),
         )
     });
     steps
@@ -160,8 +161,13 @@ fn extension_instructions(paths: &Paths) -> String {
             let folder = paths.data.join("extension");
             if folder.is_dir() {
                 format!(
-                    "add the extension: open chrome://extensions (or edge://extensions, brave://extensions), turn on Developer mode, choose Load unpacked, select {}",
-                    folder.display()
+                    "add the extension: open chrome://extensions (or edge://, brave://), turn on Developer mode, click Load unpacked and choose {}; in Firefox, open about:debugging, This Firefox, Load Temporary Add-on, and choose {}",
+                    folder.display(),
+                    paths
+                        .data
+                        .join("extension-firefox")
+                        .join("manifest.json")
+                        .display()
                 )
             } else {
                 "add the Lens extension to your browser".into()
@@ -230,7 +236,7 @@ pub fn setup(paths: &Paths) -> io::Result<()> {
         }
         let Some(open) = steps.iter().find(|s| s.mark == Mark::Todo) else {
             println!(
-                "\nLens is ready. Capture a defect from the Lens side panel whenever you see one."
+                "\nLens is ready. On the site you test, open the Lens side panel and press Record."
             );
             return Ok(());
         };
@@ -309,7 +315,7 @@ mod tests {
         ] {
             assert_eq!(mark(&steps, name), Mark::Todo, "{name}");
         }
-        assert_eq!(mark(&steps, "First capture"), Mark::Optional);
+        assert_eq!(mark(&steps, "First recording"), Mark::Optional);
     }
 
     #[test]
