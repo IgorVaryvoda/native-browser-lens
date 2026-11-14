@@ -22,4 +22,8 @@ thumbnail: BlobRef | null,
 /**
  * The first finding, or the first line of the notes.
  */
-headline: string | null, };
+headline: string | null, 
+/**
+ * The VibeQ task of the newest filed review.
+ */
+taskUrl: string | null, };

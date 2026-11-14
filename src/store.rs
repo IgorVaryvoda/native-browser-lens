@@ -296,7 +296,10 @@ impl Store {
                 EXISTS (SELECT 1 FROM reviews r WHERE r.observation_id = o.id),
                 (SELECT c.screenshot_sha256 FROM captures c WHERE c.observation_id = o.id ORDER BY c.id DESC LIMIT 1),
                 (SELECT c.screenshot_size FROM captures c WHERE c.observation_id = o.id ORDER BY c.id DESC LIMIT 1),
-                o.notes
+                o.notes,
+                (SELECT json_extract(f.body, '$.receipt.taskUrl') FROM filings f
+                    WHERE f.observation_id = o.id AND json_extract(f.body, '$.receipt') IS NOT NULL
+                    ORDER BY f.review_id DESC LIMIT 1)
              FROM observations o ORDER BY o.created_at DESC, o.id DESC",
         )?;
         statement
@@ -331,6 +334,7 @@ impl Store {
                         media_type: "image/png".into(),
                     }),
                     headline: headline(&notes),
+                    task_url: row.get(14)?,
                 })
             })?
             .collect()

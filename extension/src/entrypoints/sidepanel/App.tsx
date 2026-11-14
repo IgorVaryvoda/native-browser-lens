@@ -467,10 +467,16 @@ function Detail({
           <BackIcon size={14} />
           All recordings
         </button>
-        {observation.status !== 'draft' && (
-          <span className="pill" data-tone={observation.status === 'filed' ? 'success' : 'info'}>
-            {observation.status === 'filed' ? 'Filed' : 'Reviewed'}
-          </span>
+        {observation.taskUrl?.startsWith('https://') ? (
+          <a className="pill" data-tone="success" href={observation.taskUrl} target="_blank" rel="noreferrer" title={observation.taskUrl}>
+            Filed · Open in VibeQ
+          </a>
+        ) : (
+          observation.status !== 'draft' && (
+            <span className="pill" data-tone={observation.status === 'filed' ? 'success' : 'info'}>
+              {observation.status === 'filed' ? 'Filed' : 'Reviewed'}
+            </span>
+          )
         )}
       </div>
       {captures === null ? (

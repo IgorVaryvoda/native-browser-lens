@@ -1097,6 +1097,8 @@ pub struct ObservationSummary {
     pub thumbnail: Option<BlobRef>,
     /// The first finding, or the first line of the notes.
     pub headline: Option<String>,
+    /// The VibeQ task of the newest filed review.
+    pub task_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, TS)]

@@ -38,6 +38,8 @@ export function Review({ observation: id }: { observation: number }) {
   const [suggestion, setSuggestion] = useState<Suggestion | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
+  /** The task of an earlier filing of this observation, when the page opens again. */
+  const [filedTask, setFiledTask] = useState<string | null>(null);
 
   useEffect(() => {
     Promise.all([
@@ -46,6 +48,10 @@ export function Review({ observation: id }: { observation: number }) {
       client.request({ method: 'listVoiceNotes', params: { observation: id } }),
     ])
       .then(([found, list, notes]) => {
+        void client
+          .request({ method: 'listObservations' })
+          .then((all) => setFiledTask(all.find((o) => o.id === id)?.taskUrl ?? null))
+          .catch(() => {});
         setObservation(found);
         setCaptures(list);
         setVoice(notes);
@@ -405,6 +411,18 @@ export function Review({ observation: id }: { observation: number }) {
         </>
       ) : (
         <>
+          {filedTask?.startsWith('https://') && (
+            <div role="status" aria-label="Filed earlier" className="notice" data-tone="info">
+              <DoneIcon />
+              <span>
+                Filed earlier:{' '}
+                <a href={filedTask} target="_blank" rel="noreferrer">
+                  {filedTask}
+                </a>
+                . Filing again updates that task.
+              </span>
+            </div>
+          )}
           <section className="section">
             <h2>Choose what to share</h2>
             <p className="muted small">
