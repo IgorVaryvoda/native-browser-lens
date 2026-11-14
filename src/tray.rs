@@ -82,7 +82,7 @@ pub fn perform(paths: &Paths, action: Action, now: &Snapshot) {
         }
         Action::OpenLogs => open(&paths.logs),
         Action::Start => crate::service::start(paths),
-        Action::Restart => std::env::current_exe().and_then(|exe| {
+        Action::Restart => crate::paths::executable().and_then(|exe| {
             std::process::Command::new(exe)
                 .arg("restart")
                 .spawn()
@@ -258,7 +258,7 @@ pub fn run(paths: &Paths) -> io::Result<()> {
 
 /// Starts the tray beside the service's daemon, detached, without a console window.
 pub fn spawn(paths: &Paths) {
-    let Ok(executable) = std::env::current_exe() else {
+    let Ok(executable) = crate::paths::executable() else {
         return;
     };
     let program = if cfg!(windows) {

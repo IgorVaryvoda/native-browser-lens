@@ -1,0 +1,104 @@
+#!/usr/bin/env node
+// Builds the friendly installers: Sirv Lens.app in a DMG (macOS), a setup program for the current
+// user (Windows), and an AppImage, a .deb and an Arch package (Linux). One run makes the formats of
+// the platform it runs on, from one build of Lens, its speech programs and the two extensions.
+//
+//   node scripts/package.mjs --formats appimage,deb,pacman [--gpu vulkan] [--target <triple>]
+//
+// macOS signing: set APPLE_SIGNING_IDENTITY (and the notarization variables cargo-packager reads).
+import { execFileSync } from 'node:child_process';
+import { copyFileSync, existsSync, mkdirSync, readdirSync, renameSync, writeFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
+import { parseArgs } from 'node:util';
+
+const { values } = parseArgs({
+  options: { formats: { type: 'string' }, gpu: { type: 'string' }, target: { type: 'string' }, 'skip-build': { type: 'boolean' } },
+});
+if (!values.formats) throw new Error('--formats is required, for example appimage,deb,pacman');
+const root = resolve(import.meta.dirname, '..');
+const windows = process.platform === 'win32';
+const exe = windows ? '.exe' : '';
+const run = (command, args, cwd = root) => execFileSync(command, args, { cwd, stdio: 'inherit', shell: windows });
+const metadata = JSON.parse(execFileSync('cargo', ['metadata', '--format-version', '1', '--no-deps'], { cwd: root, shell: windows }));
+const version = metadata.packages.find((p) => p.name === 'lens').version;
+const targetArgs = values.target ? ['--target', values.target] : [];
+const release = join(metadata.target_directory, ...(values.target ? [values.target] : []), 'release');
+
+if (!values['skip-build']) {
+  const extension = join(root, 'extension');
+  run('pnpm', ['build'], extension);
+  run('pnpm', ['build:firefox'], extension);
+  run('cargo', ['build', '--release', '--locked', ...targetArgs]);
+  run('cargo', ['build', '--release', '--locked', '-p', 'lens-speech', ...targetArgs]);
+  if (values.gpu) {
+    // Its own target folder: the GPU build of lens-speech must not overwrite the CPU one.
+    const gpuDir = `${metadata.target_directory}-gpu`;
+    run('cargo', ['build', '--release', '--locked', '-p', 'lens-speech', '--features', values.gpu, '--target-dir', gpuDir, ...targetArgs]);
+    copyFileSync(
+      join(gpuDir, ...(values.target ? [values.target] : []), 'release', `lens-speech${exe}`),
+      join(release, `lens-speech-gpu${exe}`),
+    );
+  }
+}
+
+// The programs that go beside Lens: the speech programs. On Windows the shortcut opens lensw, which
+// starts lens without a console window; lens then sees no terminal and runs the first run.
+const binaries = windows
+  ? [{ path: 'lensw', main: true }, { path: 'lens' }, { path: 'lens-speech' }]
+  : [{ path: 'lens', main: true }, { path: 'lens-speech' }];
+if (existsSync(join(release, `lens-speech-gpu${exe}`))) binaries.push({ path: 'lens-speech-gpu' });
+
+const config = {
+  name: 'sirv-lens',
+  'product-name': 'Sirv Lens',
+  version,
+  identifier: 'studio.sirv.lens',
+  description: 'Record browser defects with your voice, review them, and file them as tasks an agent can repeat.',
+  'long-description':
+    'Sirv Lens records what you do on a site, with your voice, the network and the console, and turns it into a reviewed task for VibeQ that a coding agent can reproduce.',
+  homepage: 'https://github.com/VKrachun/native-browser-lens',
+  authors: ['Igor Varyvoda <igor@varyvoda.com>'],
+  category: 'DeveloperTool',
+  publisher: 'Sirv',
+  // Several sizes: the AppImage needs a square one at a size it knows (512 at most).
+  // Absolute: the packager resolves relative paths from the config file's folder.
+  icons: ['icon-32.png', 'icon-128.png', 'icon-256.png', 'icon-512.png', 'icon.png'].map((f) => join(root, 'assets', f)),
+  'out-dir': join(root, 'dist'),
+  'binaries-dir': release,
+  binaries,
+  resources: [
+    { src: join(root, 'extension/.output/chrome-mv3'), target: 'extension' },
+    { src: join(root, 'extension/.output/firefox-mv3'), target: 'extension-firefox' },
+  ],
+  // Per user, no administrator: Lens itself installs per user (service, browser registrations).
+  nsis: { installMode: 'currentUser' },
+  // Not just "lens": other software uses that package name.
+  deb: { 'package-name': 'sirv-lens', depends: ['libc6'] },
+  pacman: { depends: ['glibc'] },
+  ...(process.env.APPLE_SIGNING_IDENTITY ? { macos: { 'signing-identity': process.env.APPLE_SIGNING_IDENTITY } } : {}),
+};
+mkdirSync(join(root, 'dist'), { recursive: true });
+const configPath = join(root, 'dist', 'packager.json');
+writeFileSync(configPath, JSON.stringify(config, null, 2));
+// linuxdeploy's own strip is older than current distributions' libraries (.relr.dyn) and fails
+// on them; the binaries are release builds already.
+process.env.NO_STRIP = '1';
+run('cargo', ['packager', '--release', '--formats', values.formats, '--config', configPath]);
+
+// Names people recognise on a download page, instead of the packager's lens_VERSION_ARCH.
+const arch = { x64: 'x64', arm64: 'arm64' }[process.arch] ?? process.arch;
+const linuxArch = { x64: 'x86_64', arm64: 'aarch64' }[process.arch] ?? process.arch;
+const names = [
+  [/\.dmg$/, `Sirv-Lens-${version}-macos-${arch}.dmg`],
+  [/-setup\.exe$/, `Sirv-Lens-${version}-windows-${arch}-setup.exe`],
+  [/\.AppImage$/, `Sirv-Lens-${version}-linux-${linuxArch}.AppImage`],
+  [/\.deb$/, `sirv-lens_${version}_${arch === 'x64' ? 'amd64' : arch}.deb`],
+  [/\.tar\.gz$/, `sirv-lens-${version}-linux-${linuxArch}-pacman.tar.gz`],
+];
+const out = join(root, 'dist');
+for (const file of readdirSync(out)) {
+  const found = names.find(([pattern]) => pattern.test(file));
+  if (found && file.startsWith('lens')) renameSync(join(out, file), join(out, found[1]));
+}
+console.log(readdirSync(out).filter((f) => !f.startsWith('.')).join('\n'));
+

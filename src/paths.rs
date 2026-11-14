@@ -134,3 +134,12 @@ fn private_dir(dir: &PathBuf) -> io::Result<()> {
     // %LOCALAPPDATA% is already private to the account.
     std::fs::create_dir_all(dir)
 }
+
+/// The file that starts Lens, for the service, the browser registrations and restarts. From an
+/// AppImage that is the AppImage itself: the running binary lives in a mount that goes away.
+pub fn executable() -> io::Result<PathBuf> {
+    match std::env::var_os("APPIMAGE").map(PathBuf::from) {
+        Some(image) if image.is_file() => Ok(image),
+        _ => std::env::current_exe(),
+    }
+}

@@ -1,4 +1,5 @@
 mod blobs;
+mod bundle;
 mod client;
 mod daemon;
 mod digest;
@@ -30,6 +31,7 @@ use std::process::ExitCode;
 
 const USAGE: &str = "Usage: lens <command>
 
+  open               Set Lens up without a terminal and open the welcome page
   setup              Set Lens up step by step, checking each step
   doctor             Check every setup step once
   status             Show the version, folders, service and daemon
@@ -71,7 +73,7 @@ fn main() -> ExitCode {
         }),
         Some("service") => match args.get(1).map(String::as_str) {
             Some("install") => with_paths(|p| {
-                service::install(p, &std::env::current_exe()?)?;
+                service::install(p, &crate::paths::executable()?)?;
                 println!("Lens now starts at login and runs in the background.");
                 Ok(())
             }),
@@ -86,13 +88,16 @@ fn main() -> ExitCode {
             }
         },
         Some("register") => {
-            with_paths(|p| print_report(register::register(p, &std::env::current_exe()?)?))
+            with_paths(|p| print_report(register::register(p, &crate::paths::executable()?)?))
         }
         Some("unregister") => with_paths(|p| print_report(register::unregister(p)?)),
         Some("status") => with_paths(status),
         Some("setup") => with_paths(setup::setup),
+        Some("open") => with_paths(setup::open),
+        // Started from the Applications folder, the Start menu or the app menu: no terminal.
+        None if !std::io::IsTerminal::is_terminal(&std::io::stdout()) => with_paths(setup::open),
         Some("update") => with_paths(|p| {
-            let executable = std::env::current_exe()?;
+            let executable = crate::paths::executable()?;
             if let Some(manager) = update::managed_by(&executable) {
                 println!("{manager} updates this copy of Lens.");
                 return Ok(());
@@ -182,7 +187,7 @@ fn ask(paths: &Paths, request: Request) -> std::io::Result<Option<ReplyFrame>> {
 
 fn status(paths: &Paths) -> std::io::Result<()> {
     println!("version          {}", env!("CARGO_PKG_VERSION"));
-    println!("binary           {}", std::env::current_exe()?.display());
+    println!("binary           {}", crate::paths::executable()?.display());
     println!("data             {}", paths.data.display());
     println!("logs             {}", paths.logs.display());
     match service::state(paths) {

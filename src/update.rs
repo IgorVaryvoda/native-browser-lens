@@ -54,6 +54,9 @@ pub fn managed_by(executable: &Path) -> Option<&'static str> {
         Some("the system package manager")
     } else if path.contains("\\WindowsApps\\") {
         Some("the Microsoft Store")
+    } else if path.contains(".app/Contents/MacOS/") || std::env::var_os("APPIMAGE").is_some() {
+        // Replacing a file inside a signed app bundle or an AppImage would break it.
+        Some("The Sirv Lens installer")
     } else {
         None
     }

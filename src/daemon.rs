@@ -90,7 +90,7 @@ pub fn run(paths: &Paths, service: bool) -> std::io::Result<()> {
         Err(TryLockError::Error(e)) => return Err(e),
     }
     if service {
-        match std::env::current_exe().and_then(|exe| crate::register::register(paths, &exe)) {
+        match crate::paths::executable().and_then(|exe| crate::register::register(paths, &exe)) {
             Ok(_) => {}
             Err(e) => log(paths, &format!("registration refresh failed: {e}")),
         }
@@ -99,6 +99,18 @@ pub fn run(paths: &Paths, service: bool) -> std::io::Result<()> {
         paths,
         &format!("started, version {}", env!("CARGO_PKG_VERSION")),
     );
+    // An installer may have brought new extension builds: unpack them where browsers load them.
+    match crate::bundle::sync_extensions(paths) {
+        Ok(true) => log(
+            paths,
+            "unpacked the bundled extensions; reload them in the browser",
+        ),
+        Ok(false) => {}
+        Err(e) => log(
+            paths,
+            &format!("the bundled extensions did not unpack: {e}"),
+        ),
+    }
     let store = Store::open(&paths.database()).map_err(std::io::Error::other)?;
     let daemon = Arc::new(Daemon::new(store, paths));
     crate::update::clean_up();
@@ -651,7 +663,7 @@ impl Daemon {
             Request::InstallService => {
                 // A separate process: on Linux the install stops this daemon so that the service
                 // owns Lens, which would end the install halfway if it ran in here.
-                let executable = std::env::current_exe().map_err(storage)?;
+                let executable = crate::paths::executable().map_err(storage)?;
                 std::process::Command::new(executable)
                     .args(["service", "install"])
                     .stdin(std::process::Stdio::null())
@@ -662,7 +674,7 @@ impl Daemon {
                 Reply::Done
             }
             Request::SetupStatus => {
-                let executable = std::env::current_exe().map_err(storage)?;
+                let executable = crate::paths::executable().map_err(storage)?;
                 let service = match crate::service::state(&self.paths) {
                     crate::service::State::Installed { manager } => Some(manager.to_string()),
                     crate::service::State::NotInstalled => None,
@@ -948,7 +960,7 @@ impl Daemon {
 
 impl Daemon {
     fn update_state(&self, store: &Store) -> Result<UpdateState, ProtocolError> {
-        let executable = std::env::current_exe().map_err(storage)?;
+        let executable = crate::paths::executable().map_err(storage)?;
         Ok(UpdateState {
             current: env!("CARGO_PKG_VERSION").into(),
             available: store.setting("update.available").map_err(storage)?,
@@ -1000,7 +1012,7 @@ impl Daemon {
             &format!("installing update {}", manifest.version),
         );
         // Read before the file is replaced: afterwards Linux reports this binary as "… (deleted)".
-        let executable = std::env::current_exe().map_err(storage)?;
+        let executable = crate::paths::executable().map_err(storage)?;
         if let Err(e) = crate::update::install(&self.paths, &manifest) {
             let _ = self.lock_store().set_setting("update.error", &e);
             return Err(remote(e));
@@ -1584,7 +1596,7 @@ fn schedule_updates(daemon: Arc<Daemon>) {
     std::thread::spawn(move || {
         std::thread::sleep(std::time::Duration::from_secs(3600));
         loop {
-            let executable = std::env::current_exe();
+            let executable = crate::paths::executable();
             let managed = executable
                 .as_deref()
                 .ok()

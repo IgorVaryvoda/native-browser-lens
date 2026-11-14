@@ -141,6 +141,87 @@ jobs:
           path: dist/*
           if-no-files-found: error
 
+  # Friendly installers, one build per platform: Sirv Lens.app in a DMG, a per-user setup program,
+  # and an AppImage, a .deb and an Arch package. Each runs the first run when opened (lens open).
+  installers:
+    name: installers ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    env:
+      CAN_SIGN_APPLE: ${{ secrets.APPLE_SIGNING_IDENTITY != '' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: macos-15, formats: "app,dmg", gpu: metal }
+          - { os: macos-15-intel, formats: "app,dmg", gpu: "" }
+          - { os: windows-2025, formats: nsis, gpu: vulkan }
+          - { os: ubuntu-24.04, formats: "appimage,deb,pacman", gpu: vulkan }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+        with:
+          package_json_file: extension/package.json
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: extension/pnpm-lock.yaml
+      - name: Rust toolchain
+        shell: bash
+        run: rustup toolchain install
+      - name: Tools (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libvulkan-dev glslc libfuse2 file
+      - name: Tools (Windows)
+        if: runner.os == 'Windows'
+        run: choco install nsis -y --no-progress
+      - name: Vulkan SDK (Windows)
+        if: runner.os == 'Windows'
+        uses: jakoch/install-vulkan-sdk-action@7fe84289ddbf750f7eff9f8e4588e600e1dd06c8 # v1.8.1
+        with:
+          cache: true
+      - name: Packager
+        run: cargo install cargo-packager --version 0.11.8 --locked
+      - name: Extension dependencies
+        working-directory: extension
+        run: pnpm install --frozen-lockfile
+      - name: Signing keychain (macOS)
+        if: runner.os == 'macOS' && env.CAN_SIGN_APPLE == 'true'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          security create-keychain -p "" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "" "$keychain"
+          echo "$APPLE_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/certificate.p12"
+          security import "$RUNNER_TEMP/certificate.p12" -k "$keychain" -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security list-keychains -d user -s "$keychain"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "" "$keychain"
+      - name: Build the installers
+        shell: bash
+        env:
+          # cargo-packager signs and notarizes the app when these exist.
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          gpu=(); [[ -n "${{ matrix.gpu }}" ]] && gpu=(--gpu "${{ matrix.gpu }}")
+          node scripts/package.mjs --formats "${{ matrix.formats }}" "${gpu[@]}"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: installers-${{ matrix.os }}
+          path: |
+            dist/*.dmg
+            dist/*-setup.exe
+            dist/*.AppImage
+            dist/*.deb
+            dist/*-pacman.tar.gz
+          if-no-files-found: error
+
   extension:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -169,7 +250,7 @@ jobs:
           if-no-files-found: error
 
   publish:
-    needs: [binary, extension]
+    needs: [binary, installers, extension]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-24.04
     permissions:

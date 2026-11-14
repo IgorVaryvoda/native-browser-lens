@@ -215,7 +215,7 @@ pub fn doctor(paths: &Paths) -> io::Result<()> {
 
 /// Fixes what it can, then waits for each browser step, showing the checklist when it changes.
 pub fn setup(paths: &Paths) -> io::Result<()> {
-    let executable = std::env::current_exe()?;
+    let executable = crate::paths::executable()?;
     println!(
         "Setting up Lens. Press Ctrl+C at any time; lens setup continues where you stopped.\n"
     );
@@ -256,6 +256,104 @@ pub fn setup(paths: &Paths) -> io::Result<()> {
         io::stdout().flush()?;
         std::thread::sleep(Duration::from_secs(2));
     }
+}
+
+/// `lens open`, and Lens started from the Applications folder, the Start menu or the app menu:
+/// everything `lens setup` does, without a terminal. It unpacks the bundled extensions, registers
+/// with the browsers, starts Lens at login (the daemon then shows the tray icon), and opens the
+/// welcome page until an extension has connected. A problem shows on that page.
+pub fn open(paths: &Paths) -> io::Result<()> {
+    let result = open_steps(paths);
+    let connected = matches!(result, Ok(true));
+    if !connected {
+        let problem = result.as_ref().err().map(|e| e.to_string());
+        if let Err(e) = &result {
+            crate::daemon::log(paths, &format!("lens open: {e}"));
+        }
+        let page = paths.data.join("welcome.html");
+        std::fs::create_dir_all(&paths.data)?;
+        std::fs::write(&page, welcome(paths, problem.as_deref()))?;
+        open_url(&page.display().to_string())?;
+    }
+    result.map(drop)
+}
+
+/// The setup steps of `open`; true when an extension of this version has already connected.
+fn open_steps(paths: &Paths) -> io::Result<bool> {
+    let executable = crate::paths::executable()?;
+    crate::bundle::sync_extensions(paths)?;
+    crate::register::register(paths, &executable)?;
+    if crate::service::state(paths) == crate::service::State::NotInstalled {
+        crate::service::install(paths, &executable)?;
+    } else {
+        crate::service::start(paths)?;
+    }
+    // The service manager starts the daemon; give it a moment before asking it.
+    for _ in 0..40 {
+        if let Ok(found) = Client::attach(paths).and_then(|mut c| status(&mut c)) {
+            return Ok(found
+                .extensions
+                .iter()
+                .any(|e| e.client.protocol == PROTOCOL_VERSION));
+        }
+        std::thread::sleep(Duration::from_millis(250));
+    }
+    Err(io::Error::other(
+        "the Lens app did not start; run lens doctor in a terminal to see why",
+    ))
+}
+
+fn welcome(paths: &Paths, problem: Option<&str>) -> String {
+    let escape = |text: &str| {
+        text.replace('&', "&amp;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;")
+            .replace('"', "&quot;")
+    };
+    let mut page = include_str!("welcome.html").to_string();
+    // Firefox only where it is installed: one browser's steps are enough to read.
+    let firefox = crate::register::check(paths, std::path::Path::new(""))
+        .iter()
+        .any(|b| b.name.starts_with("Firefox") && b.installed);
+    if !firefox
+        && let (Some(start), Some(end)) =
+            (page.find("<!--firefox-->"), page.find("<!--/firefox-->"))
+    {
+        page.replace_range(start..end + "<!--/firefox-->".len(), "");
+    }
+    let tray = if cfg!(target_os = "macos") {
+        "menu bar"
+    } else {
+        "system tray"
+    };
+    page.replace("{{VERSION}}", env!("CARGO_PKG_VERSION"))
+        .replace("{{TRAY}}", tray)
+        .replace(
+            "{{CHROME_FOLDER}}",
+            &escape(&paths.data.join("extension").display().to_string()),
+        )
+        .replace(
+            "{{FIREFOX_MANIFEST}}",
+            &escape(
+                &paths
+                    .data
+                    .join("extension-firefox")
+                    .join("manifest.json")
+                    .display()
+                    .to_string(),
+            ),
+        )
+        .replace(
+            "{{PROBLEM}}",
+            &problem
+                .map(|p| {
+                    format!(
+                        "<p class=\"problem\" role=\"alert\">Setup stopped: {}</p>",
+                        escape(p)
+                    )
+                })
+                .unwrap_or_default(),
+        )
 }
 
 fn open_url(url: &str) -> io::Result<()> {
@@ -302,6 +400,21 @@ mod tests {
 
     fn mark(steps: &[Step], name: &str) -> Mark {
         steps.iter().find(|s| s.name == name).unwrap().mark
+    }
+
+    #[test]
+    fn the_welcome_page_names_the_folders_and_escapes_them() {
+        let page = welcome(
+            &Paths {
+                data: "/home/a&b/lens".into(),
+                runtime: "/r".into(),
+                logs: "/l".into(),
+            },
+            Some("<boom>"),
+        );
+        assert!(page.contains("/home/a&amp;b/lens/extension"));
+        assert!(page.contains("Setup stopped: &lt;boom&gt;"));
+        assert!(!page.contains("{{"));
     }
 
     #[test]

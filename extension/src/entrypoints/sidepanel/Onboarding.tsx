@@ -4,20 +4,21 @@ import type { SetupStatus } from '@/protocol/SetupStatus';
 import { CopyIcon, DoneIcon } from '@/ui/icons';
 import { useStored } from './Record';
 
-const RELEASES = 'https://github.com/VKrachun/native-browser-lens/releases/latest/download';
+const REPO = 'https://github.com/VKrachun/native-browser-lens/releases';
+const RELEASES = `${REPO}/latest/download`;
 
-/** The install line for this computer, as the release pages publish it. */
-function installCommand(os: string) {
-  return os === 'win'
-    ? { shell: 'PowerShell', command: `irm ${RELEASES}/install.ps1 | iex` }
-    : { shell: os === 'mac' ? 'Terminal' : 'a terminal', command: `curl -fsSL ${RELEASES}/install.sh | sh` };
+/** The installer for this computer, as people know it, and the terminal line for those who prefer it. */
+function installerFor(os: string) {
+  if (os === 'win') return { system: 'Windows', file: 'the setup program (.exe)', shell: 'PowerShell', command: `irm ${RELEASES}/install.ps1 | iex` };
+  if (os === 'mac') return { system: 'Mac', file: 'the .dmg', shell: 'Terminal', command: `curl -fsSL ${RELEASES}/install.sh | sh` };
+  return { system: 'Linux', file: 'the .deb, the Arch package or the AppImage', shell: 'a terminal', command: `curl -fsSL ${RELEASES}/install.sh | sh` };
 }
 
 /** The browser's "host not found" means the app is not installed; anything else, that it failed. */
 export const appMissing = (reason: string) => /not found/i.test(reason);
 
 /**
- * Shown while the extension cannot reach the Lens app: the one line that installs it, and a wait
+ * Shown while the extension cannot reach the Lens app: the installer for this computer, and a wait
  * that ends by itself when the app answers.
  */
 export function InstallApp({ reason }: { reason: string }) {
@@ -27,7 +28,7 @@ export function InstallApp({ reason }: { reason: string }) {
     void browser.runtime.getPlatformInfo().then((info) => setOs(info.os));
   }, []);
   const missing = appMissing(reason);
-  const { shell, command } = installCommand(os);
+  const { system, file, shell, command } = installerFor(os);
   return (
     <section className="card onboarding" aria-label="Install the Lens app">
       <h2>{missing ? 'Install the Lens app' : 'The Lens app did not start'}</h2>
@@ -38,28 +39,30 @@ export function InstallApp({ reason }: { reason: string }) {
         </p>
       ) : (
         <p className="muted">
-          It is installed, but the browser could not start it: <em>{reason}</em>. Run the install line again to repair it,
-          or <code>lens doctor</code> to see what is wrong.
+          It is installed, but the browser could not start it: <em>{reason}</em>. Open Sirv Lens from your applications
+          to repair it.
         </p>
       )}
-      <ol className="install-steps">
-        <li>Open {shell}.</li>
-        <li>
-          Paste this line and press Enter:
-          <div className="command">
-            <code>{command}</code>
-            <button
-              type="button"
-              className="btn btn-sm btn-secondary"
-              onClick={() => void navigator.clipboard.writeText(command).then(() => setCopied(true))}
-            >
-              {copied ? <DoneIcon size={14} /> : <CopyIcon size={14} />}
-              {copied ? 'Copied' : 'Copy'}
-            </button>
-          </div>
-        </li>
-        <li>Come back here. This panel continues by itself.</li>
-      </ol>
+      <a className="btn btn-primary btn-block" href={`${REPO}/latest`} target="_blank" rel="noreferrer">
+        Download for {system}
+      </a>
+      <p className="small muted">
+        Choose {file}, open it, and then open Sirv Lens. This panel continues by itself.
+      </p>
+      <details className="terminal-install">
+        <summary className="small muted">Install from {shell} instead</summary>
+        <div className="command">
+          <code>{command}</code>
+          <button
+            type="button"
+            className="btn btn-sm btn-secondary"
+            onClick={() => void navigator.clipboard.writeText(command).then(() => setCopied(true))}
+          >
+            {copied ? <DoneIcon size={14} /> : <CopyIcon size={14} />}
+            {copied ? 'Copied' : 'Copy'}
+          </button>
+        </div>
+      </details>
       <p className="waiting small muted" role="status" aria-label="Waiting for the app">
         <span className="spinner" aria-hidden="true" />
         Waiting for the app

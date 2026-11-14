@@ -647,3 +647,10 @@ span.hero {
   font: 500 12px var(--font-ui);
   color: var(--muted-foreground);
 }
+
+.terminal-install summary {
+  cursor: pointer;
+}
+.terminal-install .command {
+  margin-top: 8px;
+}

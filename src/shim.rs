@@ -70,7 +70,7 @@ pub fn connect_or_start(paths: &Paths) -> io::Result<Stream> {
 fn spawn_daemon(paths: &Paths) -> io::Result<()> {
     paths.ensure()?;
     let log = paths.log("lensd.log")?;
-    let mut command = Command::new(std::env::current_exe()?);
+    let mut command = Command::new(crate::paths::executable()?);
     command
         .arg("daemon")
         .stdin(Stdio::null())
