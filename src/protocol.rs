@@ -176,6 +176,8 @@ pub struct ReviewRequest {
     /// an explicit choice.
     #[ts(type = "Array<number>")]
     pub recordings: Vec<i64>,
+    /// Whether the values the person typed leave with the steps. Without it they are masked.
+    pub typed_values: bool,
     pub screenshots_checked: bool,
 }
 
@@ -226,6 +228,21 @@ pub struct ReviewItem {
     pub recording: Option<BlobRef>,
     /// What failed, as the report states it: HTTP errors, failed requests, console errors.
     pub findings: Vec<String>,
+    /// What each mark on the screenshot points at, in the order of the marks. Masks are left out.
+    #[serde(default)]
+    pub marks: Vec<MarkTarget>,
+}
+
+/// The page elements under one mark.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct MarkTarget {
+    /// The mark's position among the capture's marks, from 1.
+    pub mark: u32,
+    /// `rectangle`, `arrow` or `pen`.
+    pub kind: String,
+    pub elements: Vec<Locator>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
@@ -386,6 +403,72 @@ pub struct Evidence {
     pub events: Vec<EvidenceEvent>,
     pub gaps: Vec<CoverageGap>,
     pub page: Option<serde_json::Value>,
+    /// What the person did in the tab, oldest first.
+    #[serde(default)]
+    pub actions: Vec<Action>,
+    /// The visible elements at the moment of the capture, so marks can name what they point at.
+    /// Reviews leave this list out.
+    #[serde(default)]
+    pub elements: Vec<PageElement>,
+}
+
+/// One thing the person did, with a locator a test runner can find again.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct Action {
+    #[ts(type = "number")]
+    pub timestamp: i64,
+    pub kind: ActionKind,
+    /// The page URL when it happened, redacted.
+    pub url: String,
+    pub target: Option<Locator>,
+    /// The typed text, the chosen option, the key (`Enter`, `Control+k`) or the scroll offset.
+    pub value: Option<String>,
+    /// The person typed here, but the value stays on this computer: a password, a card number,
+    /// a field with a sensitive name, or a review without typed values.
+    pub masked: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum ActionKind {
+    Click,
+    Fill,
+    Press,
+    Select,
+    Check,
+    Uncheck,
+    Upload,
+    Scroll,
+    Navigate,
+}
+
+/// Ways to find an element again, best first: test ID, role and accessible name, text, CSS.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct Locator {
+    pub test_id: Option<String>,
+    pub role: Option<String>,
+    pub name: Option<String>,
+    /// Which match it is, from 0, when the role and name match more than one element.
+    pub nth: Option<u32>,
+    pub text: Option<String>,
+    pub css: String,
+}
+
+/// An element on screen at the moment of the capture, in CSS pixels of the viewport.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct PageElement {
+    pub locator: Locator,
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, TS)]

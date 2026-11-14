@@ -11,6 +11,7 @@ mod paths;
 mod protocol;
 mod register;
 mod render;
+mod repro;
 mod secrets;
 mod service;
 mod setup;

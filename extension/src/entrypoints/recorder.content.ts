@@ -1,13 +1,25 @@
 import { record } from '@rrweb/record';
 import type { eventWithTime } from '@rrweb/types';
+import { ActionRecorder, elementMap } from '@/collector/actions';
 import { BLOCK_SELECTOR, scrubRecording } from '@/collector/recording';
+import type { Action } from '@/protocol/Action';
+import type { PageElement } from '@/protocol/PageElement';
 
 /** A full DOM checkpoint this often; the recorder keeps the current and the previous segment. */
 const CHECKOUT_MS = 30_000;
 /** Beyond this the oldest segment goes first, so a busy page cannot exhaust memory. */
 const MAX_EVENTS = 20_000;
+/** Elements named for marks; the daemon keeps at most 800. */
+const MAX_ELEMENTS = 800;
 
-export type RecorderRequest = { kind: 'lens-recording' };
+export type RecorderRequest = { kind: 'lens-prepare' };
+/** What the page holds for a capture: the DOM recording, steps not reported yet, and what is on screen. */
+export interface Prepared {
+  recording: eventWithTime[];
+  pending: Action[];
+  elements: PageElement[];
+}
+export type RecorderMessage = { kind: 'lens-action'; action: Action };
 
 // Injected by the background only into tabs Lens collects on (registration: 'runtime').
 export default defineContentScript({
@@ -39,9 +51,21 @@ export default defineContentScript({
       collectFonts: false,
     });
 
+    // Steps go to the background as they happen, so they outlive this document.
+    let collecting: Action[] | null = null;
+    const steps = new ActionRecorder(document, (action) => {
+      if (collecting) collecting.push(action);
+      else void browser.runtime.sendMessage({ kind: 'lens-action', action } satisfies RecorderMessage).catch(() => {});
+    });
+    steps.start();
+
     browser.runtime.onMessage.addListener((message: RecorderRequest, _sender, reply) => {
-      if (message?.kind !== 'lens-recording') return;
-      reply([...previous, ...current]);
+      if (message?.kind !== 'lens-prepare') return;
+      collecting = [];
+      steps.flushAll();
+      const pending = collecting;
+      collecting = null;
+      reply({ recording: [...previous, ...current], pending, elements: elementMap(document, MAX_ELEMENTS) } satisfies Prepared);
     });
   },
 });

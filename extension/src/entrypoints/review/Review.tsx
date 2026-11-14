@@ -9,6 +9,8 @@ import type { Member } from '@/protocol/Member';
 import type { AgentInfo } from '@/protocol/AgentInfo';
 import type { Agent } from '@/protocol/Agent';
 import type { Suggestion } from '@/protocol/Suggestion';
+import type { Action } from '@/protocol/Action';
+import type { Locator } from '@/protocol/Locator';
 import { AlertIcon, DoneIcon, DraftIcon, ExportIcon, FileIcon, MaskIcon } from '@/ui/icons';
 
 /**
@@ -22,6 +24,7 @@ export function Review({ observation: id }: { observation: number }) {
   const [chosen, setChosen] = useState<Set<number>>(new Set());
   const [recordings, setRecordings] = useState<Set<number>>(new Set());
   const [checked, setChecked] = useState(false);
+  const [typedValues, setTypedValues] = useState(true);
   const [review, setReview] = useState<FrozenReview | null>(null);
   const [exported, setExported] = useState<string | null>(null);
   const [members, setMembers] = useState<Member[] | null>(null);
@@ -58,6 +61,7 @@ export function Review({ observation: id }: { observation: number }) {
           revision: observation.revision,
           captures: captures.filter((c) => chosen.has(c.id)).map((c) => c.id),
           recordings: captures.filter((c) => chosen.has(c.id) && recordings.has(c.id)).map((c) => c.id),
+          typedValues,
           screenshotsChecked: checked,
         },
       });
@@ -188,8 +192,10 @@ export function Review({ observation: id }: { observation: number }) {
                   ) : (
                     <p className="small muted">No failed requests, console errors or exceptions.</p>
                   )}
+                  <Steps client={client} evidence={item.evidence} label={`Steps of capture ${index + 1}`} />
                   <p className="small muted" aria-label={`Files of capture ${item.capture}`}>
-                    Files: capture-{index + 1}.png, capture-{index + 1}-evidence.json
+                    Files: capture-{index + 1}.png, capture-{index + 1}-timeline.txt, capture-{index + 1}.spec.ts,
+                    capture-{index + 1}.har, capture-{index + 1}-evidence.json
                     {item.recording && `, capture-${index + 1}-recording.json`}
                   </p>
                 </div>
@@ -302,6 +308,15 @@ export function Review({ observation: id }: { observation: number }) {
               Nothing leaves your computer until you create the review. Check every screenshot for private data; mask it
               in the editor first.
             </p>
+            <label className="check">
+              <input type="checkbox" checked={typedValues} onChange={(e) => setTypedValues(e.target.checked)} />
+              <span>
+                Include what I typed in the steps
+                <span className="small muted" style={{ display: 'block' }}>
+                  So an agent can repeat them. Passwords, card numbers and fields with private names are always masked.
+                </span>
+              </span>
+            </label>
           </section>
           <ol aria-label="Captures to review" className="review-list">
             {captures.map((c) => (
@@ -334,6 +349,7 @@ export function Review({ observation: id }: { observation: number }) {
                     <MaskIcon />
                     Mark up or mask
                   </button>
+                  <Steps client={client} evidence={c.evidence} label={`Steps of capture ${c.id}`} hideValues={!typedValues} />
                   {c.recording && (
                     <label className="check">
                       <input
@@ -378,6 +394,75 @@ export function Review({ observation: id }: { observation: number }) {
       )}
     </main>
   );
+}
+
+/** The person's steps from a capture's evidence, as the review will share them. */
+function Steps({
+  client,
+  evidence,
+  label,
+  hideValues = false,
+}: {
+  client: LensClient;
+  evidence: BlobRef;
+  label: string;
+  hideValues?: boolean;
+}) {
+  const [actions, setActions] = useState<Action[] | null>(null);
+  useEffect(() => {
+    void client
+      .readBlob(evidence)
+      .then((data) => data.text())
+      .then((text) => setActions((JSON.parse(text) as { actions?: Action[] }).actions ?? []))
+      .catch(() => setActions([]));
+  }, [client, evidence]);
+  if (!actions?.length) return actions ? <p className="small muted">Lens recorded no steps.</p> : null;
+  const shown = actions.filter((a) => a.kind !== 'scroll');
+  return (
+    <details className="steps">
+      <summary className="small">
+        {shown.length} {shown.length === 1 ? 'step' : 'steps'}
+      </summary>
+      <ol aria-label={label} className="small">
+        {shown.map((a, n) => (
+          <li key={n}>{describeStep(a, hideValues)}</li>
+        ))}
+      </ol>
+    </details>
+  );
+}
+
+function describeTarget(l: Locator | null) {
+  if (!l) return 'the page';
+  if (l.testId) return `[data-testid=${l.testId}]`;
+  if (l.role && l.name) return `${l.role} “${l.name}”`;
+  if (l.text) return `“${l.text}”`;
+  return l.css;
+}
+
+function describeStep(a: Action, hideValues: boolean) {
+  const target = describeTarget(a.target);
+  const hidden = a.masked || hideValues;
+  switch (a.kind) {
+    case 'click':
+      return `Click ${target}`;
+    case 'fill':
+      return hidden ? `Type a private value into ${target}` : `Type “${a.value}” into ${target}`;
+    case 'press':
+      return `Press ${a.value} in ${target}`;
+    case 'select':
+      return hidden ? `Choose a private option in ${target}` : `Choose “${a.value}” in ${target}`;
+    case 'check':
+      return `Check ${target}`;
+    case 'uncheck':
+      return `Uncheck ${target}`;
+    case 'upload':
+      return `Choose files (${a.value}) in ${target}`;
+    case 'navigate':
+      return `Go to ${a.url}`;
+    default:
+      return `Scroll to ${a.value}`;
+  }
 }
 
 function BlobImage({ client, blob, alt }: { client: LensClient; blob: BlobRef; alt: string }) {

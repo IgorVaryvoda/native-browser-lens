@@ -1,12 +1,13 @@
+import type { Action } from '@/protocol/Action';
 import type { CaptureMode } from '@/protocol/CaptureMode';
 import type { CoverageGap } from '@/protocol/CoverageGap';
 import type { EvidenceEvent } from '@/protocol/EvidenceEvent';
 import { sanitize } from './sanitize';
 
 export const WINDOW_MS = 120_000;
-export const MAX_EVENTS = 256;
+export const MAX_EVENTS = 512;
 export const MAX_EVENT_BYTES = 24 * 1024;
-export const MAX_BUFFER_BYTES = 384 * 1024;
+export const MAX_BUFFER_BYTES = 1024 * 1024;
 const MAX_GAPS = 40;
 
 const bytes = (value: unknown) => new TextEncoder().encode(JSON.stringify(value)).length;
@@ -83,5 +84,33 @@ export class EvidenceBuffer {
       evicted = true;
     }
     if (evicted) this.gap(tabId, 'buffer', 'Oldest evidence evicted by the count or byte budget');
+  }
+}
+
+/** Steps live longer than the evidence window: the flow that led to a defect often starts earlier. */
+export const ACTION_WINDOW_MS = 10 * 60_000;
+export const MAX_ACTIONS = 300;
+
+/** The person's recent steps in each collected tab. */
+export class ActionLog {
+  private readonly tabs = new Map<number, Action[]>();
+
+  constructor(private readonly now: () => number = Date.now) {}
+
+  add(tabId: number, action: Action) {
+    const list = this.tabs.get(tabId) ?? [];
+    list.push(action);
+    const cutoff = this.now() - ACTION_WINDOW_MS;
+    while (list.length && (list.length > MAX_ACTIONS || list[0]!.timestamp < cutoff)) list.shift();
+    this.tabs.set(tabId, list);
+  }
+
+  snapshot(tabId: number): Action[] {
+    const cutoff = this.now() - ACTION_WINDOW_MS;
+    return (this.tabs.get(tabId) ?? []).filter((a) => a.timestamp >= cutoff);
+  }
+
+  clear(tabId: number) {
+    this.tabs.delete(tabId);
   }
 }

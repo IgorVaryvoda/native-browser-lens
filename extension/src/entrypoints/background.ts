@@ -1,19 +1,23 @@
-import { EvidenceBuffer } from '@/collector/buffer';
+import { ActionLog, EvidenceBuffer } from '@/collector/buffer';
 import { DeepCollector } from '@/collector/deep';
 import { LimitedCollector } from '@/collector/limited';
-import { sanitizeUrl } from '@/collector/sanitize';
+import { sanitize, sanitizeUrl } from '@/collector/sanitize';
 import { LensClient } from '@/lens-client';
 import { clientInfo } from '@/identity';
 import { originOf, type BackgroundRequest, type Broadcast, type CaptureResult, type TabStatus } from '@/messages';
 import type { Project } from '@/protocol/Project';
 import type { JsonValue } from '@/protocol/serde_json/JsonValue';
 import type { CoverageGap } from '@/protocol/CoverageGap';
+import type { Action } from '@/protocol/Action';
+import type { PageElement } from '@/protocol/PageElement';
+import type { Prepared, RecorderMessage } from './recorder.content';
 
 /** The request limit is 16 MiB, shared with the screenshot and the evidence. */
 const MAX_RECORDING_BYTES = 8 * 1024 * 1024;
 
 export default defineBackground(() => {
   const buffer = new EvidenceBuffer();
+  const actions = new ActionLog();
   const urls = new Map<number, string>();
   const deep = DeepCollector.available() ? new DeepCollector(buffer, (tabId) => urls.get(tabId)) : undefined;
   if (!deep) new LimitedCollector(buffer, (tabId) => buffer.mode(tabId) !== undefined).listen();
@@ -49,7 +53,7 @@ export default defineBackground(() => {
 
   async function syncNow(tabId: number) {
     if (!(await allowed(tabId))) {
-      buffer.stop(tabId);
+      stop(tabId);
       await deep?.detach(tabId);
       return;
     }
@@ -64,9 +68,14 @@ export default defineBackground(() => {
       buffer.gap(tabId, 'debugger', `The browser refused the debugger: ${(error as Error).message}`);
     }
     if (!(await allowed(tabId))) {
-      buffer.stop(tabId);
+      stop(tabId);
       await deep.detach(tabId);
     }
+  }
+
+  function stop(tabId: number) {
+    buffer.stop(tabId);
+    actions.clear(tabId);
   }
 
   /** The rrweb recorder, in collected tabs only. Idempotent: the script guards against a second run. */
@@ -78,20 +87,26 @@ export default defineBackground(() => {
     }
   }
 
-  /** The tab's recent DOM recording, or null with a gap that says why. */
-  async function takeRecording(tabId: number, gaps: CoverageGap[]) {
-    const gap = (reason: string) => gaps.push({ channel: 'recording', reason, startedAt: Date.now(), endedAt: null });
-    if (buffer.mode(tabId) === undefined) return null;
+  /**
+   * What the page holds for a capture: its recent DOM recording (or null with a gap that says
+   * why), the steps it had not reported yet, and the elements on screen.
+   */
+  async function preparePage(tabId: number, gaps: CoverageGap[]) {
+    const gap = (channel: string, reason: string) => gaps.push({ channel, reason, startedAt: Date.now(), endedAt: null });
+    const empty = { recording: null, pending: [] as Action[], elements: [] as PageElement[] };
+    if (buffer.mode(tabId) === undefined) return empty;
     try {
-      const events = (await Promise.race([
-        browser.tabs.sendMessage(tabId, { kind: 'lens-recording' }),
+      const prepared = (await Promise.race([
+        browser.tabs.sendMessage(tabId, { kind: 'lens-prepare' }),
         new Promise((_, fail) => setTimeout(() => fail(new Error('the recorder did not answer')), 3000)),
-      ])) as unknown[] | undefined;
-      if (!events?.length) return gap('The recording is empty'), null;
-      if (JSON.stringify(events).length > MAX_RECORDING_BYTES) return gap('The recording exceeds 8 MiB'), null;
-      return events as JsonValue[];
+      ])) as Prepared | undefined;
+      if (!prepared) return gap('recording', 'The recorder did not answer'), empty;
+      let recording: JsonValue[] | null = prepared.recording as unknown as JsonValue[];
+      if (!recording.length) (gap('recording', 'The recording is empty'), (recording = null));
+      else if (JSON.stringify(recording).length > MAX_RECORDING_BYTES) (gap('recording', 'The recording exceeds 8 MiB'), (recording = null));
+      return { recording, pending: prepared.pending, elements: prepared.elements };
     } catch (error) {
-      return gap((error as Error).message), null;
+      return gap('recording', (error as Error).message), empty;
     }
   }
 
@@ -133,7 +148,7 @@ export default defineBackground(() => {
         events: [],
         gaps: [{ channel: 'collector', reason: 'Lens does not collect evidence on this site', startedAt: Date.now(), endedAt: null }],
       };
-      const recording = await takeRecording(tabId, snapshot.gaps);
+      const { recording, pending, elements } = await preparePage(tabId, snapshot.gaps);
       const page = await pageSnapshot(tabId).catch((error: Error) => {
         snapshot.gaps.push({ channel: 'page', reason: error.message, startedAt: Date.now(), endedAt: null });
         return null;
@@ -145,7 +160,7 @@ export default defineBackground(() => {
           pageUrl: sanitizeUrl(tab.url ?? ''),
           pageTitle: tab.title ?? '',
           screenshot,
-          evidence: { ...snapshot, page },
+          evidence: { ...snapshot, page, actions: [...actions.snapshot(tabId), ...pending], elements },
           recording,
         },
       });
@@ -165,7 +180,12 @@ export default defineBackground(() => {
     return image.slice(image.indexOf(',') + 1);
   }
 
-  browser.runtime.onMessage.addListener((message: BackgroundRequest, _sender, reply) => {
+  browser.runtime.onMessage.addListener((message: BackgroundRequest | RecorderMessage, sender, reply) => {
+    if (message.kind === 'lens-action') {
+      const tabId = sender.tab?.id;
+      if (tabId !== undefined && buffer.mode(tabId) !== undefined) actions.add(tabId, message.action);
+      return;
+    }
     const work =
       message.kind === 'capture'
         ? capture(message.tabId, message.observation)
@@ -179,8 +199,11 @@ export default defineBackground(() => {
   browser.tabs.onUpdated.addListener((tabId, change, tab) => {
     if (change.url && buffer.mode(tabId) !== undefined) {
       // Leaving the project's origins stops recording at once; sync then detaches.
-      if (projectFor(originOf(change.url))) buffer.record(tabId, 'navigation', { url: change.url });
-      else buffer.stop(tabId);
+      if (projectFor(originOf(change.url))) {
+        buffer.record(tabId, 'navigation', { url: change.url });
+        const url = sanitizeUrl(change.url);
+        actions.add(tabId, { timestamp: Date.now(), kind: 'navigate', url, target: null, value: null, masked: false });
+      } else stop(tabId);
     }
     if (change.url || change.status === 'complete') {
       void sync(tabId, tab.url).then(async () => {
@@ -192,7 +215,7 @@ export default defineBackground(() => {
   });
   browser.tabs.onActivated.addListener(({ tabId }) => void broadcast({ kind: 'tabChanged', tabId }));
   browser.tabs.onRemoved.addListener((tabId) => {
-    buffer.stop(tabId);
+    stop(tabId);
     urls.delete(tabId);
     void deep?.detach(tabId);
   });
@@ -245,10 +268,26 @@ async function pageSnapshot(tabId: number) {
         scrollY,
       },
       language: navigator.language,
+      timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      colorScheme: matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light',
+      reducedMotion: matchMedia('(prefers-reduced-motion: reduce)').matches,
+      online: navigator.onLine,
       userAgent: navigator.userAgent,
       buildId:
         document.querySelector('meta[name="build-sha"],meta[name="git-commit"]')?.getAttribute('content') ?? null,
+      // A site can say what the defect depends on: account role, feature flags, release.
+      // <script type="application/json" id="lens-context">{...}</script>
+      context: (() => {
+        const text = document.querySelector('script#lens-context[type="application/json"]')?.textContent ?? '';
+        if (!text || text.length > 8192) return null;
+        try {
+          return JSON.parse(text) as unknown;
+        } catch {
+          return null;
+        }
+      })(),
     }),
   });
-  return (result?.result ?? null) as JsonValue | null;
+  // The context comes from the site: the redaction rules apply to it like to any evidence.
+  return sanitize(result?.result ?? null) as JsonValue | null;
 }

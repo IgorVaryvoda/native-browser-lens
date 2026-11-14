@@ -9,4 +9,8 @@ revision: number, captures: Array<number>,
  * Captures whose DOM recording leaves too. Masks do not apply to recordings, so each one is
  * an explicit choice.
  */
-recordings: Array<number>, screenshotsChecked: boolean, };
+recordings: Array<number>, 
+/**
+ * Whether the values the person typed leave with the steps. Without it they are masked.
+ */
+typedValues: boolean, screenshotsChecked: boolean, };

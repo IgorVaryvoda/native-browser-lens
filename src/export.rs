@@ -1,7 +1,8 @@
 //! A review as a folder anyone can open: a Markdown report, the rendered screenshots, the evidence
 //! and the recordings, and the review itself as JSON.
 use crate::blobs::Blobs;
-use crate::protocol::Review;
+use crate::protocol::{Evidence, Review, ReviewItem};
+use crate::repro;
 use serde_json::Value;
 use std::fmt::Write as _;
 use std::io;
@@ -28,6 +29,10 @@ pub fn export(review: &Review, blobs: &Blobs, root: &Path) -> io::Result<PathBuf
         )?;
         let evidence = blobs.read_all(&item.evidence.sha256)?;
         std::fs::write(folder.join(format!("capture-{n}-evidence.json")), &evidence)?;
+        let parsed = repro::parse(&evidence);
+        for (name, contents) in reproduction(item, n, parsed.as_ref()) {
+            std::fs::write(folder.join(name), contents)?;
+        }
         if let Some(recording) = &item.recording {
             std::fs::write(
                 folder.join(format!("capture-{n}-recording.json")),
@@ -52,6 +57,14 @@ pub fn export(review: &Review, blobs: &Blobs, root: &Path) -> io::Result<PathBuf
             }
             report.push('\n');
         }
+        if let Some(evidence) = &parsed {
+            let _ = write!(
+                report,
+                "Steps and events, oldest first. To repeat the steps: \
+                 `npx playwright test capture-{n}.spec.ts`\n\n{}\n",
+                fenced(&repro::timeline(evidence))
+            );
+        }
     }
     std::fs::write(folder.join("report.md"), report)?;
     std::fs::write(
@@ -59,6 +72,43 @@ pub fn export(review: &Review, blobs: &Blobs, root: &Path) -> io::Result<PathBuf
         serde_json::to_vec_pretty(review)?,
     )?;
     Ok(folder)
+}
+
+/// The generated files of one capture: its timeline, a Playwright test, and a HAR file.
+pub fn reproduction(
+    item: &ReviewItem,
+    n: usize,
+    evidence: Option<&Evidence>,
+) -> Vec<(String, Vec<u8>)> {
+    let Some(evidence) = evidence else {
+        return Vec::new();
+    };
+    let title = if item.page_title.is_empty() {
+        &item.page_url
+    } else {
+        &item.page_title
+    };
+    vec![
+        (
+            format!("capture-{n}-timeline.txt"),
+            repro::timeline(evidence).into_bytes(),
+        ),
+        (
+            format!("capture-{n}.spec.ts"),
+            repro::playwright(evidence, n, title, &item.page_url).into_bytes(),
+        ),
+        (
+            format!("capture-{n}.har"),
+            serde_json::to_vec_pretty(&repro::har(evidence)).expect("HAR serializes"),
+        ),
+    ]
+}
+
+/// A fenced code block whose fence is longer than any backtick run inside.
+fn fenced(text: &str) -> String {
+    let longest = text.split(|c| c != '`').map(str::len).max().unwrap_or(0);
+    let fence = "`".repeat((longest + 1).max(3));
+    format!("{fence}text\n{}\n{fence}\n", text.trim_end())
 }
 
 /// Backslash-escapes Markdown and HTML punctuation, on one line.

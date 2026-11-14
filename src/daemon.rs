@@ -6,7 +6,7 @@ use crate::paths::Paths;
 use crate::protocol::*;
 use crate::store::{CaptureRow, Store, Updated};
 use crate::vibeq::{self, Client};
-use crate::{export, filing, investigate, ipc, render, secrets};
+use crate::{export, filing, investigate, ipc, render, repro, secrets};
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use interprocess::local_socket::{Stream, prelude::*};
@@ -306,6 +306,9 @@ impl Daemon {
                 }
                 let page_url = url::Url::parse(&capture.page_url)
                     .map_err(|e| bad(format!("the page URL is not valid: {e}")))?;
+                let mut capture = capture;
+                capture.evidence.actions.truncate(repro::MAX_ACTIONS);
+                capture.evidence.elements.truncate(repro::MAX_ELEMENTS);
                 let evidence = serde_json::to_vec(&capture.evidence).expect("evidence serializes");
                 let recording = match &capture.recording {
                     Some(events) if !events.is_empty() => {
@@ -404,19 +407,32 @@ impl Daemon {
                         .blobs
                         .read_all(&capture.evidence.sha256)
                         .map_err(storage)?;
+                    let parsed = repro::parse(&evidence)
+                        .ok_or_else(|| storage("the capture's evidence is not readable"))?;
+                    let marks = repro::mark_targets(
+                        &capture.annotations,
+                        &parsed.elements,
+                        repro::scale(&original, &parsed),
+                    );
+                    let shared = repro::for_review(parsed, request.typed_values);
+                    let shared = serde_json::to_vec(&shared).expect("evidence serializes");
                     items.push(ReviewItem {
                         capture: capture.id,
                         page_url: capture.page_url,
                         page_title: capture.page_title,
                         mode: capture.mode,
                         screenshot: self.blobs.put(&rendered, "image/png").map_err(storage)?,
-                        evidence: capture.evidence,
+                        evidence: self
+                            .blobs
+                            .put(&shared, "application/json")
+                            .map_err(storage)?,
                         recording: capture
                             .recording
                             .filter(|_| request.recordings.contains(id)),
                         findings: export::findings(
-                            &serde_json::from_slice(&evidence).unwrap_or_default(),
+                            &serde_json::from_slice(&shared).unwrap_or_default(),
                         ),
+                        marks,
                     });
                 }
                 Reply::Review(

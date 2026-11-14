@@ -5,6 +5,7 @@ type Params = Record<string, any>;
 
 interface Request {
   url: string;
+  resourceType?: string;
   status?: number;
   mimeType?: string;
 }
@@ -69,13 +70,16 @@ export class DeepCollector {
     switch (method) {
       case 'Network.requestWillBeSent':
         if (this.requests.size > 512) this.requests.delete(this.requests.keys().next().value!);
-        this.requests.set(key, { url: p.request.url });
+        this.requests.set(key, { url: p.request.url, resourceType: p.type });
         this.buffer.record(tabId, 'request', {
           requestId: p.requestId,
           url: p.request.url,
           method: p.request.method,
           resourceType: p.type,
           initiator: p.initiator?.type,
+          // What the page sent, for a test that replays the request. Redacted like every string.
+          postData: typeof p.request.postData === 'string' ? p.request.postData : undefined,
+          postDataType: contentType(p.request.headers),
         });
         break;
       case 'Network.responseReceived': {
@@ -95,8 +99,11 @@ export class DeepCollector {
       case 'Network.loadingFinished': {
         const request = this.requests.get(key);
         this.requests.delete(key);
-        // Bodies only for failures: they explain the defect, and success bodies would crowd the buffer.
-        if (!request || (request.status ?? 0) < 400) break;
+        // Bodies of failures explain the defect; bodies of the page's own API calls let a test
+        // replay the server. Documents, scripts and images would only crowd the buffer.
+        if (!request) break;
+        const failed = (request.status ?? 0) >= 400;
+        if (!failed && !['XHR', 'Fetch'].includes(request.resourceType ?? '')) break;
         const page = this.pageUrl(tabId);
         try {
           const { body, base64Encoded } = (await browser.debugger.sendCommand({ tabId }, 'Network.getResponseBody', {
@@ -148,6 +155,11 @@ export class DeepCollector {
         break;
     }
   }
+}
+
+function contentType(headers: Params | undefined): string | undefined {
+  const found = Object.entries(headers ?? {}).find(([name]) => name.toLowerCase() === 'content-type');
+  return typeof found?.[1] === 'string' ? found[1] : undefined;
 }
 
 function describe(arg: Params): string {

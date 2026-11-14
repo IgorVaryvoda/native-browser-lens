@@ -11,7 +11,7 @@ import { chromium } from 'playwright-core';
 import { execFileSync, spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { createServer } from 'node:http';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -79,10 +79,17 @@ const profile = {
 mkdirSync(profile, { recursive: true });
 
 // The fixture: a checkout whose price request fails with a body that holds a secret.
+const priceRequests = [];
 const fixture = createServer((request, response) => {
   if (request.url === '/api/price') {
-    response.writeHead(500, { 'content-type': 'application/json' });
-    return response.end(JSON.stringify({ error: 'price is NaN', token: 'fixture-secret-123' }));
+    const chunks = [];
+    request.on('data', (chunk) => chunks.push(chunk));
+    request.on('end', () => {
+      priceRequests.push(Buffer.concat(chunks).toString('utf8'));
+      response.writeHead(500, { 'content-type': 'application/json' });
+      response.end(JSON.stringify({ error: 'price is NaN', token: 'fixture-secret-123' }));
+    });
+    return;
   }
   response.writeHead(200, { 'content-type': 'text/html' });
   response.end(`<!doctype html><title>Checkout</title>
@@ -91,8 +98,10 @@ const fixture = createServer((request, response) => {
     <input type="hidden" name="csrf" value="hidden-csrf-777">
     <a href="/next?access_token=link-token-888">Next</a>
     <div contenteditable>draft-secret-999</div>
+    <label>Coupon <input name="coupon"></label>
     <label>Card number <input name="card"></label>
-    <button onclick="console.error('total is NaN'); fetch('/api/price')">Pay</button>`);
+    <p data-testid="total">Total: NaN</p>
+    <button onclick="console.error('total is NaN'); fetch('/api/price', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ coupon: document.querySelector('[name=coupon]').value }) })">Pay</button>`);
 });
 await new Promise((ready) => fixture.listen(0, '127.0.0.1', ready));
 const site = `http://127.0.0.1:${fixture.address().port}`;
@@ -152,6 +161,7 @@ try {
   await panel.getByText('Collecting network, console and errors').waitFor({ timeout: 15_000 });
 
   // The defect happens, then the person captures it.
+  await shop.getByLabel('Coupon').fill('SAVE10');
   await shop.getByLabel('Card number').fill('4111111111111111');
   await Promise.all([
     shop.waitForResponse(`${site}/api/price`),
@@ -184,6 +194,12 @@ try {
     if (everything.includes(secret)) throw new Error(`${secret} reached the notebook`);
   }
   if (!evidence.events.some((e) => e.kind === 'response' && e.data.status === 500)) throw new Error('no 500 response');
+  // The steps, with locators; the card number stays private.
+  const steps = evidence.actions.map((a) => `${a.kind} ${a.target?.role ?? ''} ${a.target?.name ?? ''} ${a.masked ? '(masked)' : a.value ?? ''}`.trim());
+  for (const expected of ['fill textbox Coupon SAVE10', 'fill textbox Card number (masked)', 'click button Pay']) {
+    if (!steps.includes(expected)) throw new Error(`the steps lack "${expected}": ${JSON.stringify(steps)}`);
+  }
+  if (!evidence.elements.some((e) => e.locator.testId === 'total')) throw new Error('the element map lacks the total');
 
   // Annotate: a rectangle, a mask drawn twice with an undo between, then save.
   const [editor] = await Promise.all([
@@ -250,8 +266,39 @@ try {
   for (const expected of ['HTTP 500 from', '` Console error: total is NaN `', notes, '![Capture 1](capture-1.png)']) {
     if (!report.includes(expected)) throw new Error(`report.md lacks ${expected}:\n${report}`);
   }
-  for (const file of ['capture-1.png', 'capture-1-evidence.json', 'capture-1-recording.json', 'review.json']) {
+  for (const file of ['capture-1.png', 'capture-1-evidence.json', 'capture-1-recording.json', 'review.json', 'capture-1-timeline.txt', 'capture-1.spec.ts', 'capture-1.har']) {
     if (!existsSync(join(folder, file))) throw new Error(`the export lacks ${file}`);
+  }
+  const spec = readFileSync(join(folder, 'capture-1.spec.ts'), 'utf8');
+  for (const expected of ['.fill("SAVE10")', 'getByRole("button", { name: "Pay", exact: true }).click()', '// Lens recorded: HTTP 500 from POST']) {
+    if (!spec.includes(expected)) throw new Error(`capture-1.spec.ts lacks ${expected}:\n${spec}`);
+  }
+  const har = JSON.parse(readFileSync(join(folder, 'capture-1.har'), 'utf8'));
+  if (!har.log.entries.some((e) => e.response.status === 500 && e.request.postData?.text.includes('SAVE10'))) {
+    throw new Error(`capture-1.har lacks the failed price request: ${JSON.stringify(har).slice(0, 300)}`);
+  }
+
+  // An agent repeats the steps: the generated test runs unchanged against the site and sends the
+  // same request again.
+  const repro = mkdtempSync(join(import.meta.dirname, '.repro-'));
+  try {
+    copyFileSync(join(folder, 'capture-1.spec.ts'), join(repro, 'capture-1.spec.ts'));
+    const browserOptions = executablePath ? { launchOptions: { executablePath } } : { channel: 'chromium' };
+    writeFileSync(join(repro, 'playwright.config.mjs'), `export default { testDir: '.', outputDir: 'results', reporter: 'line', use: ${JSON.stringify(browserOptions)} };\n`);
+    const before = priceRequests.length;
+    // Not execFileSync: the fixture site runs in this process and must keep answering.
+    const runner = spawn(process.execPath, [join(import.meta.dirname, '../node_modules/@playwright/test/cli.js'), 'test', '--config', 'playwright.config.mjs'], {
+      cwd: repro,
+      stdio: 'inherit',
+    });
+    const code = await new Promise((done) => runner.on('exit', done));
+    if (code !== 0) throw new Error(`the generated test failed (exit ${code})`);
+    if (priceRequests.length !== before + 1 || !priceRequests.at(-1).includes('SAVE10')) {
+      throw new Error(`the replay sent ${JSON.stringify(priceRequests.slice(before))}`);
+    }
+    if (!existsSync(join(repro, 'capture-1-reproduced.png'))) throw new Error('the replay took no screenshot');
+  } finally {
+    rmSync(repro, { recursive: true, force: true });
   }
   if (!isolated) rmSync(folder, { recursive: true, force: true });
 
@@ -318,6 +365,9 @@ try {
     if (detail.notesByThePerson !== notes || !detail.captures[0].untrustedPageContent.findings.some((f) => f.startsWith('HTTP 500'))) {
       throw new Error(`MCP review: ${JSON.stringify(detail).slice(0, 300)}`);
     }
+    if (detail.captures[0].untrustedPageContent.marks[0]?.kind !== 'rectangle') throw new Error(`MCP marks: ${JSON.stringify(detail.captures[0].untrustedPageContent.marks)}`);
+    const served = (await rpc('tools/call', { name: 'read_review_file', arguments: { review: latest.id, file: 'capture-1.spec.ts' } })).content;
+    if (!served[1].text.includes('getByRole("button", { name: "Pay", exact: true }).click()')) throw new Error(`MCP spec: ${served[1].text.slice(0, 300)}`);
     const image = (await rpc('tools/call', { name: 'read_review_file', arguments: { review: latest.id, file: 'capture-1.png' } })).content[0];
     if (image.type !== 'image' || image.mimeType !== 'image/png' || !image.data.startsWith('iVBORw0KGgo')) {
       throw new Error(`MCP image: ${JSON.stringify(image).slice(0, 200)}`);

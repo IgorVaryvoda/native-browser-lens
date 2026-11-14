@@ -1,0 +1,45 @@
+import { describe, expect, it } from 'vitest';
+import { cleanName, privateValue, type FieldFacts } from './actions';
+
+const field = (facts: Partial<FieldFacts>): FieldFacts => ({
+  type: 'text',
+  autocomplete: '',
+  name: '',
+  id: '',
+  label: '',
+  placeholder: '',
+  ...facts,
+});
+
+describe('privateValue', () => {
+  it('keeps ordinary values', () => {
+    expect(privateValue(field({ name: 'coupon', label: 'Coupon' }), 'SAVE10')).toBe(false);
+    expect(privateValue(field({ label: 'Search' }), 'red shoes')).toBe(false);
+    expect(privateValue(field({ label: 'Quantity' }), '12')).toBe(false);
+  });
+
+  it('masks private fields by type, autocomplete and name', () => {
+    expect(privateValue(field({ type: 'password' }), 'hunter2')).toBe(true);
+    expect(privateValue(field({ autocomplete: 'cc-number' }), '1')).toBe(true);
+    expect(privateValue(field({ autocomplete: 'one-time-code' }), '1')).toBe(true);
+    expect(privateValue(field({ name: 'card' }), 'x')).toBe(true);
+    expect(privateValue(field({ label: 'CVC' }), '123')).toBe(true);
+    expect(privateValue(field({ label: 'API key' }), 'abc')).toBe(true);
+    expect(privateValue(field({ placeholder: 'IBAN' }), 'x')).toBe(true);
+  });
+
+  it('masks values that look like numbers or secrets anywhere', () => {
+    expect(privateValue(field({ label: 'Notes' }), '4111 1111 1111 1111')).toBe(true);
+    expect(privateValue(field({ label: 'Notes' }), 'Bearer abc.def')).toBe(true);
+    expect(privateValue(field({ label: 'Notes' }), 'eyJhbGciOi.eyJzdWIi.c2lnbmF0dXJl')).toBe(true);
+  });
+});
+
+describe('cleanName', () => {
+  it('collapses whitespace and refuses what cannot match exactly', () => {
+    expect(cleanName('  Pay \n now ')).toBe('Pay now');
+    expect(cleanName('')).toBeNull();
+    expect(cleanName('x'.repeat(81))).toBeNull();
+    expect(cleanName('token=abc123')).toBeNull();
+  });
+});

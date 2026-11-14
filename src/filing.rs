@@ -336,6 +336,7 @@ mod tests {
                 evidence: BlobRef { ..evidence },
                 recording: None,
                 findings: vec!["HTTP 500 from https://shop.test/api".into()],
+                marks: vec![],
             }],
         };
         (review, blobs)
