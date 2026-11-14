@@ -234,12 +234,18 @@ pub fn digest(events: &[Value]) -> Vec<ScreenNote> {
         if !appeared.is_empty() {
             text.push_str(&format!("; appeared: {}", list(&appeared)));
         }
-        if !gone.is_empty() {
-            let mut gone = gone;
-            gone.sort();
-            text.push_str(&format!("; gone: {}", list(&gone)));
+        let mut gone_items = gone;
+        gone_items.sort();
+        if !gone_items.is_empty() {
+            text.push_str(&format!("; gone: {}", list(&gone_items)));
         }
-        notes.push(ScreenNote { at: at + 1, text });
+        notes.push(ScreenNote {
+            at: at + 1,
+            text,
+            appeared: appeared.into_iter().take(MAX_ITEMS).collect(),
+            gone: gone_items.into_iter().take(MAX_ITEMS).collect(),
+            after_click: true,
+        });
     };
     for event in events {
         let at = event["timestamp"].as_i64().unwrap_or(0);
@@ -257,6 +263,9 @@ pub fn digest(events: &[Value]) -> Vec<ScreenNote> {
                     notes.push(ScreenNote {
                         at,
                         text: format!("the page showed: {}", list(&shown)),
+                        appeared: shown.iter().take(60).cloned().collect(),
+                        gone: Vec::new(),
+                        after_click: false,
                     });
                 }
             }

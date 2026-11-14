@@ -10,6 +10,7 @@ import type { Capture } from '@/protocol/Capture';
 import type { Edits } from '@/protocol/Edits';
 import type { Locator } from '@/protocol/Locator';
 import type { Point } from '@/protocol/Point';
+import type { Shot } from '@/protocol/Shot';
 import type { TimeRange } from '@/protocol/TimeRange';
 import type { VoiceNote } from '@/protocol/VoiceNote';
 import { AddNoteIcon, CutIcon, DeleteIcon, PenIcon, TargetIcon } from '@/ui/icons';
@@ -260,7 +261,9 @@ export function RecordingEditor({
     setFixing(null);
     const note = voice.find((v) => v.id === current?.note);
     if (!current || !note || note.segments[current.index]?.text === current.text.trim()) return;
-    const segments = note.segments.map((s, i) => (i === current.index ? { ...s, text: current.text.trim() } : s));
+    const segments = note.segments.map((s, i) =>
+      i === current.index ? { ...s, text: current.text.trim(), corrected: true } : s,
+    );
     try {
       onVoice?.(await client.request({ method: 'updateVoiceNote', params: { id: note.id, segments } }));
     } catch (error) {
@@ -655,6 +658,23 @@ export function RecordingEditor({
             </>
           )}
         </div>
+        {capture.shots.length > 0 && (
+          <Filmstrip
+            client={client}
+            shots={capture.shots}
+            hidden={edits.hiddenShots}
+            start={span?.start ?? capture.startedAt}
+            onSeek={seek}
+            onToggle={(at) =>
+              change({
+                ...edits,
+                hiddenShots: edits.hiddenShots.includes(at)
+                  ? edits.hiddenShots.filter((h) => h !== at)
+                  : [...edits.hiddenShots, at],
+              })
+            }
+          />
+        )}
         <p className="small muted num" role="status" aria-label="Edits">
           {span && `${clock(keptMs)} of ${clock(span.end - span.start)} kept · ${edits.annotations.length} notes · ${saved ? 'Saved' : 'Saving…'}`}
         </p>
@@ -776,6 +796,72 @@ export function RecordingEditor({
           </ol>
         </section>
       </aside>
+    </section>
+  );
+}
+
+/**
+ * The shots Lens took after the person's steps. They leave with the recording; the person
+ * removes any that show what should not leave.
+ */
+function Filmstrip({
+  client,
+  shots,
+  hidden,
+  start,
+  onSeek,
+  onToggle,
+}: {
+  client: LensClient;
+  shots: Shot[];
+  hidden: number[];
+  start: number;
+  onSeek: (at: number) => void;
+  onToggle: (at: number) => void;
+}) {
+  const [urls, setUrls] = useState<Record<string, string>>({});
+  useEffect(() => {
+    const made: string[] = [];
+    let alive = true;
+    void Promise.all(
+      shots.map(async (s) => {
+        const url = URL.createObjectURL(await client.readBlob(s.image));
+        made.push(url);
+        return [s.image.sha256, url] as const;
+      }),
+    ).then((pairs) => alive && setUrls(Object.fromEntries(pairs)));
+    return () => {
+      alive = false;
+      made.forEach(URL.revokeObjectURL);
+    };
+  }, [client, shots]);
+  return (
+    <section className="filmstrip" aria-label="Shots">
+      <h3 className="label">
+        Shots after your steps · {shots.length - hidden.filter((h) => shots.some((s) => Number(s.at) === h)).length} leave
+      </h3>
+      <ol>
+        {shots.map((s) => {
+          const removed = hidden.includes(Number(s.at));
+          return (
+            <li key={s.image.sha256 + s.at} data-removed={removed || undefined}>
+              <button type="button" className="shot-thumb" onClick={() => onSeek(Number(s.at))} title="Show this moment">
+                {urls[s.image.sha256] && <img src={urls[s.image.sha256]} alt={`Shot at ${clock(Number(s.at) - start)}`} />}
+                <span className="num">{clock(Number(s.at) - start)}</span>
+              </button>
+              <button
+                type="button"
+                className="shot-toggle"
+                aria-label={removed ? `Keep the shot at ${clock(Number(s.at) - start)}` : `Remove the shot at ${clock(Number(s.at) - start)}`}
+                title={removed ? 'Keep it' : 'Do not share this shot'}
+                onClick={() => onToggle(Number(s.at))}
+              >
+                {removed ? '↺' : '×'}
+              </button>
+            </li>
+          );
+        })}
+      </ol>
     </section>
   );
 }

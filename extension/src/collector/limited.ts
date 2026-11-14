@@ -1,5 +1,5 @@
 import type { EvidenceBuffer } from './buffer';
-import { isNoise } from './noise';
+import { noiseReason } from './noise';
 
 /**
  * Network metadata from webRequest, for browsers without the debugger API (Firefox). It observes
@@ -35,7 +35,12 @@ export class LimitedCollector {
   }
 
   private record(tabId: number, kind: string, data: Record<string, unknown>) {
-    if (isNoise(String(data.url ?? ''), String(data.resourceType ?? ''))) return;
+    const noise = noiseReason(String(data.url ?? ''), String(data.resourceType ?? ''));
+    if (noise) {
+      // Each request reports here up to three times; count it once.
+      if (kind === 'request' && tabId >= 0 && this.collected(tabId)) this.buffer.drop(tabId, noise);
+      return;
+    }
     if (tabId >= 0 && this.collected(tabId)) this.buffer.record(tabId, kind, { ...data, source: 'webRequest' });
   }
 }

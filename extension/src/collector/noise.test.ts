@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isNoise } from './noise';
+import { isNoise, noiseReason } from './noise';
 
 describe('isNoise', () => {
   it('drops analytics, beacons and inline data', () => {
@@ -17,5 +17,12 @@ describe('isNoise', () => {
     expect(isNoise('https://studio.test/api/assets/42/comments', 'Fetch', '{"text":"hi"}')).toBe(false);
     expect(isNoise('https://studio.test/api/price', 'XHR')).toBe(false);
     expect(isNoise('https://studio.test/collections?ver=2')).toBe(false);
+  });
+
+  it('says why', () => {
+    expect(noiseReason('https://studio.test/api/phr/e/?_=1&ver=1.2')).toBe('analytics');
+    expect(noiseReason('https://studio.test/x', 'Ping')).toBe('beacon');
+    expect(noiseReason('data:image/png;base64,AAAA')).toBe('inline-data');
+    expect(noiseReason('https://studio.test/api/price', 'Fetch')).toBeNull();
   });
 });

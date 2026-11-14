@@ -1,7 +1,7 @@
 use crate::filing::Attempt;
 use crate::protocol::{
     BlobRef, Capture, CaptureKind, CaptureMode, ClientInfo, ClientSeen, Edits, Observation,
-    ObservationStatus, ObservationSummary, Project, Review, ReviewSummary, Shape, VoiceNote,
+    ObservationStatus, ObservationSummary, Project, Review, ReviewSummary, Shape, Shot, VoiceNote,
     VoiceSegment, VoiceState,
 };
 use rusqlite::{Connection, params};
@@ -75,6 +75,7 @@ const MIGRATIONS: &[&str] = &[
     "ALTER TABLE captures ADD COLUMN kind TEXT NOT NULL DEFAULT 'moment';
     ALTER TABLE captures ADD COLUMN started_at INTEGER NOT NULL DEFAULT 0;
     ALTER TABLE captures ADD COLUMN edits TEXT NOT NULL DEFAULT '{}';",
+    "ALTER TABLE captures ADD COLUMN shots TEXT NOT NULL DEFAULT '[]';",
 ];
 
 /// What an update found.
@@ -101,7 +102,7 @@ fn observation_from_row(row: &rusqlite::Row) -> rusqlite::Result<Observation> {
 
 const CAPTURE_COLUMNS: &str = "id, observation_id, created_at, page_url, page_title, mode,
     screenshot_sha256, screenshot_size, evidence_sha256, evidence_size, event_count, gap_count,
-    annotations, recording_sha256, recording_size, kind, started_at, edits";
+    annotations, recording_sha256, recording_size, kind, started_at, edits, shots";
 
 fn capture_from_row(row: &rusqlite::Row) -> rusqlite::Result<Capture> {
     let mode: String = row.get(5)?;
@@ -146,6 +147,7 @@ fn capture_from_row(row: &rusqlite::Row) -> rusqlite::Result<Capture> {
         },
         started_at: row.get(16)?,
         edits: serde_json::from_str(&edits).unwrap_or_default(),
+        shots: serde_json::from_str(&row.get::<_, String>(18)?).unwrap_or_default(),
     })
 }
 
@@ -201,6 +203,7 @@ pub struct CaptureRow {
     pub recording: Option<BlobRef>,
     pub kind: CaptureKind,
     pub started_at: i64,
+    pub shots: Vec<Shot>,
 }
 
 fn mode_name(mode: CaptureMode) -> &'static str {
@@ -590,8 +593,8 @@ impl Store {
         tx.execute(
             "INSERT INTO captures (observation_id, created_at, page_url, page_title, mode,
                 screenshot_sha256, screenshot_size, evidence_sha256, evidence_size, event_count, gap_count,
-                recording_sha256, recording_size, kind, started_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+                recording_sha256, recording_size, kind, started_at, shots)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
             params![
                 observation,
                 row.created_at,
@@ -610,7 +613,8 @@ impl Store {
                     CaptureKind::Moment => "moment",
                     CaptureKind::Session => "session",
                 },
-                row.started_at
+                row.started_at,
+                serde_json::to_string(&row.shots).expect("shots serialize")
             ],
         )?;
         let id = tx.last_insert_rowid();
@@ -635,6 +639,7 @@ impl Store {
             kind: row.kind,
             started_at: row.started_at,
             edits: Edits::default(),
+            shots: row.shots,
         }))
     }
 
@@ -791,6 +796,7 @@ mod tests {
             gap_count: 1,
             kind: CaptureKind::Moment,
             started_at: 5,
+            shots: vec![],
             recording: None,
         };
 

@@ -1,0 +1,191 @@
+{
+  "annotations": [
+    {
+      "atMs": 0,
+      "elements": [
+        {
+          "css": "body > button",
+          "name": "Pay",
+          "nth": null,
+          "role": "button",
+          "testId": null,
+          "text": null
+        }
+      ],
+      "id": "9b4fb3ae-16b8-4f66-b813-6b4a78e9035e",
+      "kind": "drawing",
+      "text": "Total turns into NaN after Pay"
+    },
+    {
+      "atMs": 0,
+      "elements": [
+        {
+          "css": "body > label:nth-of-type(1) > input",
+          "name": "Coupon",
+          "nth": null,
+          "role": "textbox",
+          "testId": null,
+          "text": null
+        }
+      ],
+      "id": "f28f0326-768a-4bc6-994c-cd15a6f75ef5",
+      "kind": "highlight",
+      "text": "The coupon is applied twice"
+    }
+  ],
+  "capture": {
+    "collection": "deep",
+    "colorScheme": "light",
+    "durationMs": 13013,
+    "id": "5c275e7d-0384-5475-9a6c-29d77af84c1c",
+    "kind": "session",
+    "locale": "en-US",
+    "page": {
+      "buildSha": null,
+      "title": "Checkout",
+      "url": "http://127.0.0.1:33027/checkout"
+    },
+    "startedAt": "2026-11-14T16:43:48.424Z",
+    "timeZone": "Europe/Podgorica",
+    "userAgent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/157.0.0.0 Safari/537.36",
+    "viewport": {
+      "devicePixelRatio": 1,
+      "height": 720,
+      "width": 1280
+    }
+  },
+  "console": [
+    {
+      "atMs": 63,
+      "count": 1,
+      "level": "error",
+      "source": "http://127.0.0.1:33027/checkout",
+      "text": "total is NaN"
+    },
+    {
+      "atMs": 77,
+      "count": 1,
+      "level": "error",
+      "source": "http://127.0.0.1:33027/api/price",
+      "text": "Failed to load resource: the server responded with a status of 500 (Internal Server Error)"
+    }
+  ],
+  "dropped": {
+    "consoleRepeats": 0,
+    "cut": 0,
+    "requests": {},
+    "truncated": {
+      "screenItems": 0,
+      "steps": 0
+    }
+  },
+  "findings": {
+    "items": [
+      {
+        "atMs": null,
+        "kind": "defect",
+        "text": "The total shows NaN after Pay"
+      }
+    ],
+    "reviewedByPerson": true,
+    "title": "Checkout: total shows NaN after Pay",
+    "writtenBy": "model"
+  },
+  "network": [
+    {
+      "atMs": 63,
+      "durationMs": 14,
+      "id": "s3r1",
+      "method": "POST",
+      "requestBody": "{\"coupon\":\"SAVE20\"}",
+      "responseBody": "{\"error\":\"price is NaN\",\"token\":\"[REDACTED]\"}",
+      "status": 500,
+      "url": "http://127.0.0.1:33027/api/price"
+    }
+  ],
+  "notes": "",
+  "producer": {
+    "name": "sirv-lens",
+    "version": "0.1.0"
+  },
+  "recording": {
+    "file": "capture-1.rrweb.json",
+    "maskAllInputs": true,
+    "recordCanvas": false,
+    "rrweb": "2.2.2",
+    "sha256": "83e5c29139ba24838d181b13148731a918fdb3860098991ef60af8c6ae4ba04a",
+    "size": 3309
+  },
+  "shots": [
+    {
+      "atMs": 13013,
+      "contentType": "image/png",
+      "file": "capture-1.png",
+      "id": "end",
+      "reason": "end",
+      "sha256": "e9a1b78f443f889f493d3cfef3ea9cc83fd65017f899ba2c2c9b07c13df8bc41"
+    }
+  ],
+  "steps": [
+    {
+      "atMs": 3,
+      "kind": "navigate",
+      "screen": {
+        "appeared": [
+          "Checkout",
+          "Next",
+          "****************",
+          "Coupon",
+          "Card number",
+          "Total: NaN",
+          "Pay"
+        ],
+        "gone": []
+      },
+      "seq": 1,
+      "url": "http://127.0.0.1:33027/checkout"
+    },
+    {
+      "atMs": 62,
+      "kind": "fill",
+      "seq": 2,
+      "target": {
+        "css": "body > label:nth-of-type(1) > input",
+        "name": "Coupon",
+        "nth": null,
+        "role": "textbox",
+        "testId": null,
+        "text": null
+      },
+      "value": "SAVE20"
+    },
+    {
+      "atMs": 62,
+      "console": [
+        0,
+        1
+      ],
+      "kind": "click",
+      "requests": [
+        "s3r1"
+      ],
+      "seq": 3,
+      "target": {
+        "css": "body > button",
+        "name": "Pay",
+        "nth": null,
+        "role": "button",
+        "testId": null,
+        "text": null
+      }
+    },
+    {
+      "atMs": 149,
+      "corrected": true,
+      "kind": "say",
+      "seq": 4,
+      "value": "And so, my fellow testers, the total is wrong."
+    }
+  ],
+  "version": 1
+}

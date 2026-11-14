@@ -203,34 +203,31 @@ fn validate(receipt: Receipt, submission: &Submission) -> Result<Receipt, String
     }
 }
 
-/// What a task needs as files: the export folder minus what the description already holds
-/// (the report, the timelines), Lens's own bookkeeping, recordings no task page can play, and
-/// evidence without a network or console event.
+/// What a task needs as files (`lens-capture.v1`): each capture's record, its shots, its end
+/// screenshot and its DOM recording. The record holds the timeline, steps, network, console,
+/// transcript and notes, so the loose files stay in the local export only.
 fn attach(path: &Path) -> bool {
     let name = path
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or_default();
-    if name == "report.md"
-        || name == "review.json"
-        || name.ends_with("-timeline.txt")
-        || name.ends_with("-recording.json")
-    {
-        return false;
-    }
-    if name.ends_with("-evidence.json") {
-        return std::fs::read(path)
-            .ok()
-            .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok())
-            .and_then(|v| v["events"].as_array().map(|e| !e.is_empty()))
-            .unwrap_or(false);
-    }
-    true
+    name.starts_with("capture-")
+        && (name.ends_with(".lens.json")
+            || name.ends_with(".rrweb.json")
+            || name.ends_with(".webp")
+            || name.ends_with(".png"))
 }
 
 fn content_type(filename: &str) -> &'static str {
+    if filename.ends_with(".lens.json") {
+        return crate::record::CONTENT_TYPE;
+    }
+    if filename.ends_with(".rrweb.json") {
+        return "application/vnd.rrweb+json";
+    }
     match filename.rsplit('.').next() {
         Some("png") => "image/png",
+        Some("webp") => "image/webp",
         Some("json") => "application/json",
         Some("md") => "text/markdown",
         // VibeQ shows text/plain inline; the test is code to read, not to run in a browser.
@@ -369,6 +366,10 @@ mod tests {
                 kept: vec![],
                 annotations: vec![],
                 screen: vec![],
+                shots: vec![],
+                cut: 0,
+                captured_at: 0,
+                started_at: 0,
             }],
             voice: vec![],
         };

@@ -314,7 +314,7 @@ try {
   for (const expected of ['HTTP 500 from', '` Console error: total is NaN `', notes, '![Capture 1](capture-1.png)']) {
     if (!report.includes(expected)) throw new Error(`report.md lacks ${expected}:\n${report}`);
   }
-  for (const file of ['capture-1.png', 'capture-1-evidence.json', 'capture-1-recording.json', 'review.json', 'capture-1-timeline.txt', 'capture-1.spec.ts', 'capture-1.har']) {
+  for (const file of ['capture-1.lens.json', 'capture-1.png', 'capture-1-evidence.json', 'capture-1.rrweb.json', 'review.json', 'capture-1-timeline.txt', 'capture-1.spec.ts', 'capture-1.har']) {
     if (!existsSync(join(folder, file))) throw new Error(`the export lacks ${file}`);
   }
   if (speech) {
@@ -388,6 +388,15 @@ try {
   if (vibeq.staged !== submitted.body.evidenceManifest.length) {
     throw new Error(`${vibeq.staged} uploads for ${submitted.body.evidenceManifest.length} files`);
   }
+  // VibeQ gets lens-capture.v1: the record, the shots, the end screenshot and the recording.
+  const filed = submitted.body.evidenceManifest.map((a) => `${a.filename} ${a.contentType}`);
+  if (
+    !filed.includes('capture-1.lens.json application/vnd.sirv.lens-capture+json') ||
+    !filed.includes('capture-1.rrweb.json application/vnd.rrweb+json') ||
+    filed.some((f) => !/^capture-1(\.lens\.json|\.rrweb\.json|\.png|-shot-\d+\.webp) /.test(f))
+  ) {
+    throw new Error(`filed files: ${filed.join(', ')}`);
+  }
   if (submitted.body.assigneeId !== 'member-2' || !submitted.body.markdown.includes('HTTP 500 from')) {
     throw new Error(`unexpected submission: ${JSON.stringify(submitted.body).slice(0, 400)}`);
   }
@@ -427,6 +436,10 @@ try {
     if (detail.captures[0].untrustedPageContent.marks[0]?.kind !== 'rectangle') throw new Error(`MCP marks: ${JSON.stringify(detail.captures[0].untrustedPageContent.marks)}`);
     const served = (await rpc('tools/call', { name: 'read_review_file', arguments: { review: latest.id, file: 'capture-1.spec.ts' } })).content;
     if (!served[1].text.includes('getByRole("button", { name: "Pay", exact: true }).click()')) throw new Error(`MCP spec: ${served[1].text.slice(0, 300)}`);
+    const record = JSON.parse((await rpc('tools/call', { name: 'read_review_file', arguments: { review: latest.id, file: 'capture-1.lens.json' } })).content[1].text);
+    if (record.version !== 1 || !record.steps.some((s) => s.kind === 'click' && s.target?.name === 'Pay')) {
+      throw new Error(`MCP record: ${JSON.stringify(record).slice(0, 300)}`);
+    }
     const image = (await rpc('tools/call', { name: 'read_review_file', arguments: { review: latest.id, file: 'capture-1.png' } })).content[0];
     if (image.type !== 'image' || image.mimeType !== 'image/png' || !image.data.startsWith('iVBORw0KGgo')) {
       throw new Error(`MCP image: ${JSON.stringify(image).slice(0, 200)}`);
@@ -511,6 +524,11 @@ try {
   await studio.mouse.move(line.x + line.width * 0.99, line.y + line.height / 2, { steps: 5 });
   await studio.mouse.up();
   await studio.getByRole('button', { name: /^Cut .* out$/ }).click();
+  // Shots: Lens took one after the steps; the person removes the first before it leaves.
+  const strip = studio.getByRole('region', { name: 'Shots' });
+  await strip.waitFor({ timeout: 10_000 });
+  const shotCount = await strip.getByRole('listitem').count();
+  await strip.getByRole('button', { name: /^Remove the shot/ }).first().click();
   await studio.getByRole('status', { name: 'Edits' }).filter({ hasText: /2 notes · Saved/ }).waitFor({ timeout: 15_000 });
   await studio.getByRole('status', { name: 'Summary' }).filter({ hasText: summaries ? /wrote the title/ : /No title was written/ }).waitFor({ timeout: 30_000 });
   await studio.getByRole('button', { name: 'Create review' }).click();
@@ -531,6 +549,19 @@ try {
     if (!/noted: Total turns into NaN after Pay \(marked button "Pay"\)/.test(text)) throw new Error(`the ${file} lacks the note:\n${text}`);
   }
   if (!sessionSpec.includes('.fill("SAVE20")')) throw new Error(`the recording's test lacks its steps:\n${sessionSpec}`);
+  // The record: the person's steps with full locators, notes with their elements, model findings.
+  const lens = JSON.parse(readFileSync(join(sessionFolder, 'capture-1.lens.json'), 'utf8'));
+  const fill = lens.steps.find((step) => step.kind === 'fill' && step.value === 'SAVE20');
+  if (lens.version !== 1 || lens.capture.kind !== 'session' || fill?.target?.role !== 'textbox' || fill.target.name !== 'Coupon') {
+    throw new Error(`the record's steps: ${JSON.stringify(lens.steps).slice(0, 500)}`);
+  }
+  const noteKinds = lens.annotations.map((a) => `${a.kind}:${a.elements.map((e) => e.name).join(',')}`).sort();
+  if (noteKinds.join(' ') !== 'drawing:Pay highlight:Coupon') throw new Error(`the record's notes: ${noteKinds}`);
+  if (summaries && lens.findings.writtenBy !== 'model') throw new Error(`the record's findings: ${JSON.stringify(lens.findings)}`);
+  if (lens.shots.filter((shot) => shot.reason === 'step').length !== shotCount - 1) {
+    throw new Error(`the record kept ${lens.shots.length} shots of ${shotCount} after one was removed`);
+  }
+  if (!lens.shots.some((shot) => shot.reason === 'end') || typeof lens.dropped.cut !== 'number') throw new Error('the record lacks its end shot or its cut count');
 
   // Design review: every page with real content, light and dark, at the widths people use.
   if (process.env.E2E_GALLERY) {

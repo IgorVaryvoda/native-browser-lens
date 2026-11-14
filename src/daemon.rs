@@ -364,6 +364,7 @@ impl Daemon {
                     recording,
                     kind: capture.kind,
                     started_at: capture.started_at,
+                    shots: self.checked_shots(&capture.shots)?,
                 };
                 let saved = store
                     .create_capture(capture.observation, row)
@@ -492,7 +493,16 @@ impl Daemon {
                         .cloned()
                         .collect();
                     let screen = self.screen_notes(&capture, &kept);
+                    let before = parsed.actions.len() + parsed.events.len();
                     let shared = repro::for_review(parsed, request.typed_values, &kept);
+                    let cut =
+                        before.saturating_sub(shared.actions.len() + shared.events.len()) as u32;
+                    let shots: Vec<Shot> = capture
+                        .shots
+                        .iter()
+                        .filter(|s| inside(s.at) && !capture.edits.hidden_shots.contains(&s.at))
+                        .cloned()
+                        .collect();
                     let shared = serde_json::to_vec(&shared).expect("evidence serializes");
                     items.push(ReviewItem {
                         capture: capture.id,
@@ -515,6 +525,10 @@ impl Daemon {
                         kept,
                         annotations,
                         screen,
+                        shots,
+                        cut,
+                        captured_at: capture.created_at,
+                        started_at: capture.started_at,
                     });
                 }
                 Reply::Review(
@@ -883,6 +897,34 @@ impl Daemon {
         Ok(())
     }
 
+    /// Shots from UploadChunk: stored WebP images, at most MAX_SHOTS.
+    fn checked_shots(&self, shots: &[Shot]) -> Result<Vec<Shot>, ProtocolError> {
+        if shots.len() > MAX_SHOTS {
+            return Err(bad(format!("a capture keeps at most {MAX_SHOTS} shots")));
+        }
+        shots
+            .iter()
+            .map(|shot| {
+                let (head, size) = self
+                    .blobs
+                    .read(&shot.image.sha256, 0, 12)
+                    .map_err(|_| not_found("upload the shots first"))?;
+                if head.get(0..4) != Some(b"RIFF") || head.get(8..12) != Some(b"WEBP") {
+                    return Err(bad("a shot must be a WebP image"));
+                }
+                Ok(Shot {
+                    at: shot.at,
+                    image: BlobRef {
+                        size,
+                        media_type: "image/webp".into(),
+                        ..shot.image.clone()
+                    },
+                    reason: if shot.reason == "end" { "end" } else { "step" }.into(),
+                })
+            })
+            .collect()
+    }
+
     /// What the screen showed in a capture's DOM recording, inside the kept time.
     fn screen_notes(&self, capture: &Capture, kept: &[TimeRange]) -> Vec<ScreenNote> {
         let Some(recording) = &capture.recording else {
@@ -1176,8 +1218,13 @@ impl Daemon {
         if !id_ok {
             return Err(bad("the upload ID must be a UUID"));
         }
-        if !matches!(chunk.media_type.as_str(), "audio/wav" | "application/json") {
-            return Err(bad("Lens takes WAV audio and JSON uploads only"));
+        if !matches!(
+            chunk.media_type.as_str(),
+            "audio/wav" | "application/json" | "image/webp"
+        ) {
+            return Err(bad(
+                "Lens takes WAV audio, WebP images and JSON uploads only",
+            ));
         }
         let data = BASE64
             .decode(chunk.data.as_bytes())

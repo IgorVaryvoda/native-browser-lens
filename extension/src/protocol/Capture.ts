@@ -4,6 +4,7 @@ import type { CaptureKind } from "./CaptureKind";
 import type { CaptureMode } from "./CaptureMode";
 import type { Edits } from "./Edits";
 import type { Shape } from "./Shape";
+import type { Shot } from "./Shot";
 
 export type Capture = { id: number, observation: number, createdAt: number, pageUrl: string, pageTitle: string, mode: CaptureMode, screenshot: BlobRef, 
 /**
@@ -13,4 +14,4 @@ evidence: BlobRef, eventCount: number, gapCount: number, annotations: Array<Shap
 /**
  * rrweb events as a JSON array.
  */
-recording: BlobRef | null, kind: CaptureKind, startedAt: number, edits: Edits, };
+recording: BlobRef | null, kind: CaptureKind, startedAt: number, edits: Edits, shots: Array<Shot>, };

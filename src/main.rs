@@ -10,6 +10,7 @@ mod ipc;
 mod mcp;
 mod paths;
 mod protocol;
+mod record;
 mod register;
 mod render;
 mod repro;

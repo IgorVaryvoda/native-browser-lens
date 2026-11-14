@@ -3,4 +3,8 @@
 /**
  * A stretch of speech, in milliseconds from the start of the recording.
  */
-export type VoiceSegment = { startMs: number, endMs: number, text: string, };
+export type VoiceSegment = { startMs: number, endMs: number, text: string, 
+/**
+ * The person corrected what Whisper heard.
+ */
+corrected: boolean, };

@@ -43,12 +43,18 @@ pub fn export(review: &Review, blobs: &Blobs, root: &Path) -> io::Result<PathBuf
         let evidence = blobs.read_all(&item.evidence.sha256)?;
         std::fs::write(folder.join(format!("capture-{n}-evidence.json")), &evidence)?;
         let parsed = repro::parse(&evidence);
-        for (name, contents) in reproduction(item, n, parsed.as_ref(), &review.voice) {
+        for (name, contents) in reproduction(review, item, n, parsed.as_ref()) {
             std::fs::write(folder.join(name), contents)?;
+        }
+        for (k, shot) in item.shots.iter().enumerate() {
+            std::fs::write(
+                folder.join(format!("capture-{n}-shot-{}.webp", k + 1)),
+                blobs.read_all(&shot.image.sha256)?,
+            )?;
         }
         if let Some(recording) = &item.recording {
             std::fs::write(
-                folder.join(format!("capture-{n}-recording.json")),
+                folder.join(format!("capture-{n}.rrweb.json")),
                 blobs.read_all(&recording.sha256)?,
             )?;
         }
@@ -127,22 +133,28 @@ pub fn voice_transcript(note: &ReviewVoice) -> String {
     out
 }
 
-/// The generated files of one capture: its timeline, a Playwright test, and a HAR file.
+/// The generated files of one capture: the `lens-capture.v1` record, its timeline, a Playwright
+/// test, and a HAR file.
 pub fn reproduction(
+    review: &Review,
     item: &ReviewItem,
     n: usize,
     evidence: Option<&Evidence>,
-    voice: &[ReviewVoice],
 ) -> Vec<(String, Vec<u8>)> {
     let Some(evidence) = evidence else {
         return Vec::new();
     };
+    let voice = &review.voice[..];
     let title = if item.page_title.is_empty() {
         &item.page_url
     } else {
         &item.page_title
     };
     vec![
+        (
+            format!("capture-{n}.lens.json"),
+            crate::record::build(review, item, n, evidence),
+        ),
         (
             format!("capture-{n}-timeline.txt"),
             repro::timeline(evidence, &context(item, voice)).into_bytes(),

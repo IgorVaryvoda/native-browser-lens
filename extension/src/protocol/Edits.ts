@@ -9,4 +9,8 @@ export type Edits = { trimStart: number | null, trimEnd: number | null,
 /**
  * Parts cut out of the recording; what happened there does not leave.
  */
-cuts: Array<TimeRange>, annotations: Array<Annotation>, };
+cuts: Array<TimeRange>, annotations: Array<Annotation>, 
+/**
+ * Shots the person removed, by their time.
+ */
+hiddenShots: Array<number>, };

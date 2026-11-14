@@ -102,6 +102,7 @@ impl LensMcp {
             .map(|(index, item)| {
                 let n = index + 1;
                 let mut files = vec![
+                    format!("capture-{n}.lens.json"),
                     format!("capture-{n}.png"),
                     format!("capture-{n}-timeline.txt"),
                     format!("capture-{n}.spec.ts"),
@@ -109,9 +110,9 @@ impl LensMcp {
                     format!("capture-{n}-evidence.json"),
                 ];
                 if item.recording.is_some() {
-                    files.push(format!("capture-{n}-recording.json"));
+                    files.push(format!("capture-{n}.rrweb.json"));
                 }
-                files.retain(|f| !f.is_empty());
+                files.extend((1..=item.shots.len()).map(|k| format!("capture-{n}-shot-{k}.webp")));
                 serde_json::json!({
                     "capture": n,
                     "collection": item.mode,
@@ -160,7 +161,9 @@ impl LensMcp {
     /// A file of a review: capture-N.png as an image (marks drawn, masks burned in); as text,
     /// capture-N-timeline.txt (the person's steps and what the page did), capture-N.spec.ts (a
     /// Playwright test that repeats the steps), capture-N.har (recorded server answers for
-    /// page.routeFromHAR), capture-N-evidence.json and capture-N-recording.json (rrweb).
+    /// page.routeFromHAR), capture-N-evidence.json and capture-N.rrweb.json (rrweb); start
+    /// with capture-N.lens.json, the whole capture as one lens-capture.v1 record. Shots
+    /// (capture-N-shot-K.webp) come back as images.
     #[tool(annotations(read_only_hint = true))]
     async fn read_review_file(
         &self,
@@ -178,16 +181,27 @@ impl LensMcp {
                 crate::export::voice_transcript(note),
             )]));
         }
-        let (n, kind) = parse_file(&file)
+        let (n, kind_owned) = parse_file(&file)
             .ok_or_else(|| failure(format!("{file:?} is not a file of this review")))?;
+        let kind = kind_owned.as_str();
         let item = found
             .items
             .get(n - 1)
             .ok_or_else(|| failure(format!("review {review} has no capture {n}")))?;
-        let generated = matches!(kind, "timeline" | "spec" | "har");
+        let generated = matches!(kind, "timeline" | "spec" | "har" | "record");
+        let shot = kind
+            .strip_prefix("shot:")
+            .and_then(|k| k.parse::<usize>().ok());
         let blob = match kind {
             "png" => &item.screenshot,
-            "evidence" | "timeline" | "spec" | "har" => &item.evidence,
+            _ if shot.is_some() => {
+                &item
+                    .shots
+                    .get(shot.unwrap_or(0).saturating_sub(1))
+                    .ok_or_else(|| failure(format!("capture {n} has no {file}")))?
+                    .image
+            }
+            "evidence" | "timeline" | "spec" | "har" | "record" => &item.evidence,
             _ => item
                 .recording
                 .as_ref()
@@ -203,15 +217,19 @@ impl LensMcp {
             };
             client.blob(&blob.sha256, blob.size).map_err(failure)?
         };
-        if kind == "png" {
+        if kind == "png" || shot.is_some() {
             let data = base64::engine::general_purpose::STANDARD.encode(bytes);
             return Ok(CallToolResult::success(vec![ContentBlock::image(
                 data,
-                "image/png",
+                if shot.is_some() {
+                    "image/webp"
+                } else {
+                    "image/png"
+                },
             )]));
         }
         let bytes = if generated {
-            crate::export::reproduction(item, n, crate::repro::parse(&bytes).as_ref(), &found.voice)
+            crate::export::reproduction(&found, item, n, crate::repro::parse(&bytes).as_ref())
                 .into_iter()
                 .find(|(name, _)| *name == file)
                 .map(|(_, contents)| contents)
@@ -242,12 +260,26 @@ impl LensMcp {
     }
 }
 
-/// `capture-3.png` → (3, "png"); `capture-3-evidence.json` → (3, "evidence").
-fn parse_file(file: &str) -> Option<(usize, &'static str)> {
+/// `capture-3.png` → (3, "png"); `capture-3-evidence.json` → (3, "evidence");
+/// `capture-3-shot-2.webp` → (3, "shot:2").
+fn parse_file(file: &str) -> Option<(usize, String)> {
     let rest = file.strip_prefix("capture-")?;
+    if let Some((number, shot)) = rest
+        .strip_suffix(".webp")
+        .and_then(|r| r.split_once("-shot-"))
+    {
+        let shot: usize = shot.parse().ok().filter(|&k| k > 0)?;
+        return number
+            .parse()
+            .ok()
+            .filter(|&n| n > 0)
+            .map(|n| (n, format!("shot:{shot}")));
+    }
     let (number, kind) = [
+        (".lens.json", "record"),
         (".png", "png"),
         ("-evidence.json", "evidence"),
+        (".rrweb.json", "recording"),
         ("-recording.json", "recording"),
         ("-timeline.txt", "timeline"),
         (".spec.ts", "spec"),
@@ -255,7 +287,11 @@ fn parse_file(file: &str) -> Option<(usize, &'static str)> {
     ]
     .into_iter()
     .find_map(|(suffix, kind)| rest.strip_suffix(suffix).map(|n| (n, kind)))?;
-    number.parse().ok().filter(|&n| n > 0).map(|n| (n, kind))
+    number
+        .parse()
+        .ok()
+        .filter(|&n| n > 0)
+        .map(|n| (n, kind.to_string()))
 }
 
 #[tool_handler(router = self.tool_router)]
@@ -302,18 +338,37 @@ mod tests {
 
     #[test]
     fn file_names_map_to_captures() {
-        assert_eq!(parse_file("capture-1.png"), Some((1, "png")));
+        assert_eq!(parse_file("capture-1.png"), Some((1, "png".to_string())));
         assert_eq!(
             parse_file("capture-12-evidence.json"),
-            Some((12, "evidence"))
+            Some((12, "evidence".to_string()))
         );
         assert_eq!(
             parse_file("capture-2-recording.json"),
-            Some((2, "recording"))
+            Some((2, "recording".to_string()))
         );
-        assert_eq!(parse_file("capture-4.spec.ts"), Some((4, "spec")));
-        assert_eq!(parse_file("capture-4.har"), Some((4, "har")));
-        assert_eq!(parse_file("capture-4-timeline.txt"), Some((4, "timeline")));
+        assert_eq!(
+            parse_file("capture-4.spec.ts"),
+            Some((4, "spec".to_string()))
+        );
+        assert_eq!(parse_file("capture-4.har"), Some((4, "har".to_string())));
+        assert_eq!(
+            parse_file("capture-4-timeline.txt"),
+            Some((4, "timeline".to_string()))
+        );
+        assert_eq!(
+            parse_file("capture-4.lens.json"),
+            Some((4, "record".to_string()))
+        );
+        assert_eq!(
+            parse_file("capture-4.rrweb.json"),
+            Some((4, "recording".to_string()))
+        );
+        assert_eq!(
+            parse_file("capture-4-shot-12.webp"),
+            Some((4, "shot:12".to_string()))
+        );
+        assert_eq!(parse_file("capture-4-shot-0.webp"), None);
         for bad in [
             "capture-0.png",
             "report.md",

@@ -5,6 +5,7 @@ import type { CaptureKind } from "./CaptureKind";
 import type { CaptureMode } from "./CaptureMode";
 import type { MarkTarget } from "./MarkTarget";
 import type { ScreenNote } from "./ScreenNote";
+import type { Shot } from "./Shot";
 import type { TimeRange } from "./TimeRange";
 
 export type ReviewItem = { capture: number, pageUrl: string, pageTitle: string, mode: CaptureMode, 
@@ -31,4 +32,16 @@ annotations: Array<Annotation>,
 /**
  * What the screen showed, read from the DOM recording: page loads and the result of clicks.
  */
-screen: Array<ScreenNote>, };
+screen: Array<ScreenNote>, 
+/**
+ * The shots that leave: inside the kept time, not removed by the person.
+ */
+shots: Array<Shot>, 
+/**
+ * Steps and events left out because they fell in a trimmed or cut part.
+ */
+cut: number, 
+/**
+ * When the capture was saved, in Unix milliseconds.
+ */
+capturedAt: number, startedAt: number, };

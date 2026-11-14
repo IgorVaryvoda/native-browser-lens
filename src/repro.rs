@@ -701,7 +701,7 @@ fn one_line(text: &str, max: usize) -> String {
 }
 
 /// RFC 3339 in UTC from Unix milliseconds.
-fn iso_time(ms: i64) -> String {
+pub fn iso_time(ms: i64) -> String {
     let (days, rest) = (ms.div_euclid(86_400_000), ms.rem_euclid(86_400_000));
     // Howard Hinnant's civil_from_days.
     let z = days + 719_468;
@@ -821,6 +821,7 @@ mod tests {
                 ),
             ],
             elements: vec![],
+            dropped: Default::default(),
         }
     }
 
@@ -911,11 +912,13 @@ mod tests {
                     start_ms: 0,
                     end_ms: 900,
                     text: "now I pay".into(),
+                    corrected: false,
                 },
                 VoiceSegment {
                     start_ms: 400_000,
                     end_ms: 401_000,
                     text: "much later".into(),
+                    corrected: false,
                 },
             ],
         };

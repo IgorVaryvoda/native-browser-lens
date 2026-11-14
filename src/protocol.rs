@@ -22,6 +22,8 @@ pub struct RequestFrame {
 #[derive(Debug, Serialize, Deserialize, TS)]
 #[serde(tag = "method", content = "params", rename_all = "camelCase")]
 #[ts(export)]
+// One message at a time, short lived: boxing large variants would only add indirection.
+#[allow(clippy::large_enum_variant)]
 pub enum Request {
     Hello,
     CreateObservation {
@@ -229,6 +231,9 @@ pub struct VoiceSegment {
     #[ts(type = "number")]
     pub end_ms: i64,
     pub text: String,
+    /// The person corrected what Whisper heard.
+    #[serde(default)]
+    pub corrected: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
@@ -293,6 +298,8 @@ pub enum Outcome {
 #[derive(Debug, Serialize, Deserialize, TS)]
 #[serde(tag = "type", content = "data", rename_all = "camelCase")]
 #[ts(export)]
+// One message at a time, short lived: boxing large variants would only add indirection.
+#[allow(clippy::large_enum_variant)]
 pub enum Reply {
     Hello(Hello),
     Observation(Observation),
@@ -405,6 +412,19 @@ pub struct ReviewItem {
     /// What the screen showed, read from the DOM recording: page loads and the result of clicks.
     #[serde(default)]
     pub screen: Vec<ScreenNote>,
+    /// The shots that leave: inside the kept time, not removed by the person.
+    #[serde(default)]
+    pub shots: Vec<Shot>,
+    /// Steps and events left out because they fell in a trimmed or cut part.
+    #[serde(default)]
+    pub cut: u32,
+    /// When the capture was saved, in Unix milliseconds.
+    #[serde(default)]
+    #[ts(type = "number")]
+    pub captured_at: i64,
+    #[serde(default)]
+    #[ts(type = "number")]
+    pub started_at: i64,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
@@ -414,6 +434,15 @@ pub struct ScreenNote {
     #[ts(type = "number")]
     pub at: i64,
     pub text: String,
+    /// Text and labelled controls that appeared, and those that went away (a page load lists
+    /// what it showed as appeared).
+    #[serde(default)]
+    pub appeared: Vec<String>,
+    #[serde(default)]
+    pub gone: Vec<String>,
+    /// After a click, not a page load.
+    #[serde(default)]
+    pub after_click: bool,
 }
 
 fn moment() -> CaptureKind {
@@ -583,7 +612,25 @@ pub struct NewCapture {
     /// Where the recording and the evidence begin, in Unix milliseconds.
     #[ts(type = "number")]
     pub started_at: i64,
+    /// Screenshots taken during the recording, after the person's steps.
+    #[serde(default)]
+    pub shots: Vec<Shot>,
 }
+
+/// A real screenshot of the tab, taken while it was recorded.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct Shot {
+    #[ts(type = "number")]
+    pub at: i64,
+    /// WebP from UploadChunk.
+    pub image: BlobRef,
+    /// `step`: after a click or a key; `end`: the screenshot at Stop or Capture.
+    pub reason: String,
+}
+
+pub const MAX_SHOTS: usize = 60;
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -607,6 +654,9 @@ pub struct Edits {
     /// Parts cut out of the recording; what happened there does not leave.
     pub cuts: Vec<TimeRange>,
     pub annotations: Vec<Annotation>,
+    /// Shots the person removed, by their time.
+    #[ts(type = "Array<number>")]
+    pub hidden_shots: Vec<i64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, TS)]
@@ -708,6 +758,10 @@ pub struct Evidence {
     /// Reviews leave this list out.
     #[serde(default)]
     pub elements: Vec<PageElement>,
+    /// What the collector left out on purpose, by reason (analytics, beacon, inline data).
+    #[serde(default)]
+    #[ts(type = "Record<string, number>")]
+    pub dropped: std::collections::BTreeMap<String, u32>,
 }
 
 /// One thing the person did, with a locator a test runner can find again.
@@ -828,6 +882,7 @@ pub struct Capture {
     #[ts(type = "number")]
     pub started_at: i64,
     pub edits: Edits,
+    pub shots: Vec<Shot>,
 }
 
 /// A mark on a screenshot, in the screenshot's own pixels.
@@ -1066,6 +1121,7 @@ mod tests {
             trim_end: Some(90),
             cuts: vec![r(40, 50), r(0, 15), r(85, 120)],
             annotations: vec![],
+            hidden_shots: vec![],
         };
         assert_eq!(edits.kept(0, 100), [r(15, 40), r(50, 85)]);
         assert_eq!(Edits::default().kept(0, 100), [r(0, 100)]);

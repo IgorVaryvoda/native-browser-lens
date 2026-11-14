@@ -2,6 +2,7 @@
 import type { BlobRef } from "./BlobRef";
 import type { CaptureKind } from "./CaptureKind";
 import type { Evidence } from "./Evidence";
+import type { Shot } from "./Shot";
 
 export type NewCapture = { observation: number | null, pageUrl: string, pageTitle: string, 
 /**
@@ -15,4 +16,8 @@ recording: BlobRef | null, kind: CaptureKind,
 /**
  * Where the recording and the evidence begin, in Unix milliseconds.
  */
-startedAt: number, };
+startedAt: number, 
+/**
+ * Screenshots taken during the recording, after the person's steps.
+ */
+shots: Array<Shot>, };

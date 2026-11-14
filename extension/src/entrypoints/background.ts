@@ -1,4 +1,4 @@
-import { ActionLog, EvidenceBuffer, ReplayBuffer, WINDOW_MS } from '@/collector/buffer';
+import { ActionLog, EvidenceBuffer, ReplayBuffer, ShotBuffer, WINDOW_MS } from '@/collector/buffer';
 import { DeepCollector } from '@/collector/deep';
 import { LimitedCollector } from '@/collector/limited';
 import { sanitize, sanitizeUrl } from '@/collector/sanitize';
@@ -19,6 +19,23 @@ export default defineBackground(() => {
   const buffer = new EvidenceBuffer();
   const actions = new ActionLog();
   const replay = new ReplayBuffer();
+  const shots = new ShotBuffer();
+  const shotTimers = new Map<number, ReturnType<typeof setTimeout>>();
+  /** A shot shows a step's result: taken this long after the last of a quick series of steps. */
+  const SHOT_DELAY_MS = 700;
+  const SHOT_STEPS = new Set(['click', 'press', 'select', 'check', 'uncheck']);
+  function scheduleShot(tabId: number) {
+    if (!deep?.isAttached(tabId)) return;
+    clearTimeout(shotTimers.get(tabId));
+    shotTimers.set(
+      tabId,
+      setTimeout(() => {
+        shotTimers.delete(tabId);
+        const at = Date.now();
+        void deep.shot(tabId).then((data) => data && buffer.mode(tabId) !== undefined && shots.add(tabId, at, data));
+      }, SHOT_DELAY_MS),
+    );
+  }
   /** Record mode: the tabs with a running session, and when each started. */
   const sessions = new Map<number, number>();
   const urls = new Map<number, string>();
@@ -80,6 +97,8 @@ export default defineBackground(() => {
     buffer.stop(tabId);
     actions.clear(tabId);
     replay.clear(tabId);
+    shots.clear(tabId);
+    clearTimeout(shotTimers.get(tabId));
     sessions.delete(tabId);
   }
 
@@ -155,6 +174,7 @@ export default defineBackground(() => {
       const snapshot = buffer.snapshot(tabId, from) ?? {
         mode: 'screenshotOnly' as const,
         events: [],
+        dropped: {},
         gaps: [{ channel: 'collector', reason: 'Lens does not collect evidence on this site', startedAt: Date.now(), endedAt: null }],
       };
       const { pending, elements } = await preparePage(tabId, snapshot.gaps);
@@ -168,6 +188,12 @@ export default defineBackground(() => {
         } else {
           recording = await client().upload(body, 'application/json');
         }
+      }
+      const taken = [];
+      for (const shot of shots.since(tabId, from)) {
+        const bytes = Uint8Array.from(atob(shot.data), (c) => c.charCodeAt(0));
+        const image = await client().upload(new Blob([bytes], { type: 'image/webp' }), 'image/webp');
+        taken.push({ at: shot.at, image, reason: 'step' });
       }
       const page = await pageSnapshot(tabId).catch((error: Error) => {
         snapshot.gaps.push({ channel: 'page', reason: error.message, startedAt: Date.now(), endedAt: null });
@@ -183,6 +209,7 @@ export default defineBackground(() => {
           evidence: { ...snapshot, page, actions: [...actions.snapshot(tabId, from), ...pending], elements },
           recording,
           kind: session === null ? 'moment' : 'session',
+          shots: taken,
           startedAt: session ?? Math.max(from, events[0]?.timestamp ?? from),
         },
       });
@@ -200,6 +227,7 @@ export default defineBackground(() => {
     buffer.hold(tabId, startedAt);
     actions.hold(tabId, startedAt);
     replay.hold(tabId, startedAt);
+    shots.hold(tabId, startedAt);
     await browser.tabs.sendMessage(tabId, { kind: 'lens-snapshot' }).catch(() => {});
     void broadcast({ kind: 'tabChanged', tabId });
     return { ok: true, startedAt };
@@ -213,6 +241,7 @@ export default defineBackground(() => {
     buffer.hold(tabId, null);
     actions.hold(tabId, null);
     replay.hold(tabId, null);
+    shots.hold(tabId, null);
     void broadcast({ kind: 'tabChanged', tabId });
     return result;
   }
@@ -230,8 +259,10 @@ export default defineBackground(() => {
     if (message.kind === 'lens-action' || message.kind === 'lens-replay') {
       const tabId = sender.tab?.id;
       if (tabId === undefined || buffer.mode(tabId) === undefined) return;
-      if (message.kind === 'lens-action') actions.add(tabId, message.action);
-      else replay.add(tabId, message.events);
+      if (message.kind === 'lens-action') {
+        actions.add(tabId, message.action);
+        if (SHOT_STEPS.has(message.action.kind)) scheduleShot(tabId);
+      } else replay.add(tabId, message.events);
       return;
     }
     if (message.kind === 'startSession' || message.kind === 'stopSession') {

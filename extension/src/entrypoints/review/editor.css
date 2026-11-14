@@ -355,3 +355,59 @@
 .timeline[data-cutting] {
   cursor: crosshair;
 }
+.filmstrip {
+  display: grid;
+  gap: 6px;
+}
+.filmstrip h3 {
+  margin: 0;
+}
+.filmstrip ol {
+  display: flex;
+  gap: 8px;
+  margin: 0;
+  padding: 2px 2px 6px;
+  overflow-x: auto;
+  list-style: none;
+}
+.filmstrip li {
+  position: relative;
+  flex: none;
+}
+.shot-thumb {
+  display: grid;
+  gap: 2px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--muted-foreground);
+  font: 500 11px var(--font-ui);
+  cursor: pointer;
+}
+.shot-thumb img {
+  display: block;
+  width: 128px;
+  height: 80px;
+  object-fit: cover;
+  object-position: top left;
+  border-radius: 6px;
+  box-shadow: var(--app-shadow-hairline);
+}
+.filmstrip li[data-removed] img {
+  opacity: 0.3;
+  filter: grayscale(1);
+}
+.shot-toggle {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: oklch(0 0 0 / 65%);
+  color: #fff;
+  font: 700 12px/20px var(--font-ui);
+  cursor: pointer;
+}

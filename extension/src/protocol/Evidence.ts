@@ -18,4 +18,8 @@ actions: Array<Action>,
  * The visible elements at the moment of the capture, so marks can name what they point at.
  * Reviews leave this list out.
  */
-elements: Array<PageElement>, };
+elements: Array<PageElement>, 
+/**
+ * What the collector left out on purpose, by reason (analytics, beacon, inline data).
+ */
+dropped: Record<string, number>, };

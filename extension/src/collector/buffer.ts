@@ -20,6 +20,8 @@ interface Entry {
   gaps: CoverageGap[];
   /** A session in this tab keeps everything from this time on. */
   hold?: number;
+  /** Requests left out as noise, by reason. */
+  dropped: Record<string, number>;
 }
 
 /** The last ten minutes of evidence for each collected tab, within count and byte budgets. */
@@ -31,7 +33,7 @@ export class EvidenceBuffer {
   start(tabId: number, mode: CaptureMode) {
     const entry = this.tabs.get(tabId);
     if (entry) entry.mode = mode;
-    else this.tabs.set(tabId, { mode, events: [], size: 0, gaps: [] });
+    else this.tabs.set(tabId, { mode, events: [], size: 0, gaps: [], dropped: {} });
   }
 
   stop(tabId: number) {
@@ -45,7 +47,7 @@ export class EvidenceBuffer {
   /** A new document in the tab: the old page's evidence no longer describes what is on screen. */
   reset(tabId: number) {
     const entry = this.tabs.get(tabId);
-    if (entry) Object.assign(entry, { events: [], size: 0, gaps: [] });
+    if (entry) Object.assign(entry, { events: [], size: 0, gaps: [], dropped: {} });
   }
 
   record(tabId: number, kind: string, data: Record<string, unknown>) {
@@ -71,6 +73,12 @@ export class EvidenceBuffer {
     if (entry.gaps.length > MAX_GAPS) entry.gaps.shift();
   }
 
+  /** Counts a request left out on purpose. */
+  drop(tabId: number, reason: string) {
+    const entry = this.tabs.get(tabId);
+    if (entry) entry.dropped[reason] = (entry.dropped[reason] ?? 0) + 1;
+  }
+
   /** Keeps everything from `from` on, past the window, until released with null. */
   hold(tabId: number, from: number | null) {
     const entry = this.tabs.get(tabId);
@@ -86,6 +94,7 @@ export class EvidenceBuffer {
       mode: entry.mode,
       events: entry.events.map((e) => e.event).filter((e) => e.timestamp >= from),
       gaps: [...entry.gaps],
+      dropped: { ...entry.dropped },
     };
   }
 
@@ -227,4 +236,37 @@ export function startBefore(events: ReplayEvent[], from: number): number {
   }
   if (found < 0) return 0;
   return events[found - 1]?.type === META ? found - 1 : found;
+}
+
+/** Shots of each tab after the person's steps, for the record's filmstrip. */
+export const MAX_SHOTS = 60;
+
+export class ShotBuffer {
+  private readonly tabs = new Map<number, { shots: { at: number; data: string }[]; hold?: number }>();
+
+  constructor(private readonly now: () => number = Date.now) {}
+
+  /** Adds a shot unless it equals the previous one. Returns whether it was kept. */
+  add(tabId: number, at: number, data: string): boolean {
+    const entry = this.tabs.get(tabId) ?? { shots: [] };
+    this.tabs.set(tabId, entry);
+    if (entry.shots.at(-1)?.data === data) return false;
+    entry.shots.push({ at, data });
+    const cutoff = Math.min(this.now() - WINDOW_MS, entry.hold ?? Infinity);
+    while (entry.shots.length && (entry.shots[0]!.at < cutoff || entry.shots.length > MAX_SHOTS)) entry.shots.shift();
+    return true;
+  }
+
+  hold(tabId: number, from: number | null) {
+    const entry = this.tabs.get(tabId);
+    if (entry) entry.hold = from ?? undefined;
+  }
+
+  since(tabId: number, from: number) {
+    return (this.tabs.get(tabId)?.shots ?? []).filter((s) => s.at >= from);
+  }
+
+  clear(tabId: number) {
+    this.tabs.delete(tabId);
+  }
 }

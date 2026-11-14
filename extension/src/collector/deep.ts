@@ -1,5 +1,5 @@
 import type { EvidenceBuffer } from './buffer';
-import { isNoise } from './noise';
+import { noiseReason } from './noise';
 import { bodyEvidence, requestBody } from './sanitize';
 
 type Params = Record<string, any>;
@@ -54,6 +54,28 @@ export class DeepCollector {
     }
   }
 
+  /**
+   * A WebP shot of the tab, about 1280 px wide, for the record's filmstrip. Base64. Never throws:
+   * a tab that cannot be shot has no shot.
+   */
+  async shot(tabId: number): Promise<string | null> {
+    if (!this.attached.has(tabId)) return null;
+    try {
+      const metrics = (await browser.debugger.sendCommand({ tabId }, 'Page.getLayoutMetrics')) as {
+        cssLayoutViewport: { clientWidth: number; clientHeight: number };
+      };
+      const { clientWidth: width, clientHeight: height } = metrics.cssLayoutViewport;
+      const { data } = (await browser.debugger.sendCommand({ tabId }, 'Page.captureScreenshot', {
+        format: 'webp',
+        quality: 70,
+        clip: { x: 0, y: 0, width, height, scale: Math.min(1, 1280 / Math.max(1, width)) },
+      })) as { data: string };
+      return data;
+    } catch {
+      return null;
+    }
+  }
+
   /** PNG (base64) of the tab's viewport, taken through the debugger: no activeTab grant needed. */
   async screenshot(tabId: number): Promise<string> {
     const { data } = (await browser.debugger.sendCommand({ tabId }, 'Page.captureScreenshot', {
@@ -76,9 +98,11 @@ export class DeepCollector {
     }
     switch (method) {
       case 'Network.requestWillBeSent':
-        if (isNoise(p.request.url, p.type, typeof p.request.postData === 'string' ? p.request.postData : '')) {
+        const noise = noiseReason(p.request.url, p.type, typeof p.request.postData === 'string' ? p.request.postData : '');
+        if (noise) {
           if (this.ignored.size > 2048) this.ignored.clear();
           this.ignored.add(key);
+          this.buffer.drop(tabId, noise);
           break;
         }
         if (this.requests.size > 512) this.requests.delete(this.requests.keys().next().value!);
