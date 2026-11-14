@@ -10,6 +10,8 @@ const SETTLE_MS: i64 = 1500;
 const MAX_ITEMS: usize = 25;
 const MAX_NOTES: usize = 300;
 const MAX_ITEM_CHARS: usize = 120;
+/// Deeper trees are not rebuilt: recursion on page-made data needs a bound.
+const MAX_DEPTH: usize = 400;
 const SKIP: [&str; 6] = ["script", "style", "noscript", "template", "svg", "head"];
 
 #[derive(Default)]
@@ -133,7 +135,12 @@ impl Dom {
         let mut seen = HashSet::new();
         let Some(root) = self.root else { return out };
         let mut stack = vec![root];
+        // A page-made cycle in the tree must not loop forever.
+        let mut visited = HashSet::new();
         while let Some(id) = stack.pop() {
+            if !visited.insert(id) {
+                continue;
+            }
             let Some(n) = self.nodes.get(&id) else {
                 continue;
             };
@@ -159,8 +166,18 @@ impl Dom {
         out
     }
 
-    /// The node and its subtree as rrweb serialized it, with the changes applied.
-    fn serialize(&self, id: i64) -> Option<Value> {
+    /// The node and its subtree as rrweb serialized it, with the changes applied. None when the
+    /// page-made tree is deeper than `MAX_DEPTH` or has a cycle: then there is no snapshot.
+    fn serialize(&self, id: i64, depth: usize, path: &mut HashSet<i64>) -> Option<Value> {
+        if depth > MAX_DEPTH || !path.insert(id) {
+            return None;
+        }
+        let out = self.serialize_node(id, depth, path);
+        path.remove(&id);
+        out
+    }
+
+    fn serialize_node(&self, id: i64, depth: usize, path: &mut HashSet<i64>) -> Option<Value> {
         let n = self.nodes.get(&id)?;
         let mut out = n.rest.clone();
         out.insert("id".into(), id.into());
@@ -171,11 +188,12 @@ impl Dom {
             out.insert("textContent".into(), text.clone().into());
         }
         if n.kind == 0 || n.kind == 2 {
-            let children: Vec<Value> = n
-                .children
-                .iter()
-                .filter_map(|c| self.serialize(*c))
-                .collect();
+            let mut children = Vec::with_capacity(n.children.len());
+            for child in &n.children {
+                if self.nodes.contains_key(child) {
+                    children.push(self.serialize(*child, depth + 1, path)?);
+                }
+            }
             out.insert("childNodes".into(), children.into());
         }
         Some(Value::Object(out))
@@ -274,7 +292,11 @@ pub fn trim(events: &[Value], kept: &[TimeRange]) -> Vec<Value> {
             // A range that opens with the page's own meta and snapshot needs no made-up one.
             if kind != Some(4)
                 && kind != Some(2)
-                && let (Some(meta), Some(root)) = (&meta, dom.root.and_then(|r| dom.serialize(r)))
+                && let (Some(meta), Some(root)) = (
+                    &meta,
+                    dom.root
+                        .and_then(|r| dom.serialize(r, 0, &mut HashSet::new())),
+                )
             {
                 let from = kept[index].from;
                 out.push(json!({ "type": 4, "timestamp": from, "data": meta["data"] }));
@@ -510,6 +532,48 @@ mod tests {
             notes[0].text.contains("Enhance again"),
             "{:?}",
             notes[0].text
+        );
+    }
+
+    #[test]
+    fn a_cycle_or_a_deep_tree_gives_no_snapshot_and_no_hang() {
+        let meta = json!({ "type": 4, "timestamp": 999, "data": { "href": "https://s.test/" } });
+        // Body (6) is added under its own child button (7): a cycle.
+        let cycle = json!({ "type": 3, "timestamp": 1500, "data": { "source": 0, "removes": [], "texts": [], "attributes": [],
+            "adds": [{ "parentId": 7, "nextId": null, "node": { "type": 2, "id": 6, "tagName": "body", "attributes": {}, "childNodes": [
+                { "type": 2, "id": 7, "tagName": "button", "attributes": {}, "childNodes": [] } ] } }] } });
+        let later =
+            json!({ "type": 3, "timestamp": 2100, "data": { "source": 2, "type": 2, "id": 7 } });
+        let out = trim(
+            &[meta.clone(), page(), cycle, later.clone()],
+            &[TimeRange {
+                from: 2000,
+                to: 3000,
+            }],
+        );
+        assert!(
+            out.iter().all(|e| e["type"] != 2),
+            "no snapshot from a cycle"
+        );
+        let _ = digest(&out);
+
+        let mut deep = vec![meta, page()];
+        for i in 0..1000 {
+            deep.push(json!({ "type": 3, "timestamp": 1500, "data": { "source": 0, "removes": [], "texts": [], "attributes": [],
+                "adds": [{ "parentId": if i == 0 { 6 } else { 100 + i - 1 }, "nextId": null,
+                    "node": { "type": 2, "id": 100 + i, "tagName": "div", "attributes": {}, "childNodes": [] } }] } }));
+        }
+        deep.push(later);
+        let out = trim(
+            &deep,
+            &[TimeRange {
+                from: 2000,
+                to: 3000,
+            }],
+        );
+        assert!(
+            out.iter().all(|e| e["type"] != 2),
+            "no snapshot from a tree 1000 deep"
         );
     }
 
