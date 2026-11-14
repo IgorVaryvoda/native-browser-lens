@@ -5,7 +5,8 @@
 //
 //   node scripts/package.mjs --formats appimage,deb,pacman [--gpu vulkan] [--target <triple>]
 //
-// macOS signing: set APPLE_SIGNING_IDENTITY (and the notarization variables cargo-packager reads).
+// macOS signing: set APPLE_SIGNING_IDENTITY. Notarization (app and DMG): also set APPLE_API_KEY
+// (key ID), APPLE_API_ISSUER and APPLE_API_KEY_PATH (the App Store Connect .p8).
 import { execFileSync } from 'node:child_process';
 import { copyFileSync, existsSync, mkdirSync, readdirSync, renameSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -91,6 +92,18 @@ writeFileSync(configPath, JSON.stringify(config, null, 2));
 process.env.NO_STRIP = '1';
 run('cargo', ['packager', '--release', '--formats', values.formats, '--config', configPath]);
 
+// macOS: cargo-packager notarizes and staples the app when the App Store Connect API key is set
+// (APPLE_API_KEY = key ID, APPLE_API_ISSUER, APPLE_API_KEY_PATH = the .p8). The DMG around it
+// needs its own ticket, so a downloaded DMG opens without a Gatekeeper warning.
+const { APPLE_API_KEY, APPLE_API_ISSUER, APPLE_API_KEY_PATH } = process.env;
+if (process.platform === 'darwin' && APPLE_API_KEY && APPLE_API_ISSUER && APPLE_API_KEY_PATH) {
+  for (const dmg of readdirSync(join(root, 'dist')).filter((f) => f.endsWith('.dmg'))) {
+    const file = join(root, 'dist', dmg);
+    run('xcrun', ['notarytool', 'submit', file, '--key', APPLE_API_KEY_PATH, '--key-id', APPLE_API_KEY, '--issuer', APPLE_API_ISSUER, '--wait']);
+    run('xcrun', ['stapler', 'staple', file]);
+  }
+}
+
 // Names people recognise on a download page, instead of the packager's lens_VERSION_ARCH.
 const arch = { x64: 'x64', arm64: 'arm64' }[process.arch] ?? process.arch;
 const linuxArch = { x64: 'x86_64', arm64: 'aarch64' }[process.arch] ?? process.arch;
@@ -104,7 +117,8 @@ const names = [
 const out = join(root, 'dist');
 for (const file of readdirSync(out)) {
   const found = names.find(([pattern]) => pattern.test(file));
-  if (found && file.startsWith('lens')) renameSync(join(out, file), join(out, found[1]));
+  // cargo-packager names them lens_… (Linux) or "Sirv Lens_…" (macOS, Windows).
+  if (found && /^(lens|Sirv Lens)_/.test(file)) renameSync(join(out, file), join(out, found[1]));
 }
 console.log(readdirSync(out).filter((f) => !f.startsWith('.')).join('\n'));
 

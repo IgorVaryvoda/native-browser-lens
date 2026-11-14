@@ -120,6 +120,7 @@ pub fn run(paths: &Paths, service: bool) -> std::io::Result<()> {
     if service {
         schedule_updates(daemon.clone());
         crate::tray::spawn(paths);
+        watch_program(paths);
     }
     let listener = ipc::listen(paths).map_err(|e| {
         std::io::Error::new(
@@ -1509,9 +1510,41 @@ fn project_for(store: &Store, page_url: Option<&str>) -> Result<String, Protocol
         .unwrap_or_else(|| "lens".into()))
 }
 
+/// Set once a restart is on its way, so two reasons never start two restarts.
+static RESTARTING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// An installer may replace Lens while it runs (a new DMG, setup program or package). The service
+/// then restarts on the new program instead of serving the old one until the next login.
+fn watch_program(paths: &Paths) {
+    let paths = paths.clone();
+    std::thread::spawn(move || {
+        let Ok(executable) = crate::paths::executable() else {
+            return;
+        };
+        let stamp = |p: &std::path::Path| std::fs::metadata(p).and_then(|m| m.modified()).ok();
+        let started = stamp(&executable);
+        loop {
+            std::thread::sleep(std::time::Duration::from_secs(10));
+            let now = stamp(&executable);
+            // A missing file is an install still in progress: wait for the new one.
+            if started.is_some() && now.is_some() && now != started {
+                log(
+                    &paths,
+                    "the Lens program was replaced; restarting on the new one",
+                );
+                restart_soon(&paths, &executable);
+                return;
+            }
+        }
+    });
+}
+
 /// Starts `lens restart` from the new binary, detached; it stops this daemon after the reply is out
 /// and starts the new one through the service manager.
 fn restart_soon(paths: &Paths, executable: &std::path::Path) {
+    if RESTARTING.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        return;
+    }
     let mut command = std::process::Command::new(executable);
     command
         .args(["restart", "--after", "2"])
