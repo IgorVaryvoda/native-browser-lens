@@ -167,19 +167,7 @@ pub fn deliver(
             .collect(),
         None => manifest.iter().collect(),
     };
-    let mut staged = Vec::new();
-    for artifact in &missing {
-        let bytes =
-            std::fs::read(attempt.folder.join(&artifact.filename)).map_err(|e| e.to_string())?;
-        if hex(&bytes) != artifact.sha256 {
-            return Err(format!(
-                "{} changed after the review; nothing more was sent",
-                artifact.filename
-            ));
-        }
-        let key = client.stage(&artifact.filename, &artifact.content_type, &bytes)?;
-        staged.push(json!({ "id": artifact.id, "key": key }));
-    }
+    let staged = stage_all(client, &attempt.folder, &missing)?;
     if receipt.is_none() || !missing.is_empty() {
         let mut body = serde_json::to_value(&attempt.submission).expect("submissions serialize");
         body["stagedAttachments"] = staged.into();
@@ -199,6 +187,61 @@ pub fn deliver(
     attempt.receipt = receipt.clone();
     save(attempt)?;
     receipt.ok_or_else(|| "VibeQ returned no receipt".into())
+}
+
+/// Uploads run a few at a time: VibeQ spends about half a second storing each file, so a
+/// recording with twenty shots took over ten seconds one by one.
+const PARALLEL_UPLOADS: usize = 6;
+
+/// Stages every artifact, in manifest order; the first failure fails the filing, which can retry.
+fn stage_all(
+    client: &Client,
+    folder: &Path,
+    artifacts: &[&Artifact],
+) -> Result<Vec<serde_json::Value>, String> {
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let results = std::sync::Mutex::new(vec![None; artifacts.len()]);
+    std::thread::scope(|scope| {
+        for _ in 0..PARALLEL_UPLOADS.min(artifacts.len()) {
+            scope.spawn(|| {
+                loop {
+                    let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    let Some(artifact) = artifacts.get(i) else {
+                        break;
+                    };
+                    let result = stage_one(client, folder, artifact);
+                    let failed = result.is_err();
+                    results.lock().unwrap_or_else(|p| p.into_inner())[i] = Some(result);
+                    if failed {
+                        // The others stop taking new files; the filing fails and can retry.
+                        next.store(artifacts.len(), std::sync::atomic::Ordering::Relaxed);
+                    }
+                }
+            });
+        }
+    });
+    results
+        .into_inner()
+        .unwrap_or_else(|p| p.into_inner())
+        .into_iter()
+        .map(|r| r.unwrap_or_else(|| Err("an upload did not run".into())))
+        .collect()
+}
+
+fn stage_one(
+    client: &Client,
+    folder: &Path,
+    artifact: &Artifact,
+) -> Result<serde_json::Value, String> {
+    let bytes = std::fs::read(folder.join(&artifact.filename)).map_err(|e| e.to_string())?;
+    if hex(&bytes) != artifact.sha256 {
+        return Err(format!(
+            "{} changed after the review; nothing more was sent",
+            artifact.filename
+        ));
+    }
+    let key = client.stage(&artifact.filename, &artifact.content_type, &bytes)?;
+    Ok(json!({ "id": artifact.id, "key": key }))
 }
 
 fn validate(receipt: Receipt, submission: &Submission) -> Result<Receipt, String> {
