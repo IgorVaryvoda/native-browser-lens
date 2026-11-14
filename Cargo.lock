@@ -675,6 +675,7 @@ dependencies = [
  "tempfile",
  "ts-rs",
  "widestring",
+ "windows-sys",
  "winreg",
 ]
 

@@ -80,8 +80,11 @@ live in the data folder.
 
 ## Open checks
 
-- Windows: the daemon must survive Chrome closing the host's job; the pipe DACL must refuse
-  another account; a pipe created first by another account must be refused (verify the server's
-  owner from the client).
+- Windows: the daemon must survive Chrome closing the host's job, and the pipe DACL must refuse
+  another account. A pipe that another account creates first is refused by design: the daemon
+  creates only the first instance; the client opens the pipe at identification level (no
+  impersonation) and accepts it only when the pipe object's owner SID is its own user. A daemon
+  started from an elevated prompt owns its pipe as Administrators and is refused too. All of this
+  still needs a test with two accounts.
 - Side panel microphone permission may need a one-time normal extension tab.
 - Native messaging from Flatpak and Snap browsers, per format.
