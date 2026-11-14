@@ -37,7 +37,8 @@ pub struct Submission {
     pub assignee_id: Option<String>,
     pub reviewed: bool,
     pub evidence_manifest: Vec<Artifact>,
-    /// `lens` first, then the observation's tags. Empty in attempts saved before tags existed.
+    /// `lens` first, then the observation's tags (VibeQ `e7b523f7` and later). Empty in attempts
+    /// saved before tags existed.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tags: Vec<String>,
 }
@@ -171,18 +172,7 @@ pub fn deliver(
     if receipt.is_none() || !missing.is_empty() {
         let mut body = serde_json::to_value(&attempt.submission).expect("submissions serialize");
         body["stagedAttachments"] = staged.into();
-        let mut sent = client.submit(&body);
-        // ponytail: VibeQ's submission schema is strict and older deploys refuse `tags`; send
-        // once more without them. Remove when every VibeQ takes tags.
-        if sent.as_ref().is_err_and(|e| e.contains("HTTP 400"))
-            && body
-                .as_object_mut()
-                .and_then(|b| b.remove("tags"))
-                .is_some()
-        {
-            sent = client.submit(&body);
-        }
-        receipt = Some(validate(sent?, &attempt.submission)?);
+        receipt = Some(validate(client.submit(&body)?, &attempt.submission)?);
     }
     attempt.receipt = receipt.clone();
     save(attempt)?;

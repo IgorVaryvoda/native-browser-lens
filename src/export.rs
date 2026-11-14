@@ -97,8 +97,8 @@ pub fn export(review: &Review, blobs: &Blobs, root: &Path) -> io::Result<PathBuf
         if let Some(evidence) = &parsed {
             let _ = write!(
                 timelines,
-                "### Capture {n}\n\nOldest first. `capture-{n}.spec.ts` repeats the steps; it does \
-                 not check the defect.\n\n{}\n",
+                "### Capture {n}\n\nOldest first. `capture-{n}.lens.json` holds the same steps with \
+                 their locators.\n\n{}\n",
                 fenced(&repro::timeline(evidence, &context(item, &review.voice)))
             );
         }
