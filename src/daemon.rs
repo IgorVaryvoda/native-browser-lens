@@ -848,6 +848,85 @@ impl Daemon {
                 delivered.map_err(remote)?;
                 Reply::Filing(filing_reply(&attempt))
             }
+            Request::ListIssues { observation } => Reply::Issues(
+                store
+                    .setting(&format!("issues.{observation}"))
+                    .map_err(storage)?
+                    .and_then(|json| serde_json::from_str(&json).ok())
+                    .unwrap_or_default(),
+            ),
+            Request::SplitIntoTasks {
+                observation,
+                revision,
+                issues,
+            } => {
+                if issues.len() < 2
+                    || issues.len() > 8
+                    || issues.iter().any(|i| plain(&i.title).is_empty())
+                {
+                    return Err(bad("split into 2 to 8 tasks, each with a title"));
+                }
+                let found = store
+                    .get_observation(observation)
+                    .map_err(storage)?
+                    .ok_or_else(|| not_found("no such observation"))?;
+                let captures = store.list_captures(observation).map_err(storage)?;
+                let voice_start = store
+                    .list_voice_notes(observation)
+                    .map_err(storage)?
+                    .iter()
+                    .filter(|v| v.state == VoiceState::Done)
+                    .map(|v| v.started_at)
+                    .min();
+                let own = split_findings(&found.notes).1;
+                let plans: Vec<crate::store::TaskPlan> = issues
+                    .iter()
+                    .map(|issue| crate::store::TaskPlan {
+                        title: plain(&issue.title),
+                        notes: [
+                            format!(
+                                "{FINDINGS_HEADER}\n{}",
+                                issue
+                                    .findings
+                                    .iter()
+                                    .map(|f| format!("- {}", export::escape(f)))
+                                    .collect::<Vec<_>>()
+                                    .join("\n")
+                            ),
+                            own.clone(),
+                        ]
+                        .into_iter()
+                        .filter(|p| !p.is_empty())
+                        .collect::<Vec<_>>()
+                        .join("\n\n"),
+                        tags: clean_tags(&issue.tags),
+                        edits: issue_edits(issue, voice_start, &captures),
+                    })
+                    .collect();
+                match store
+                    .split_into_tasks(observation, revision, &plans, now_ms())
+                    .map_err(storage)?
+                {
+                    Ok(created) => Reply::Split(created),
+                    Err(Updated::Missing) => return Err(not_found("no such observation")),
+                    Err(_) => {
+                        return Err(ProtocolError::new(
+                            ErrorCode::Conflict,
+                            "the notes changed after the split was suggested; look again",
+                        ));
+                    }
+                }
+            }
+            Request::FindDuplicates { observation } => {
+                let found = store
+                    .get_observation(observation)
+                    .map_err(storage)?
+                    .ok_or_else(|| not_found("no such observation"))?;
+                // This observation's own task, from an earlier filing, is not a duplicate of it.
+                let own_task = store.filed_task(observation).map_err(storage)?;
+                drop(store);
+                Reply::Duplicates(self.duplicates(&found, own_task.as_deref())?)
+            }
             Request::StartSirvant { review } => {
                 let attempt = store.filing(review).map_err(storage)?;
                 drop(store);
@@ -1196,7 +1275,102 @@ impl Daemon {
             "voiceTranscripts": voice.iter().map(export::voice_transcript).collect::<Vec<_>>(),
             "captures": items,
         });
-        investigate::summarize(&context, &self.notebook).map_err(remote)
+        let summary = investigate::summarize(&context, &self.notebook).map_err(remote)?;
+        // The review page offers to split by these, also when the summary ran in the background.
+        let _ = self.lock_store().set_setting(
+            &format!("issues.{observation}"),
+            &serde_json::to_string(&summary.issues).expect("issues serialize"),
+        );
+        Ok(summary)
+    }
+
+    /// Open VibeQ tasks like this observation: VibeQ's title search for the title and each
+    /// finding, then a small model's judgment of which describe the same problem. Without a
+    /// model, close titles come back as "maybe".
+    fn duplicates(
+        &self,
+        found: &Observation,
+        own_task: Option<&str>,
+    ) -> Result<Vec<investigate::Duplicate>, ProtocolError> {
+        let client = self.vibeq_client()?;
+        let findings: Vec<String> = split_findings(&found.notes)
+            .0
+            .iter()
+            .map(|f| f.trim_start_matches("- ").replace('\\', ""))
+            .collect();
+        let mut queries = vec![found.title.clone()];
+        queries.extend(findings.iter().cloned());
+        queries.truncate(6);
+        let mut candidates: Vec<serde_json::Value> = Vec::new();
+        for query in &queries {
+            for result in client.similar(query).map_err(remote)? {
+                let Some(id) = result["id"].as_str() else {
+                    continue;
+                };
+                if Some(id) == own_task {
+                    continue;
+                }
+                let score = result["similarity"].as_f64().unwrap_or(0.0);
+                match candidates.iter_mut().find(|c| c["id"] == id) {
+                    Some(seen) if seen["similarity"].as_f64().unwrap_or(0.0) < score => {
+                        seen["similarity"] = score.into()
+                    }
+                    Some(_) => {}
+                    None => candidates.push(result),
+                }
+            }
+        }
+        candidates.sort_by(|a, b| {
+            b["similarity"]
+                .as_f64()
+                .partial_cmp(&a["similarity"].as_f64())
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        candidates.truncate(8);
+        if candidates.is_empty() {
+            return Ok(Vec::new());
+        }
+        let brief: Vec<serde_json::Value> = candidates
+            .iter()
+            .map(|c| {
+                serde_json::json!({
+                    "id": c["id"],
+                    "title": c["title"],
+                    "status": c["status"],
+                    "description": c["description"].as_str().unwrap_or("").chars().take(400).collect::<String>(),
+                })
+            })
+            .collect();
+        let report = serde_json::json!({ "title": found.title, "findings": findings });
+        let judged =
+            investigate::judge_duplicates(&report, &serde_json::Value::from(brief), &self.notebook);
+        let endpoint = client.endpoint();
+        Ok(candidates
+            .iter()
+            .filter_map(|c| {
+                let id = c["id"].as_str()?.to_string();
+                let similarity = c["similarity"].as_f64().unwrap_or(0.0);
+                let (verdict, reason) = match &judged {
+                    Ok(same) => match same.iter().find(|(i, _)| *i == id) {
+                        Some((_, reason)) => ("same", Some(reason.clone())),
+                        None if similarity >= 0.5 => ("maybe", None),
+                        None => return None,
+                    },
+                    // No model: close titles only, as a hint.
+                    Err(_) if similarity >= 0.3 => ("maybe", None),
+                    Err(_) => return None,
+                };
+                Some(investigate::Duplicate {
+                    url: format!("{endpoint}/?task={id}"),
+                    task_id: id,
+                    title: c["title"].as_str().unwrap_or_default().to_string(),
+                    status: c["status"].as_str().unwrap_or_default().to_string(),
+                    similarity,
+                    verdict: verdict.into(),
+                    reason,
+                })
+            })
+            .collect())
     }
 
     /// Titles an observation in the background, once its words are written down, unless the
@@ -1579,6 +1753,33 @@ fn plain(text: &str) -> String {
         .to_string()
 }
 
+/// The edits that trim each session capture to the issue's time range: transcript seconds from
+/// the first voice note's start, with a few seconds around them. None of it without the times.
+fn issue_edits(
+    issue: &investigate::Issue,
+    voice_start: Option<i64>,
+    captures: &[Capture],
+) -> Vec<(i64, Edits)> {
+    let (Some(from), Some(to), Some(start)) = (issue.from_seconds, issue.to_seconds, voice_start)
+    else {
+        return Vec::new();
+    };
+    let (first, last) = (from.min(to), from.max(to));
+    let from = start + (first * 1000.0) as i64 - 3000;
+    let to = start + (last * 1000.0) as i64 + 3000;
+    captures
+        .iter()
+        .filter(|c| c.kind == CaptureKind::Session)
+        .filter_map(|c| {
+            let mut edits = c.edits.clone();
+            edits.trim_start = Some(edits.trim_start.unwrap_or(c.started_at).max(from));
+            edits.trim_end = Some(edits.trim_end.unwrap_or(c.created_at).min(to));
+            // A range outside this capture would keep nothing of it: leave it whole.
+            (!edits.kept(c.started_at, c.created_at).is_empty()).then_some((c.id, edits))
+        })
+        .collect()
+}
+
 /// The findings lines (`- ...`) of the block at the top of the notes, and the rest of the notes.
 fn split_findings(notes: &str) -> (Vec<String>, String) {
     let mut lines = notes.lines().peekable();
@@ -1707,6 +1908,63 @@ fn now_ms() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn issue_times_become_trims_around_the_transcript() {
+        let capture = Capture {
+            id: 3,
+            observation: 1,
+            created_at: 60_000,
+            page_url: String::new(),
+            page_title: String::new(),
+            mode: CaptureMode::Deep,
+            screenshot: BlobRef {
+                sha256: "a".repeat(64),
+                size: 1,
+                media_type: String::new(),
+            },
+            evidence: BlobRef {
+                sha256: "b".repeat(64),
+                size: 1,
+                media_type: String::new(),
+            },
+            event_count: 0,
+            gap_count: 0,
+            annotations: vec![],
+            recording: None,
+            kind: CaptureKind::Session,
+            started_at: 10_000,
+            edits: Edits::default(),
+            shots: vec![],
+        };
+        let issue = |from, to| investigate::Issue {
+            title: "x".into(),
+            findings: vec![],
+            tags: vec![],
+            from_seconds: from,
+            to_seconds: to,
+        };
+        let edits = issue_edits(
+            &issue(Some(20.0), Some(5.0)),
+            Some(10_000),
+            std::slice::from_ref(&capture),
+        );
+        assert_eq!(edits.len(), 1);
+        assert_eq!(
+            (edits[0].1.trim_start, edits[0].1.trim_end),
+            (Some(12_000), Some(33_000))
+        );
+        assert!(
+            issue_edits(
+                &issue(None, Some(5.0)),
+                Some(10_000),
+                std::slice::from_ref(&capture)
+            )
+            .is_empty()
+        );
+        // Far outside the capture: it stays whole instead of keeping nothing.
+        assert!(issue_edits(&issue(Some(500.0), Some(600.0)), Some(10_000), &[capture]).is_empty());
+    }
 
     fn daemon() -> (tempfile::TempDir, Daemon) {
         let dir = tempfile::tempdir().unwrap();

@@ -18,6 +18,8 @@ import { RecordingEditor } from './RecordingEditor';
 import { Notes } from '../sidepanel/Notes';
 import { useStored } from '../sidepanel/Record';
 import type { SirvantRun } from '@/protocol/SirvantRun';
+import type { Issue } from '@/protocol/Issue';
+import type { Duplicate } from '@/protocol/Duplicate';
 
 /**
  * What leaves the notebook: every capture with its recording, as the edits left it. The daemon freezes the
@@ -383,6 +385,7 @@ export function Review({ observation: id }: { observation: number }) {
               <span>{problem}</span>
             </div>
           )}
+          {!filing && <Duplicates client={client} id={id} />}
 
           <footer className="action-bar">
             {readyAgents.map((a) => (
@@ -478,6 +481,8 @@ export function Review({ observation: id }: { observation: number }) {
             .map((c) => (
               <RecordingEditor key={c.id} client={client} capture={c} voice={voice} onVoice={(note) => setVoice((all) => all.map((v) => (v.id === note.id ? note : v)))} />
             ))}
+          {/* Below the editor: it arrives when the summary does and must not move the replay. */}
+          <Issues client={client} id={id} refresh={notesVersion} />
           {captures.length > 0 && (
             <ol aria-label="Captures to review" className="review-list">
               {captures.map((c) => (
@@ -621,6 +626,168 @@ function describeStep(a: Action, hideValues: boolean) {
     default:
       return `Scroll to ${a.value}`;
   }
+}
+
+const seconds = (s: number | null) => (s === null ? '' : `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`);
+
+/**
+ * A long recording with unrelated problems becomes one task per problem: the summary model names
+ * them with their time ranges, and each task keeps only its part of the recording.
+ */
+function Issues({ client, id, refresh }: { client: LensClient; id: number; refresh: number }) {
+  const [issues, setIssues] = useState<Issue[]>([]);
+  const [hidden, setHidden] = useStored(`lens.issues.hidden.${id}`, false);
+  const [busy, setBusy] = useState(false);
+  const [problem, setProblem] = useState<string | null>(null);
+  useEffect(() => {
+    // The summary may still run in the background: look again a few times.
+    let alive = true;
+    const load = () =>
+      client
+        .request({ method: 'listIssues', params: { observation: id } })
+        .then((found) => alive && setIssues(found))
+        .catch(() => {});
+    void load();
+    const timer = setInterval(load, 5000);
+    const stop = setTimeout(() => clearInterval(timer), 60_000);
+    return () => {
+      alive = false;
+      clearInterval(timer);
+      clearTimeout(stop);
+    };
+  }, [client, id, refresh]);
+  if (issues.length < 2 || hidden) return null;
+
+  async function split() {
+    setBusy(true);
+    setProblem(null);
+    try {
+      const latest = await client.request({ method: 'getObservation', params: { id } });
+      const created = await client.request({
+        method: 'splitIntoTasks',
+        params: { observation: id, revision: latest.revision, issues },
+      });
+      // The first task opens here; the others beside it.
+      for (const task of created.slice(1)) {
+        void browser.tabs.create({ url: browser.runtime.getURL(`/review.html?observation=${task.id}`), active: false });
+      }
+      if (created[0]) location.href = browser.runtime.getURL(`/review.html?observation=${created[0].id}`);
+    } catch (error) {
+      setProblem((error as Error).message);
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="card issues" aria-label="Separate problems">
+      <div className="issues-head">
+        <h2>This recording shows {issues.length} separate problems</h2>
+        <p className="small muted">
+          One task each is easier to fix and to check. Each task keeps only its part of the recording, with your words.
+        </p>
+      </div>
+      <ol className="issue-list">
+        {issues.map((issue, i) => (
+          <li key={i}>
+            <div className="issue-title">
+              <strong>{issue.title}</strong>
+              {issue.fromSeconds !== null && issue.toSeconds !== null && (
+                <span className="small muted num">
+                  {seconds(issue.fromSeconds)}–{seconds(issue.toSeconds)}
+                </span>
+              )}
+            </div>
+            {issue.findings.length > 0 && (
+              <ul className="small muted">
+                {issue.findings.map((f, n) => (
+                  <li key={n}>{f}</li>
+                ))}
+              </ul>
+            )}
+          </li>
+        ))}
+      </ol>
+      <div className="note-actions">
+        <button type="button" className="btn btn-ghost btn-sm" onClick={() => setHidden(true)} disabled={busy}>
+          Keep as one task
+        </button>
+        <button type="button" className="btn btn-primary btn-sm" onClick={() => void split()} disabled={busy}>
+          {busy ? 'Making tasks…' : `Make ${issues.length} tasks`}
+        </button>
+      </div>
+      {problem && (
+        <p role="alert" className="small">
+          {problem}
+        </p>
+      )}
+    </section>
+  );
+}
+
+/**
+ * Before filing: open VibeQ tasks that may be the same problem, so the person can add to one
+ * instead of filing it twice. A small model judges VibeQ's title matches.
+ */
+function Duplicates({ client, id }: { client: LensClient; id: number }) {
+  const [state, setState] = useState<{ kind: 'checking' } | { kind: 'done'; found: Duplicate[] } | { kind: 'off' }>({
+    kind: 'checking',
+  });
+  useEffect(() => {
+    let alive = true;
+    client
+      .request({ method: 'findDuplicates', params: { observation: id } })
+      .then((found) => alive && setState({ kind: 'done', found }))
+      // VibeQ not set up, or unreachable: filing shows its own problem, this stays quiet.
+      .catch(() => alive && setState({ kind: 'off' }));
+    return () => {
+      alive = false;
+    };
+  }, [client, id]);
+  if (state.kind === 'off') return null;
+  if (state.kind === 'checking') {
+    return (
+      <p className="small muted waiting" role="status" aria-label="Duplicates">
+        <span className="spinner" aria-hidden="true" />
+        Looking for the same problem in VibeQ…
+      </p>
+    );
+  }
+  if (state.found.length === 0) {
+    return (
+      <p className="small muted" role="status" aria-label="Duplicates">
+        <DoneIcon size={14} /> No open VibeQ task looks like this one.
+      </p>
+    );
+  }
+  const same = state.found.some((d) => d.verdict === 'same');
+  return (
+    <section className="card duplicates" aria-label="Duplicates" data-tone={same ? 'warning' : undefined}>
+      <h2>{same ? 'This may already be a task' : 'Similar tasks in VibeQ'}</h2>
+      <p className="small muted">
+        {same
+          ? 'Open it and add what you found there, or file this as a new task if it is different.'
+          : 'Their titles are close. Check them before you file.'}
+      </p>
+      <ul className="duplicate-list">
+        {state.found.map((d) => (
+          <li key={d.taskId}>
+            <span className="pill" data-tone={d.verdict === 'same' ? 'warning' : 'info'}>
+              {d.verdict === 'same' ? 'Same problem' : 'Similar title'}
+            </span>
+            <span className="duplicate-text">
+              <a href={d.url} target="_blank" rel="noreferrer">
+                {d.title}
+              </a>
+              <span className="small muted">
+                {d.status}
+                {d.reason && ` · ${d.reason}`}
+              </span>
+            </span>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
 }
 
 /** The findings lines at the top of the notes, as the person reads them. */

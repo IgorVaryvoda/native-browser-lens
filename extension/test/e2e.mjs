@@ -41,6 +41,10 @@ const fakeVibeq = createServer((request, response) => {
     }
     if (request.headers.authorization !== 'Bearer e2e-token') return json(403, { error: 'personal_token_required' });
     if (url === '/auth/me') return json(200, { id: 'member-1', name: 'Tess Tester' });
+    // VibeQ's title search for duplicates: one open task matches whatever is asked.
+    if (url.startsWith('/api/tasks/similar?')) {
+      return json(200, { results: [{ id: 'task-9', title: 'Checkout total is NaN', status: 'todo', description: 'NaN after Pay', similarity: 0.6 }] });
+    }
     if (url === '/api/members') return json(200, [{ id: 'member-2', name: 'Ana' }]);
     // Sirvant, VibeQ's agent: the task page's "put to work" call. A second call finds the live run.
     if (url === '/api/agent/tasks/task-1/river-work' && request.method === 'POST') {
@@ -77,9 +81,20 @@ writeFileSync(
   fakeClaude,
   `#!/usr/bin/env node
 if (process.argv.includes('auth')) { console.log(JSON.stringify({ loggedIn: true, authMethod: 'claude.ai' })); process.exit(0); }
-process.stdin.resume();
-process.stdin.on('end', () => console.log(JSON.stringify({ type: 'result', is_error: false,
-  structured_output: { title: 'Checkout: total shows NaN after Pay', findings: ['The total shows NaN after Pay', 'The coupon field accepts expired codes'], tags: ['Checkout', 'bug'] } })));
+let input = '';
+process.stdin.on('data', (chunk) => (input += chunk));
+process.stdin.on('end', () => {
+  // A duplicate check names one existing task; every other call is a summary with two problems.
+  const asked = input + process.argv.join(' ');
+  const structured_output = asked.includes('Existing open tasks')
+    ? { duplicates: [{ id: 'task-9', reason: 'The same NaN total after Pay' }] }
+    : { title: 'Checkout: total shows NaN after Pay', findings: ['The total shows NaN after Pay', 'The coupon field accepts expired codes'], tags: ['Checkout', 'bug'],
+        issues: [
+          { title: 'Checkout total shows NaN after Pay', findings: ['The total shows NaN after Pay'], tags: ['checkout'], fromSeconds: null, toSeconds: null },
+          { title: 'Coupon accepts expired codes', findings: ['The coupon field accepts expired codes'], tags: ['coupon'], fromSeconds: null, toSeconds: null },
+        ] };
+  console.log(JSON.stringify({ type: 'result', is_error: false, structured_output }));
+});
 `,
   { mode: 0o755 },
 );
@@ -312,6 +327,11 @@ try {
       throw new Error(`the findings are not first: ${await review.getByLabel('Notes', { exact: true }).inputValue()}`);
     }
     // Two unrelated defects: the coupon one moves to a task of its own, with a copy of the capture.
+    // The model found two unrelated problems: Lens offers one task each; here the person keeps one.
+    const problems = review.getByRole('region', { name: 'Separate problems' });
+    await problems.getByRole('heading', { name: 'This recording shows 2 separate problems' }).waitFor({ timeout: 20_000 });
+    await problems.getByRole('button', { name: 'Keep as one task' }).click();
+    await problems.waitFor({ state: 'detached' });
     await review.getByRole('button', { name: 'Split into two tasks' }).click();
     await review.getByRole('checkbox', { name: 'The coupon field accepts expired codes' }).check();
     if ((await review.getByLabel('Title of the new task').inputValue()) !== 'The coupon field accepts expired codes') throw new Error('the new task has no title');
@@ -401,6 +421,14 @@ try {
   await review.reload();
   await review.getByRole('button', { name: 'Create review' }).click();
   await review.getByRole('list', { name: 'Reviewed captures' }).getByRole('img').first().waitFor({ timeout: 15_000 });
+  // Before filing, Lens looks for the same problem in VibeQ; the model judged task-9 the same.
+  if (summaries) {
+    const duplicates = review.getByRole('region', { name: 'Duplicates' });
+    await duplicates.getByText('Same problem').waitFor({ timeout: 30_000 });
+    if ((await duplicates.getByRole('link', { name: 'Checkout total is NaN' }).getAttribute('href')) !== `${vibeqOrigin}/?task=task-9`) {
+      throw new Error('the duplicate does not link to its task');
+    }
+  }
   await review.getByLabel('Assign to').selectOption({ label: 'Ana' });
   await review.getByLabel('Then put Sirvant to work').check();
   await review.getByRole('button', { name: 'File to VibeQ' }).click();

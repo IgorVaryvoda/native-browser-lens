@@ -4,7 +4,7 @@ use crate::protocol::{
     ObservationStatus, ObservationSummary, Project, Review, ReviewSummary, Shape, Shot, VoiceNote,
     VoiceSegment, VoiceState,
 };
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, OptionalExtension, params};
 use std::path::Path;
 
 /// Each entry moves the schema one version forward. Append; never edit a shipped entry.
@@ -79,7 +79,39 @@ const MIGRATIONS: &[&str] = &[
     "ALTER TABLE observations ADD COLUMN tags TEXT NOT NULL DEFAULT '[]';",
 ];
 
+/// One task of a split: its title, notes and tags, and edits by original capture ID.
+pub struct TaskPlan {
+    pub title: String,
+    pub notes: String,
+    pub tags: Vec<String>,
+    pub edits: Vec<(i64, Edits)>,
+}
+
+/// Copies every capture and voice note of `from` to `to`, in ID order.
+fn copy_children(tx: &rusqlite::Transaction, from: i64, to: i64) -> rusqlite::Result<()> {
+    for table in ["captures", "voice_notes"] {
+        // Every column but the row ID and the owner, so a later migration is copied too.
+        let columns: Vec<String> = tx
+            .prepare(&format!("SELECT name FROM pragma_table_info('{table}')"))?
+            .query_map([], |row| row.get(0))?
+            .collect::<rusqlite::Result<Vec<String>>>()?
+            .into_iter()
+            .filter(|c| c != "id" && c != "observation_id")
+            .collect();
+        let columns = columns.join(", ");
+        tx.execute(
+            &format!(
+                "INSERT INTO {table} (observation_id, {columns})
+                 SELECT ?2, {columns} FROM {table} WHERE observation_id = ?1 ORDER BY id"
+            ),
+            params![from, to],
+        )?;
+    }
+    Ok(())
+}
+
 /// What an update found.
+#[derive(Debug)]
 pub enum Updated {
     Saved(Observation),
     /// Someone saved first; this is their version.
@@ -406,29 +438,79 @@ impl Store {
             params![id, title, notes, now],
         )?;
         let copy = tx.last_insert_rowid();
-        for table in ["captures", "voice_notes"] {
-            // Every column but the row ID and the owner, so a later migration is copied too.
-            let columns: Vec<String> = tx
-                .prepare(&format!("SELECT name FROM pragma_table_info('{table}')"))?
-                .query_map([], |row| row.get(0))?
-                .collect::<rusqlite::Result<Vec<String>>>()?
-                .into_iter()
-                .filter(|c| c != "id" && c != "observation_id")
-                .collect();
-            let columns = columns.join(", ");
-            tx.execute(
-                &format!(
-                    "INSERT INTO {table} (observation_id, {columns})
-                     SELECT ?2, {columns} FROM {table} WHERE observation_id = ?1 ORDER BY id"
-                ),
-                params![id, copy],
-            )?;
-        }
+        copy_children(&tx, id, copy)?;
         tx.commit()?;
         Ok(Updated::Saved(
             self.get_observation(copy)?
                 .expect("the row was just inserted"),
         ))
+    }
+
+    /// Replaces observation `id` (when `revision` is still current) with one new observation per
+    /// plan, each with a copy of every capture and voice note and the plan's edits on its
+    /// captures; then deletes `id`. One transaction: all of it happens, or none. Blobs stay.
+    pub fn split_into_tasks(
+        &mut self,
+        id: i64,
+        revision: u32,
+        plans: &[TaskPlan],
+        now: i64,
+    ) -> rusqlite::Result<Result<Vec<Observation>, Updated>> {
+        let tx = self.db.transaction()?;
+        let current: Option<u32> = tx
+            .query_row(
+                "SELECT revision FROM observations WHERE id = ?1",
+                [id],
+                |r| r.get(0),
+            )
+            .optional()?;
+        if current != Some(revision) {
+            drop(tx);
+            return Ok(Err(match self.get_observation(id)? {
+                Some(found) => Updated::Conflict(found),
+                None => Updated::Missing,
+            }));
+        }
+        let ids = |tx: &rusqlite::Transaction, owner: i64| -> rusqlite::Result<Vec<i64>> {
+            tx.prepare("SELECT id FROM captures WHERE observation_id = ?1 ORDER BY id")?
+                .query_map([owner], |r| r.get(0))?
+                .collect()
+        };
+        let originals = ids(&tx, id)?;
+        let mut copies = Vec::new();
+        for plan in plans {
+            tx.execute(
+                "INSERT INTO observations (title, url, notes, tags, created_at, updated_at)
+                 SELECT ?2, url, ?3, ?4, ?5, ?5 FROM observations WHERE id = ?1",
+                params![
+                    id,
+                    plan.title,
+                    plan.notes,
+                    serde_json::to_string(&plan.tags).expect("tags serialize"),
+                    now
+                ],
+            )?;
+            let copy = tx.last_insert_rowid();
+            copy_children(&tx, id, copy)?;
+            // Copies come in the originals' order: the nth copy is the nth original's.
+            for (original, new) in originals.iter().zip(ids(&tx, copy)?) {
+                if let Some((_, edits)) = plan.edits.iter().find(|(c, _)| c == original) {
+                    tx.execute(
+                        "UPDATE captures SET edits = ?2 WHERE id = ?1",
+                        params![new, serde_json::to_string(edits).expect("edits serialize")],
+                    )?;
+                }
+            }
+            copies.push(copy);
+        }
+        tx.execute("DELETE FROM filings WHERE observation_id = ?1", [id])?;
+        tx.execute("DELETE FROM observations WHERE id = ?1", [id])?;
+        tx.commit()?;
+        let mut out = Vec::new();
+        for copy in copies {
+            out.extend(self.get_observation(copy)?);
+        }
+        Ok(Ok(out))
     }
 
     /// Stores a review; `review.id` is replaced by the new row's ID.
@@ -526,6 +608,20 @@ impl Store {
             params![key, value],
         )?;
         Ok(())
+    }
+
+    /// The VibeQ task of this observation's newest confirmed filing, if any.
+    pub fn filed_task(&self, observation: i64) -> rusqlite::Result<Option<String>> {
+        self.db
+            .query_row(
+                "SELECT json_extract(body, '$.receipt.taskId') FROM filings
+                 WHERE observation_id = ?1 AND json_extract(body, '$.receipt') IS NOT NULL
+                 ORDER BY review_id DESC LIMIT 1",
+                [observation],
+                |row| row.get(0),
+            )
+            .optional()
+            .map(Option::flatten)
     }
 
     pub fn filing(&self, review: i64) -> rusqlite::Result<Option<Attempt>> {
@@ -837,6 +933,75 @@ mod tests {
         assert_eq!(
             (listed.len(), listed[0].id, listed[0].capture_count),
             (1, first.id, 0)
+        );
+    }
+
+    #[test]
+    fn a_split_into_tasks_replaces_the_observation_in_one_go() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = Store::open(&dir.path().join("lens.sqlite")).unwrap();
+        let blob = |sha: char| BlobRef {
+            sha256: sha.to_string().repeat(64),
+            size: 3,
+            media_type: String::new(),
+        };
+        let capture = store
+            .create_capture(
+                None,
+                CaptureRow {
+                    created_at: 9000,
+                    page_url: "https://shop.test/".into(),
+                    page_title: "Shop".into(),
+                    mode: CaptureMode::Deep,
+                    screenshot: blob('a'),
+                    evidence: blob('b'),
+                    event_count: 1,
+                    gap_count: 0,
+                    kind: CaptureKind::Session,
+                    started_at: 1000,
+                    shots: vec![],
+                    recording: Some(blob('r')),
+                },
+            )
+            .unwrap()
+            .unwrap();
+        let id = capture.observation;
+        store.add_voice_note(id, 1000, 8000, &blob('v')).unwrap();
+        let trim = |from, to| Edits {
+            trim_start: Some(from),
+            trim_end: Some(to),
+            ..Edits::default()
+        };
+        let plan = |title: &str, edits| TaskPlan {
+            title: title.into(),
+            notes: format!("{title} notes"),
+            tags: vec!["bug".into()],
+            edits: vec![(capture.id, edits)],
+        };
+        let plans = [
+            plan("Comments", trim(1000, 4000)),
+            plan("Hotspots", trim(4000, 9000)),
+        ];
+        assert!(matches!(
+            store.split_into_tasks(id, 99, &plans, 10).unwrap(),
+            Err(Updated::Conflict(_))
+        ));
+        let created = store.split_into_tasks(id, 0, &plans, 10).unwrap().unwrap();
+        assert_eq!(
+            created.iter().map(|o| o.title.as_str()).collect::<Vec<_>>(),
+            ["Comments", "Hotspots"]
+        );
+        assert_eq!(created[1].tags, ["bug"]);
+        let copy = &store.list_captures(created[1].id).unwrap()[0];
+        assert_eq!(copy.edits, trim(4000, 9000));
+        assert_eq!(
+            copy.recording.as_ref().map(|r| &r.sha256),
+            capture.recording.as_ref().map(|r| &r.sha256)
+        );
+        assert_eq!(store.list_voice_notes(created[0].id).unwrap().len(), 1);
+        assert!(
+            store.get_observation(id).unwrap().is_none(),
+            "the original is gone"
         );
     }
 

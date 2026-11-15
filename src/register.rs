@@ -152,7 +152,6 @@ pub fn browsers() -> Vec<Browser> {
 pub type Report = Vec<(&'static str, String)>;
 
 #[cfg(unix)]
-#[cfg(unix)]
 impl Browser {
     /// Whether the browser is on this computer. Firefox on macOS keeps its profiles in
     /// Application Support/Firefox and may never have made the Mozilla folder, where it still
@@ -166,6 +165,7 @@ impl Browser {
     }
 }
 
+#[cfg(unix)]
 pub fn register(_paths: &Paths, executable: &Path) -> io::Result<Report> {
     let (home, config) = home_and_config()?;
     register_unix(&browsers(&home, &config), executable)

@@ -57,6 +57,24 @@ pub enum Request {
         #[ts(type = "number")]
         review: i64,
     },
+    /// The separate problems the summary model found in an observation's recording.
+    ListIssues {
+        #[ts(type = "number")]
+        observation: i64,
+    },
+    /// Replaces the observation with one observation per issue, each trimmed to its part of the
+    /// recording. The original goes; its files stay, shared by the copies.
+    SplitIntoTasks {
+        #[ts(type = "number")]
+        observation: i64,
+        revision: u32,
+        issues: Vec<crate::investigate::Issue>,
+    },
+    /// Open VibeQ tasks that may describe the same problem as this observation.
+    FindDuplicates {
+        #[ts(type = "number")]
+        observation: i64,
+    },
     ListProjects,
     /// Creates a project when `id` is null, else replaces that project.
     SaveProject(ProjectInput),
@@ -335,6 +353,9 @@ pub enum Reply {
     Members(Vec<crate::vibeq::Member>),
     Filing(Filing),
     Sirvant(crate::vibeq::SirvantRun),
+    Issues(Vec<crate::investigate::Issue>),
+    Split(Vec<Observation>),
+    Duplicates(Vec<crate::investigate::Duplicate>),
     Agents(Vec<crate::investigate::AgentInfo>),
     Done,
     Setup(Box<SetupStatus>),

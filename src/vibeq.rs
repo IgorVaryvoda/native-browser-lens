@@ -221,6 +221,19 @@ impl Client {
         }
     }
 
+    /// Open tasks whose titles share words with `text`, best first, as VibeQ scores them.
+    pub fn similar(&self, text: &str) -> Result<Vec<Value>, String> {
+        let query: String = url::form_urlencoded::byte_serialize(text.as_bytes()).collect();
+        let (status, answer) = self.get(&format!("/api/tasks/similar?limit=5&title={query}"))?;
+        if !(200..300).contains(&status) {
+            return Err(format!("VibeQ did not search its tasks (HTTP {status})"));
+        }
+        Ok(serde_json::from_slice::<Value>(&answer)
+            .ok()
+            .and_then(|v| v["results"].as_array().cloned())
+            .unwrap_or_default())
+    }
+
     pub fn submit(&self, body: &Value) -> Result<Receipt, String> {
         let bytes = serde_json::to_vec(body).expect("JSON serializes");
         let (status, answer) =
