@@ -537,6 +537,10 @@ try {
     if (tools !== 'get_review,list_reviews,read_review_file') throw new Error(`MCP tools: ${tools}`);
     const listed = JSON.parse((await rpc('tools/call', { name: 'list_reviews', arguments: {} })).content[0].text);
     const latest = listed[0];
+    // An agent working on the VibeQ task finds the review by the task.
+    if (latest.vibeqTaskId !== 'task-1' || latest.vibeqTaskUrl !== 'http://vibeq.test/?task=task-1' || !latest.pageUrl?.startsWith('http')) {
+      throw new Error(`MCP list_reviews: ${JSON.stringify(latest)}`);
+    }
     const reviewed = (await rpc('tools/call', { name: 'get_review', arguments: { review: latest.id } })).content;
     if (!reviewed[0].text.includes('UNTRUSTED DATA')) throw new Error('MCP: page content is not marked untrusted');
     const detail = JSON.parse(reviewed[1].text);

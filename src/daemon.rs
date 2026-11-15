@@ -767,6 +767,15 @@ impl Daemon {
                     folder: folder.display().to_string(),
                 })
             }
+            Request::ConnectAgents => {
+                drop(store);
+                let lens = crate::paths::executable().map_err(storage)?;
+                Reply::AgentSetup(crate::agents::connect(&lens))
+            }
+            Request::DisconnectAgents => {
+                drop(store);
+                Reply::AgentSetup(crate::agents::disconnect())
+            }
             Request::ListHandoffApps => {
                 drop(store);
                 Reply::HandoffApps(handoff::installed())

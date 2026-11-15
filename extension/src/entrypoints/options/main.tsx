@@ -6,6 +6,7 @@ import type { UpdateState } from '@/protocol/UpdateState';
 import type { SpeechStatus } from '@/protocol/SpeechStatus';
 import type { Agent } from '@/protocol/Agent';
 import type { AgentInfo } from '@/protocol/AgentInfo';
+import type { AgentSetup } from '@/protocol/AgentSetup';
 import { ModelNotice } from '../sidepanel/Voice';
 import { AlertIcon, DoneIcon, LensMark, LinkIcon } from '@/ui/icons';
 import '@/ui/base.css';
@@ -37,6 +38,7 @@ function Settings() {
       <VibeQ client={client} />
       <Voice client={client} />
       <Models client={client} />
+      <CodingAgents client={client} />
       <Updates client={client} />
       <section className="card settings-section" aria-label="Privacy">
         <h2>What Lens reads</h2>
@@ -353,6 +355,54 @@ function Models({ client }: { client: LensClient }) {
           {problem}
         </p>
       )}
+    </section>
+  );
+}
+
+/** Connects the coding agents here to Lens: the sirv-lens skill and MCP server. */
+function CodingAgents({ client }: { client: LensClient }) {
+  const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState<AgentSetup[] | null>(null);
+  const [problem, setProblem] = useState<string | null>(null);
+  async function run(method: 'connectAgents' | 'disconnectAgents') {
+    setBusy(true);
+    setProblem(null);
+    try {
+      setDone(await client.request({ method }));
+    } catch (error) {
+      setProblem((error as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <section aria-label="Coding agents" className="card settings-section">
+      <div className="section">
+        <h2>Coding agents</h2>
+        <p className="small muted">
+          Lets Claude Code, Codex, Cursor and Gemini CLI read your reviews: the sirv-lens skill tells them how, and the
+          Lens MCP server serves the steps, evidence, screenshots and tests. They only read, and only what you reviewed.
+          The same works in a terminal with <code>lens agents connect</code>.
+        </p>
+      </div>
+      <div className="actions">
+        <button type="button" className="btn btn-primary" onClick={() => void run('connectAgents')} disabled={busy}>
+          {busy ? 'Connecting…' : 'Connect coding agents'}
+        </button>
+        <button type="button" className="btn btn-ghost" onClick={() => void run('disconnectAgents')} disabled={busy}>
+          Disconnect
+        </button>
+      </div>
+      {done && (
+        <ul className="small agent-setup" role="status" aria-label="Coding agents result">
+          {done.map((a) => (
+            <li key={a.agent}>
+              {a.ok ? <DoneIcon size={14} /> : <AlertIcon size={14} />} <strong>{a.agent}</strong>: {a.detail}
+            </li>
+          ))}
+        </ul>
+      )}
+      {problem && <Problem text={problem} />}
     </section>
   );
 }

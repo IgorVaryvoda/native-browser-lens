@@ -148,6 +148,10 @@ pub enum Request {
         #[ts(type = "number")]
         review: i64,
     },
+    /// Gives the coding agents here the sirv-lens skill and MCP server (`lens agents connect`).
+    ConnectAgents,
+    /// Takes them back (`lens agents disconnect`).
+    DisconnectAgents,
     /// The coding agent apps installed on this computer that a review can be handed to.
     ListHandoffApps,
     /// Exports the review and opens the app on it, working in `folder` (the project's folder).
@@ -364,6 +368,7 @@ pub enum Reply {
     Reviews(Vec<ReviewSummary>),
     Exported(Exported),
     HandoffApps(Vec<crate::handoff::HandoffApp>),
+    AgentSetup(Vec<crate::agents::AgentSetup>),
     /// The review was handed off; `folder` holds the exported report.
     HandedOff(Exported),
     VibeQ(VibeQSettings),
@@ -442,6 +447,11 @@ pub struct ReviewSummary {
     pub created_at: i64,
     pub title: String,
     pub captures: u32,
+    /// The first capture's page (written by the website: untrusted).
+    pub page_url: Option<String>,
+    /// The VibeQ task this review was filed as, if it was.
+    pub vibeq_task_id: Option<String>,
+    pub vibeq_task_url: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]

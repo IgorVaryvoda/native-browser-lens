@@ -543,15 +543,20 @@ impl Store {
             .prepare("SELECT body FROM reviews ORDER BY id DESC")?;
         let bodies = statement.query_map([], |row| row.get::<_, String>(0))?;
         let mut reviews = Vec::new();
+        let bodies: Vec<String> = bodies.collect::<rusqlite::Result<_>>()?;
         for body in bodies {
-            if let Ok(review) = serde_json::from_str::<Review>(&body?) {
+            if let Ok(review) = serde_json::from_str::<Review>(&body) {
+                let receipt = self.filing(review.id)?.and_then(|a| a.receipt);
                 reviews.push(ReviewSummary {
                     id: review.id,
                     observation: review.observation,
                     revision: review.revision,
                     created_at: review.created_at,
+                    page_url: review.items.first().map(|i| i.page_url.clone()),
                     title: review.title,
                     captures: review.items.len() as u32,
+                    vibeq_task_id: receipt.as_ref().map(|r| r.task_id.clone()),
+                    vibeq_task_url: receipt.map(|r| r.task_url),
                 });
             }
         }

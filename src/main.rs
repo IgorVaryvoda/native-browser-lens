@@ -1,5 +1,7 @@
+mod agents;
 mod blobs;
 mod bundle;
+mod cli;
 mod client;
 mod daemon;
 mod digest;
@@ -45,6 +47,14 @@ const USAGE: &str = "Usage: lens <command>
   service uninstall  Stop starting Lens at login
   register           Register Lens with every installed browser (per user)
   unregister         Remove those registrations
+  reviews [--json]   List the reviews, newest first, with their VibeQ tasks
+  review <id>        Print one review as JSON (what the MCP tool get_review returns)
+  export <id> [--to DIR]
+                     Write a review to a folder: report, screenshots, evidence, a
+                     Playwright test and a HAR; prints the folder
+  agents connect     Give the coding agents here the sirv-lens skill and MCP server
+                     (Claude Code, Codex, Cursor, Gemini CLI)
+  agents disconnect  Take them back
   mcp                Serve reviewed defects to coding agents over MCP (stdio)
   tray               Show the Lens menu-bar / tray icon
   daemon             Run the Lens daemon in the foreground
@@ -138,6 +148,26 @@ fn main() -> ExitCode {
         }),
         Some("doctor") => with_paths(setup::doctor),
         Some("mcp") => with_paths(mcp::run),
+        Some("reviews") => {
+            let json = args.iter().any(|a| a == "--json");
+            with_paths(|p| cli::reviews(p, json))
+        }
+        Some("review") => match args.get(1) {
+            Some(id) => with_paths(|p| cli::show(p, id)),
+            None => Err(std::io::Error::other("lens review <id> (see lens reviews)")),
+        },
+        Some("export") => match args.get(1) {
+            Some(id) => {
+                let to = args
+                    .iter()
+                    .position(|a| a == "--to")
+                    .and_then(|i| args.get(i + 1))
+                    .map(String::as_str);
+                with_paths(|p| cli::export(p, id, to))
+            }
+            None => Err(std::io::Error::other("lens export <id> [--to DIR]")),
+        },
+        Some("agents") => cli::agents(args.get(1).map(String::as_str)),
         Some("tray") => {
             let wait = args.get(1).is_some_and(|a| a == "--wait");
             with_paths(|p| tray::run(p, wait))

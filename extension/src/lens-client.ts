@@ -36,6 +36,8 @@ type ReplyTo = {
   createReview: 'review';
   exportReview: 'exported';
   listHandoffApps: 'handoffApps';
+  connectAgents: 'agentSetup';
+  disconnectAgents: 'agentSetup';
   handOff: 'handedOff';
   getVibeQ: 'vibeQ';
   setVibeQ: 'vibeQ';
