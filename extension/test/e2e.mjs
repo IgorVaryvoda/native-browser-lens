@@ -418,6 +418,13 @@ try {
   await context.addCookies([{ name: 'session', value: 'e2e-session', url: vibeqOrigin }]);
   await settings.getByRole('status', { name: 'VibeQ account' }).filter({ hasText: 'Tess Tester' }).or(settings.getByRole('alert')).waitFor({ timeout: 15_000 });
   if (await settings.getByRole('alert').isVisible()) throw new Error(`settings: ${await settings.getByRole('alert').textContent()}`);
+  // The AI model: Automatic by default; Codex is missing here, so choosing it says what stops.
+  const models = settings.getByRole('region', { name: 'AI model' });
+  if (!(await models.getByLabel(/^Automatic/).isChecked())) throw new Error('the AI model is not Automatic by default');
+  await models.getByLabel(/^Codex/).check();
+  await models.getByRole('alert').filter({ hasText: 'Codex is not installed' }).waitFor({ timeout: 10_000 });
+  await models.getByLabel(/^Automatic/).check();
+  await models.getByRole('alert').waitFor({ state: 'detached', timeout: 10_000 });
   await review.reload();
   await review.getByRole('button', { name: 'Create review' }).click();
   await review.getByRole('list', { name: 'Reviewed captures' }).getByRole('img').first().waitFor({ timeout: 15_000 });

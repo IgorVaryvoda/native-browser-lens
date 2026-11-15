@@ -105,3 +105,8 @@
 .token-form .input {
   flex: 1;
 }
+
+.choices {
+  display: grid;
+  gap: 10px;
+}

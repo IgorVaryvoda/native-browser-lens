@@ -713,6 +713,16 @@ impl Daemon {
                 self.update(true)?;
                 Reply::Updates(self.update_state(&self.lock_store())?)
             }
+            Request::GetSummaryAgent => Reply::SummaryAgent(summary_agent(&store)),
+            Request::SetSummaryAgent { agent } => {
+                let value = match agent {
+                    Some(investigate::Agent::Claude) => "claude",
+                    Some(investigate::Agent::Codex) => "codex",
+                    None => "",
+                };
+                store.set_setting("agent.summary", value).map_err(storage)?;
+                Reply::Done
+            }
             Request::ListAgents => {
                 drop(store);
                 Reply::Agents(
@@ -1275,7 +1285,9 @@ impl Daemon {
             "voiceTranscripts": voice.iter().map(export::voice_transcript).collect::<Vec<_>>(),
             "captures": items,
         });
-        let summary = investigate::summarize(&context, &self.notebook).map_err(remote)?;
+        let preferred = summary_agent(&self.lock_store());
+        let summary =
+            investigate::summarize(&context, &self.notebook, preferred).map_err(remote)?;
         // The review page offers to split by these, also when the summary ran in the background.
         let _ = self.lock_store().set_setting(
             &format!("issues.{observation}"),
@@ -1342,8 +1354,13 @@ impl Daemon {
             })
             .collect();
         let report = serde_json::json!({ "title": found.title, "findings": findings });
-        let judged =
-            investigate::judge_duplicates(&report, &serde_json::Value::from(brief), &self.notebook);
+        let preferred = summary_agent(&self.lock_store());
+        let judged = investigate::judge_duplicates(
+            &report,
+            &serde_json::Value::from(brief),
+            &self.notebook,
+            preferred,
+        );
         let endpoint = client.endpoint();
         Ok(candidates
             .iter()
@@ -1432,7 +1449,8 @@ impl Daemon {
             (found, automatic, waiting)
         };
         // Words still being written down call this again when they are done.
-        if !automatic || waiting || investigate::Agent::ready().is_none() {
+        let preferred = summary_agent(&self.lock_store());
+        if !automatic || waiting || investigate::Agent::pick(preferred).is_none() {
             return Ok(());
         }
         let summary = self.summary(observation).map_err(|e| e.message)?;
@@ -1751,6 +1769,15 @@ fn plain(text: &str) -> String {
         .collect::<String>()
         .trim()
         .to_string()
+}
+
+/// The person's choice of agent for summaries and duplicate checks; None is automatic.
+fn summary_agent(store: &Store) -> Option<investigate::Agent> {
+    match store.setting("agent.summary").ok().flatten().as_deref() {
+        Some("claude") => Some(investigate::Agent::Claude),
+        Some("codex") => Some(investigate::Agent::Codex),
+        _ => None,
+    }
 }
 
 /// The edits that trim each session capture to the issue's time range: transcript seconds from

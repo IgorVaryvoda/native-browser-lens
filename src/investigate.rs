@@ -271,17 +271,37 @@ fn summary_schema() -> Value {
 }
 
 impl Agent {
-    /// The agent that writes summaries: Claude (Haiku) first, then Codex.
-    pub fn ready() -> Option<Agent> {
-        [Agent::Claude, Agent::Codex]
-            .into_iter()
-            .find(|a| status(*a) == AgentState::Ready)
+    /// The agent for summaries and duplicate checks: the person's choice from Settings when it is
+    /// ready, else none (an explicit choice never falls back silently); without a choice, Claude
+    /// (Haiku) first, then Codex.
+    pub fn pick(preferred: Option<Agent>) -> Option<Agent> {
+        match preferred {
+            Some(agent) => (status(agent) == AgentState::Ready).then_some(agent),
+            None => [Agent::Claude, Agent::Codex]
+                .into_iter()
+                .find(|a| status(*a) == AgentState::Ready),
+        }
+    }
+}
+
+/// Why no agent can run: the chosen one, or both.
+fn unavailable(preferred: Option<Agent>) -> String {
+    match preferred {
+        Some(Agent::Claude) => {
+            "Claude Code is not installed and signed in (Settings chose it)".into()
+        }
+        Some(Agent::Codex) => "Codex is not installed and signed in (Settings chose it)".into(),
+        None => "neither Claude Code nor Codex is installed and signed in".into(),
     }
 }
 
 /// Asks the first ready agent for a title and findings: Claude (Haiku) first, then Codex.
-pub fn summarize(context: &Value, notebook: &Path) -> Result<Summary, String> {
-    let agent = Agent::ready().ok_or("neither Claude Code nor Codex is installed and signed in")?;
+pub fn summarize(
+    context: &Value,
+    notebook: &Path,
+    preferred: Option<Agent>,
+) -> Result<Summary, String> {
+    let agent = Agent::pick(preferred).ok_or_else(|| unavailable(preferred))?;
     let binary = find(agent).ok_or_else(|| format!("{agent:?} is not installed"))?;
     let work = Workspace::new()?;
     let mut text = serde_json::to_string_pretty(context).expect("JSON serializes");
@@ -390,8 +410,9 @@ pub fn judge_duplicates(
     report: &Value,
     candidates: &Value,
     notebook: &Path,
+    preferred: Option<Agent>,
 ) -> Result<Vec<(String, String)>, String> {
-    let agent = Agent::ready().ok_or("neither Claude Code nor Codex is installed and signed in")?;
+    let agent = Agent::pick(preferred).ok_or_else(|| unavailable(preferred))?;
     let binary = find(agent).ok_or_else(|| format!("{agent:?} is not installed"))?;
     let work = Workspace::new()?;
     let prompt = format!(

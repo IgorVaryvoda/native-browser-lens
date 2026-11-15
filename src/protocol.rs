@@ -132,6 +132,11 @@ pub enum Request {
     UpdateNow,
     /// Which agent CLIs are installed and signed in.
     ListAgents,
+    /// The agent for titles, findings, splits and duplicate checks; null is automatic.
+    GetSummaryAgent,
+    SetSummaryAgent {
+        agent: Option<crate::investigate::Agent>,
+    },
     /// A draft report from Codex or Claude Code over one frozen review. Nothing is saved.
     Investigate {
         #[ts(type = "number")]
@@ -356,6 +361,7 @@ pub enum Reply {
     Issues(Vec<crate::investigate::Issue>),
     Split(Vec<Observation>),
     Duplicates(Vec<crate::investigate::Duplicate>),
+    SummaryAgent(Option<crate::investigate::Agent>),
     Agents(Vec<crate::investigate::AgentInfo>),
     Done,
     Setup(Box<SetupStatus>),

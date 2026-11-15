@@ -4,6 +4,8 @@ import { LensClient } from '@/lens-client';
 import type { VibeQSettings } from '@/protocol/VibeQSettings';
 import type { UpdateState } from '@/protocol/UpdateState';
 import type { SpeechStatus } from '@/protocol/SpeechStatus';
+import type { Agent } from '@/protocol/Agent';
+import type { AgentInfo } from '@/protocol/AgentInfo';
 import { ModelNotice } from '../sidepanel/Voice';
 import { AlertIcon, DoneIcon, LensMark, LinkIcon } from '@/ui/icons';
 import '@/ui/base.css';
@@ -34,6 +36,7 @@ function Settings() {
       </header>
       <VibeQ client={client} />
       <Voice client={client} />
+      <Models client={client} />
       <Updates client={client} />
       <section className="card settings-section" aria-label="Privacy">
         <h2>What Lens reads</h2>
@@ -275,6 +278,83 @@ async function mintToken(origin: string): Promise<string | null> {
   const token = (body as { token?: unknown } | null)?.token;
   if (typeof token !== 'string' || !token) throw new Error('VibeQ sent no token');
   return token;
+}
+
+const AGENT_STATE = { ready: 'Ready', signIn: 'Not signed in', missing: 'Not installed' } as const;
+
+/**
+ * Which model writes titles and findings, splits long recordings and checks for duplicates. It
+ * runs through the person's own Claude Code or Codex on this computer.
+ */
+function Models({ client }: { client: LensClient }) {
+  const [agents, setAgents] = useState<AgentInfo[] | null>(null);
+  const [choice, setChoice] = useState<Agent | null | undefined>(undefined);
+  const [problem, setProblem] = useState<string | null>(null);
+  useEffect(() => {
+    Promise.all([client.request({ method: 'listAgents' }), client.request({ method: 'getSummaryAgent' })])
+      .then(([found, chosen]) => {
+        setAgents(found);
+        setChoice(chosen);
+      })
+      .catch((error: Error) => setProblem(error.message));
+  }, [client]);
+  if (!agents || choice === undefined) return problem ? <p role="alert" className="notice">{problem}</p> : null;
+  const state = (agent: Agent) => agents.find((a) => a.agent === agent)?.state ?? 'missing';
+  const options: { value: Agent | null; label: string; detail: string }[] = [
+    { value: null, label: 'Automatic', detail: 'Claude Code when it is ready, otherwise Codex.' },
+    { value: 'claude', label: 'Claude Code (Haiku)', detail: AGENT_STATE[state('claude')] },
+    { value: 'codex', label: 'Codex', detail: AGENT_STATE[state('codex')] },
+  ];
+  async function choose(value: Agent | null) {
+    const before = choice;
+    setChoice(value);
+    setProblem(null);
+    try {
+      await client.request({ method: 'setSummaryAgent', params: { agent: value } });
+    } catch (error) {
+      setChoice(before ?? null);
+      setProblem((error as Error).message);
+    }
+  }
+  return (
+    <section aria-label="AI model" className="card settings-section">
+      <div className="section">
+        <h2>AI model</h2>
+        <p className="small muted">
+          Writes the title and findings, splits long recordings into tasks and looks for duplicates. Lens runs it through
+          the tool on this computer, with your own subscription. It sends text only: your words, the steps and the page
+          text. Audio and screenshots stay here.
+        </p>
+      </div>
+      <div className="choices" role="radiogroup" aria-label="AI model">
+        {options.map((o) => {
+          const unavailable = o.value !== null && state(o.value) !== 'ready';
+          return (
+            <label key={o.label} className="check">
+              <input type="radio" name="summary-agent" checked={choice === o.value} onChange={() => void choose(o.value)} />
+              <span>
+                {o.label}
+                <span className="small muted" style={{ display: 'block' }} data-unavailable={unavailable || undefined}>
+                  {o.detail}
+                </span>
+              </span>
+            </label>
+          );
+        })}
+      </div>
+      {choice !== null && state(choice) !== 'ready' && (
+        <p role="alert" className="small">
+          {choice === 'claude' ? 'Claude Code' : 'Codex'} is {AGENT_STATE[state(choice)].toLowerCase()}, so Lens writes no
+          titles or findings until you install it and sign in, or choose Automatic.
+        </p>
+      )}
+      {problem && (
+        <p role="alert" className="small">
+          {problem}
+        </p>
+      )}
+    </section>
+  );
 }
 
 /** The speech model for voice notes: where it runs, and the one-time download. */
