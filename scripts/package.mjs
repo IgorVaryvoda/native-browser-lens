@@ -57,7 +57,7 @@ const config = {
   description: 'Record browser defects with your voice, review them, and file them as tasks an agent can repeat.',
   'long-description':
     'Sirv Lens records what you do on a site, with your voice, the network and the console, and turns it into a reviewed task for VibeQ that a coding agent can reproduce.',
-  homepage: 'https://github.com/VKrachun/native-browser-lens',
+  homepage: 'https://lens.sirv.studio',
   authors: ['Igor Varyvoda <igor@varyvoda.com>'],
   category: 'DeveloperTool',
   publisher: 'Sirv',

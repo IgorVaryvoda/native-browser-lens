@@ -1,2 +1,4 @@
 dist/
+site/dist/
+site/downloads/
 /target

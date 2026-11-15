@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Permissions · Sirv Lens</title>
+<meta name="description" content="Each browser permission Sirv Lens asks for, and why it needs it.">
+<link rel="icon" href="/favicon.png">
+<link rel="stylesheet" href="/assets/site.css">
+</head>
+<body>
+<header class="top">
+  <div class="wrap">
+    <a class="brand" href="/"><img src="/assets/icon.svg" alt="" width="28" height="28">Sirv Lens</a>
+    <nav aria-label="Main">
+      <a href="/#how">How it works</a>
+      <a href="/privacy">Privacy</a>
+      <a href="/support">Support</a>
+      <a class="btn btn-primary" href="/#download">Download</a>
+    </nav>
+  </div>
+</header>
+
+<main class="doc">
+  <div class="narrow">
+    <h1>Why Lens asks for each permission</h1>
+    <p class="updated">Effective November 15, 2026</p>
+
+    <div class="summary-box">
+      <p>Lens has one purpose: to record a browser session with your voice and turn it into a bug report that can be reproduced. It reads a website only after you allow that website from its side panel, and everything it records stays on your computer until you file it. See the <a href="/privacy">privacy policy</a>.</p>
+    </div>
+
+    <h2>Chrome, Edge, Brave and Chromium</h2>
+    <table>
+      <thead><tr><th>Permission</th><th>Why Lens needs it</th></tr></thead>
+      <tbody>
+        <tr><td><code>debugger</code></td><td>To see what the page did while you tested it: network requests and their status, the bodies of the site's own API calls and failed requests, console errors, and a screenshot after each step. Lens attaches only to tabs of sites you allowed, and Chrome shows its "started debugging this browser" bar while it does.</td></tr>
+        <tr><td><code>nativeMessaging</code></td><td>To talk to the Lens app on your computer, which stores recordings, writes down your voice, files tasks and serves coding agents. Lens talks to no server.</td></tr>
+        <tr><td><code>sidePanel</code></td><td>Lens works from the browser's side panel: Record, Stop, your recordings and their notes.</td></tr>
+        <tr><td><code>tabs</code></td><td>To know which site the active tab shows, so Lens collects only on sites you allowed, and to open the review page after a recording.</td></tr>
+        <tr><td><code>scripting</code></td><td>To add the recorder to tabs of allowed sites. It records the page structure and your steps for the replay, with passwords and private fields masked.</td></tr>
+        <tr><td><code>activeTab</code></td><td>To capture the tab you are looking at when you use the Lens button or its keyboard shortcut.</td></tr>
+        <tr><td><code>storage</code></td><td>To remember your settings, such as Record or Capture mode and whether to record your voice.</td></tr>
+        <tr><td><code>offscreen</code></td><td>To keep recording your voice when you close the side panel during a recording. The microphone runs only while a recording with "Record my voice" is on.</td></tr>
+        <tr><td><code>favicon</code></td><td>To show each site's icon next to its name in the side panel.</td></tr>
+        <tr><td>Site access (optional): <code>http://*/*</code>, <code>https://*/*</code></td><td>Requested for one site at a time, when you choose "Collect evidence on this site". Lens has no access to any site until you grant it, and you can remove a site at any time in the browser's extension settings.</td></tr>
+      </tbody>
+    </table>
+
+    <h2>Firefox</h2>
+    <table>
+      <thead><tr><th>Permission</th><th>Why Lens needs it</th></tr></thead>
+      <tbody>
+        <tr><td><code>webRequest</code></td><td>Firefox has no debugger for extensions; Lens uses this to see the addresses, methods and status of the requests of allowed sites. It does not read request or response bodies in Firefox.</td></tr>
+        <tr><td><code>nativeMessaging</code>, <code>tabs</code>, <code>scripting</code>, <code>activeTab</code>, <code>storage</code></td><td>As in Chrome, above. Lens works from Firefox's sidebar.</td></tr>
+        <tr><td>Site access (optional): one site at a time</td><td>As in Chrome, above.</td></tr>
+        <tr><td>Access to all websites (optional): <code>&lt;all_urls&gt;</code></td><td>Firefox lets an extension take a screenshot of a tab only with access to all websites, or right after you click its toolbar button. Lens asks for it when you first record, capture or collect, so it can take the screenshots of your recording. It still records only on the sites you added.</td></tr>
+      </tbody>
+    </table>
+
+    <h2>The microphone</h2>
+    <p>The microphone is not an extension permission: the browser asks you the first time you record with "Record my voice" on. The audio is written down on your computer and never leaves it.</p>
+
+    <h2>Questions</h2>
+    <p>Write to <a href="mailto:lens@sirv.studio">lens@sirv.studio</a>.</p>
+  </div>
+</main>
+
+<footer class="foot">
+  <div class="wrap">
+    <span>© 2026 Igor Varyvoda. Sirv Lens.</span>
+    <nav aria-label="Footer"><a href="/privacy">Privacy</a><a href="/permissions">Permissions</a><a href="/terms">Terms</a><a href="/support">Support</a></nav>
+  </div>
+</footer>
+</body>
+</html>

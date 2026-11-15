@@ -27,6 +27,13 @@ Make the installers for the computer you are on with `node scripts/package.mjs -
 (`app,dmg`, `nsis`, or `appimage,deb,pacman`; add `--gpu vulkan` or `--gpu metal` for the GPU
 speech program). The release workflow builds all of them for a `v*` tag.
 
+## Website
+
+`site/` is lens.sirv.studio: the landing page, privacy policy, permissions, terms and support (the
+pages the extension stores ask for), served by Cloudflare Workers static assets. Put the installers
+in `site/downloads/` (not committed), then `node site/deploy.mjs` assembles `site/dist/` with a
+download manifest, SHA256SUMS and an Arch PKGBUILD, and deploys (`--dry-run` only assembles).
+
 ## Develop
 
 Requirements: Rust (the version in `rust-toolchain.toml` installs by itself), Node.js 24, pnpm,

@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Support · Sirv Lens</title>
+<meta name="description" content="Help with installing and using Sirv Lens.">
+<link rel="icon" href="/favicon.png">
+<link rel="stylesheet" href="/assets/site.css">
+</head>
+<body>
+<header class="top">
+  <div class="wrap">
+    <a class="brand" href="/"><img src="/assets/icon.svg" alt="" width="28" height="28">Sirv Lens</a>
+    <nav aria-label="Main">
+      <a href="/#how">How it works</a>
+      <a href="/privacy">Privacy</a>
+      <a href="/support">Support</a>
+      <a class="btn btn-primary" href="/#download">Download</a>
+    </nav>
+  </div>
+</header>
+
+<main class="doc">
+  <div class="narrow">
+    <h1>Support</h1>
+    <p class="updated">Write to <a href="mailto:lens@sirv.studio">lens@sirv.studio</a>. Include what you did, what happened, and the output of <code>lens doctor</code>.</p>
+
+    <h2>The side panel says "App not installed"</h2>
+    <p>Lens needs its app on your computer. <a href="/#download">Download it</a>, open it once, and the panel continues by itself. If the app is installed, open it again from your applications: it repairs its browser registration and opens the setup page.</p>
+
+    <h2>Check the setup</h2>
+    <p>In a terminal, run <code>lens doctor</code>. It checks each step (the app, starting at login, the browsers, the extension, a site to collect on) and says what to do for each open one. <code>lens setup</code> walks through them.</p>
+    <p>The <code>lens</code> command is the app itself: on macOS it is <code>"/Applications/Sirv Lens.app/Contents/MacOS/lens"</code>.</p>
+
+    <h2>Adding the extension</h2>
+    <ul>
+      <li><strong>Chrome, Edge, Brave:</strong> open the extensions page (<code>chrome://extensions</code>), turn on Developer mode, choose Load unpacked and select the <code>extension</code> folder that the app's welcome page names.</li>
+      <li><strong>Firefox:</strong> open <code>about:debugging#/runtime/this-firefox</code>, choose Load Temporary Add-on and select <code>extension-firefox/manifest.json</code>. Firefox removes it when it closes; load it again after a restart.</li>
+    </ul>
+    <p>Store listings for Chrome and Firefox are on their way.</p>
+
+    <h2>Lens does not record a site</h2>
+    <p>Open the site, open the Lens side panel and choose "Collect evidence on this site", then allow it when the browser asks. In Firefox, Lens also asks for access to all websites so that it can take screenshots; it still records only the sites you added.</p>
+
+    <h2>My voice is not written down</h2>
+    <p>Lens writes down speech on your computer with the Whisper model, a one-time download of about 575 MB. Download it from the side panel or from Settings. If the browser blocked the microphone, Lens opens a tab where you can allow it.</p>
+
+    <h2>No title or findings appear</h2>
+    <p>Lens writes them with Claude Code or Codex. Install one of them, sign in, and choose it (or Automatic) in Lens Settings, under AI model.</p>
+
+    <h2>Removing Lens</h2>
+    <p>Remove the extension from the browser. Then run <code>lens service uninstall</code> and <code>lens unregister</code>, delete the app, and, if you also want your recordings gone, the data folder named in the <a href="/privacy">privacy policy</a>.</p>
+  </div>
+</main>
+
+<footer class="foot">
+  <div class="wrap">
+    <span>© 2026 Igor Varyvoda. Sirv Lens.</span>
+    <nav aria-label="Footer"><a href="/privacy">Privacy</a><a href="/permissions">Permissions</a><a href="/terms">Terms</a><a href="/support">Support</a></nav>
+  </div>
+</footer>
+</body>
+</html>

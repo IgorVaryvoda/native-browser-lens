@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Privacy policy · Sirv Lens</title>
+<meta name="description" content="How Sirv Lens handles the pages, voice and recordings it works with: on your computer, until you choose to file or export them.">
+<link rel="icon" href="/favicon.png">
+<link rel="stylesheet" href="/assets/site.css">
+</head>
+<body>
+<header class="top">
+  <div class="wrap">
+    <a class="brand" href="/"><img src="/assets/icon.svg" alt="" width="28" height="28">Sirv Lens</a>
+    <nav aria-label="Main">
+      <a href="/#how">How it works</a>
+      <a href="/permissions">Permissions</a>
+      <a href="/support">Support</a>
+      <a class="btn btn-primary" href="/#download">Download</a>
+    </nav>
+  </div>
+</header>
+
+<main class="doc">
+  <div class="narrow">
+    <h1>Privacy policy</h1>
+    <p class="updated">Effective November 15, 2026</p>
+
+    <div class="summary-box">
+      <p><strong>In short:</strong> Sirv Lens runs on your computer. The publisher receives none of your data: Lens has no server and no analytics. What Lens records stays on your computer until you file or export it, and then it goes only where you send it.</p>
+    </div>
+
+    <h2>Who we are</h2>
+    <p>Sirv Lens ("Lens") is a browser extension and a companion app for your computer, published by Igor Varyvoda ("we"). For any question about privacy, write to <a href="mailto:lens@sirv.studio">lens@sirv.studio</a>.</p>
+
+    <h2>What Lens does</h2>
+    <p>Lens has one purpose: to record a browser session with your voice and turn it into a bug report that a person or a coding agent can reproduce. Everything below serves that purpose and nothing else.</p>
+
+    <h2>What Lens handles, and where it stays</h2>
+    <p>Lens works only on websites you allow, one site at a time, from its side panel. On every other website it reads nothing.</p>
+    <table>
+      <thead><tr><th>What</th><th>When</th><th>Where it is kept</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Page content</strong>: the address and title, the page structure and text as a replayable recording, and screenshots of the tab</td><td>On allowed sites, while Lens collects or records</td><td rowspan="4">In the extension's memory (the last ten minutes at most), then in the Lens app's data folder on your computer when you capture or stop a recording</td></tr>
+        <tr><td><strong>Your actions</strong>: clicks, choices, keys such as Enter, and what you type. Passwords, one-time codes, card numbers and fields marked private are always masked</td><td>On allowed sites, while Lens collects or records</td></tr>
+        <tr><td><strong>Network activity</strong> of the page: request addresses (with credentials removed), methods, status codes and timing. In Chrome-family browsers also the request and response bodies of the site's own API calls and of failed requests, up to 16 KB each, with tokens, passwords and private fields redacted. Lens never records cookies or request headers, and never bodies from other sites</td><td>On allowed sites, while Lens collects or records</td></tr>
+        <tr><td><strong>Console messages</strong>: errors and warnings of the page</td><td>On allowed sites, while Lens collects or records</td></tr>
+        <tr><td><strong>Your voice</strong>, from the microphone</td><td>Only while you record with "Record my voice" turned on</td><td>The audio stays on your computer. Lens writes it down there with the Whisper speech model; no audio is ever sent anywhere</td></tr>
+        <tr><td><strong>Your own input</strong>: titles, notes, tags, drawings, highlights and black-out masks</td><td>When you add them</td><td>The data folder on your computer</td></tr>
+        <tr><td><strong>Settings</strong>: allowed sites, preferences, and the address of your VibeQ workspace</td><td>When you set them</td><td>The browser's extension storage and the data folder. Your VibeQ sign-in token is kept in your operating system's secret store</td></tr>
+      </tbody>
+    </table>
+    <p>The data folder is <code>~/Library/Application Support/Sirv Lens</code> on macOS, <code>~/.local/share/sirv-lens</code> on Linux and <code>%LOCALAPPDATA%\Sirv\Lens</code> on Windows.</p>
+
+    <h2>When data leaves your computer</h2>
+    <p>Only in these cases, and each one starts with an action of yours:</p>
+    <ul>
+      <li><strong>Filing to VibeQ.</strong> When you press "File to VibeQ", Lens sends the task (title, notes, findings, tags), the structured record, the screenshots and the page recording to the VibeQ address you configured, signed in as you. Before filing, Lens may search that VibeQ for similar tasks. If you choose "Put Sirvant to work", Lens asks your VibeQ to start its agent on the task. VibeQ is run by its own operator under its own terms.</li>
+      <li><strong>Exporting.</strong> "Export" writes the same files to a folder on your computer. Where they go from there is up to you.</li>
+      <li><strong>Your AI assistant, if you have one.</strong> If Claude Code or Codex is installed and signed in on your computer, Lens uses it to write titles and findings, to split long recordings into tasks and to check for duplicates. Lens passes it text only: your transcript, the steps, the page text, your notes and, for the duplicate check, the titles and descriptions of similar VibeQ tasks. The tool sends that text to Anthropic or OpenAI under your own account and their terms. No audio and no screenshots are sent for these. The separate "Draft the report" action, which you start yourself, also passes the screenshots. You choose the assistant in Settings; without one installed, nothing is sent.</li>
+      <li><strong>Coding agents on your computer.</strong> If you connect an agent to Lens over MCP (<code>lens mcp</code>), it can read the recordings you reviewed. It runs on your computer under your control.</li>
+      <li><strong>Downloads Lens makes.</strong> The app checks for updates and downloads signed updates from GitHub, and downloads the speech model from Hugging Face when you ask it to. These requests carry no recorded data; like any download, they reveal your IP address to those services.</li>
+    </ul>
+
+    <h2>What we never do</h2>
+    <ul>
+      <li>We do not collect, receive or store any of your data. Lens has no server, account or backend of ours.</li>
+      <li>Lens contains no analytics, telemetry, crash reporting, advertising or tracking.</li>
+      <li>We do not sell, rent, share or transfer user data to anyone, and we do not use it for any purpose unrelated to Lens's single purpose, for advertising, or to determine creditworthiness or for lending.</li>
+      <li>No person reads your recordings, because none of them ever reach us.</li>
+    </ul>
+    <p>The use of information that Lens receives complies with the <a href="https://developer.chrome.com/docs/webstore/program-policies/user-data-faq">Chrome Web Store User Data Policy</a>, including the Limited Use requirements.</p>
+
+    <h2>Permissions</h2>
+    <p>Each browser permission Lens asks for, and why, is on the <a href="/permissions">permissions page</a>.</p>
+
+    <h2>Keeping and deleting data</h2>
+    <ul>
+      <li>The extension keeps at most the last ten minutes of an allowed tab in memory. It is gone when the tab closes, when you stop collecting on the site, or when you quit the browser.</li>
+      <li>Recordings in the data folder stay until you delete them: delete an observation in the side panel, or remove the data folder after you uninstall the app.</li>
+      <li>To stop collection everywhere at once, use "Pause collection" in the Lens menu. To revoke a site, remove it in the browser's extension settings.</li>
+      <li>Tasks you filed stay in VibeQ; delete them there.</li>
+    </ul>
+
+    <h2>Security</h2>
+    <p>Recordings are stored in your user account's data folder, protected by your operating system's file permissions. Your VibeQ token is kept in the system's secret store, not in a file. Lens talks to VibeQ over HTTPS only, and it installs only updates that carry our signature.</p>
+
+    <h2>Children</h2>
+    <p>Lens is a tool for people who build and test websites. It is not directed at children under 16.</p>
+
+    <h2>This website</h2>
+    <p>lens.sirv.studio is a static website. It uses no cookies and no analytics. It is hosted by Cloudflare, which processes requests, including IP addresses, to deliver and protect the site.</p>
+
+    <h2>Changes</h2>
+    <p>If this policy changes, the new version appears on this page with a new effective date. A change that lets Lens send data anywhere new will be described here before it ships.</p>
+
+    <h2>Contact</h2>
+    <p>Igor Varyvoda, <a href="mailto:lens@sirv.studio">lens@sirv.studio</a>.</p>
+  </div>
+</main>
+
+<footer class="foot">
+  <div class="wrap">
+    <span>© 2026 Igor Varyvoda. Sirv Lens.</span>
+    <nav aria-label="Footer"><a href="/privacy">Privacy</a><a href="/permissions">Permissions</a><a href="/terms">Terms</a><a href="/support">Support</a></nav>
+  </div>
+</footer>
+</body>
+</html>
