@@ -5,7 +5,7 @@ Capture browser defects with their evidence, review them, and file them. See
 
 ## Install
 
-Download the installer for your computer from the [latest release](https://github.com/sirv/native-browser-lens/releases/latest).
+Download the installer for your computer from the [latest release](https://github.com/IgorVaryvoda/native-browser-lens/releases/latest).
 Each installs for your user only, without administrator rights.
 
 | Computer | Installer | Then |
@@ -20,8 +20,8 @@ The first time Sirv Lens opens, it sets itself up: it starts at login with a tra
 with your browsers, and opens a page that shows how to add the browser extension. Open Sirv Lens
 again to see that page. In a terminal, `lens open` does the same and `lens doctor` checks each step.
 
-Prefer the terminal? `curl -fsSL https://github.com/sirv/native-browser-lens/releases/latest/download/install.sh | sh`
-(PowerShell: `irm https://github.com/sirv/native-browser-lens/releases/latest/download/install.ps1 | iex`).
+Prefer the terminal? `curl -fsSL https://github.com/IgorVaryvoda/native-browser-lens/releases/latest/download/install.sh | sh`
+(PowerShell: `irm https://github.com/IgorVaryvoda/native-browser-lens/releases/latest/download/install.ps1 | iex`).
 
 Make the installers for the computer you are on with `node scripts/package.mjs --formats <formats>`
 (`app,dmg`, `nsis`, or `appimage,deb,pacman`; add `--gpu vulkan` or `--gpu metal` for the GPU
@@ -65,7 +65,7 @@ Coding agents read the defects a person reviewed, reproduce them and prove the f
   agents from Settings instead.
 
   ```
-  /plugin install sirv-lens --marketplace sirv/native-browser-lens
+  /plugin install sirv-lens --marketplace IgorVaryvoda/native-browser-lens
   ```
 
 - **The CLI**, for agents without MCP and for scripts:

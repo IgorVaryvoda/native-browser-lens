@@ -4,7 +4,7 @@ import type { SetupStatus } from '@/protocol/SetupStatus';
 import { CopyIcon, DoneIcon } from '@/ui/icons';
 import { useStored } from './Record';
 
-const REPO = 'https://github.com/sirv/native-browser-lens/releases';
+const REPO = 'https://github.com/IgorVaryvoda/native-browser-lens/releases';
 const RELEASES = `${REPO}/latest/download`;
 
 /** The installer for this computer, as people know it, and the terminal line for those who prefer it. */
