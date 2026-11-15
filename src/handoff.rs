@@ -390,7 +390,7 @@ mod tests {
             &report,
         );
         assert!(short.chars().count() <= 5000);
-        assert!(short.contains("/tmp/lens-review-1/report.md"));
+        assert!(short.contains(&folder.join("report.md").display().to_string()));
         assert!(short.ends_with("read the full report.]"));
         let long = prompt(HandoffApp::Zeron, "Export fails", None, folder, &report);
         assert!(long.ends_with(&report));
@@ -407,7 +407,7 @@ mod tests {
             "REPORT BODY",
         );
         assert!(filed.starts_with("Work on VibeQ task t-42: https://vibeq.example/t/42"));
-        assert!(filed.contains("/tmp/lens-review-1/report.md"));
+        assert!(filed.contains(&folder.join("report.md").display().to_string()));
         assert!(!filed.contains("REPORT BODY"));
     }
 

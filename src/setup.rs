@@ -428,7 +428,8 @@ mod tests {
             Some("<boom>"),
             false,
         );
-        assert!(page.contains("/home/a&amp;b/lens/extension"));
+        let extension = std::path::Path::new("/home/a&b/lens").join("extension");
+        assert!(page.contains(&extension.display().to_string().replace('&', "&amp;")));
         assert!(page.contains("Setup stopped: &lt;boom&gt;"));
         assert!(!page.contains("{{"));
     }

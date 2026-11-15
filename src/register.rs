@@ -421,7 +421,10 @@ mod tests {
             .iter()
             .filter(|(_, line)| line != "not installed")
             .collect();
-        assert_eq!(written.len(), 1);
+        // A Mac with Firefox in /Applications (CI runners have it) counts Firefox as installed.
+        let firefox_app =
+            cfg!(target_os = "macos") && Path::new("/Applications/Firefox.app").is_dir();
+        assert_eq!(written.len(), 1 + usize::from(firefox_app));
 
         let manifest: serde_json::Value =
             serde_json::from_slice(&std::fs::read(manifest_path(chrome)).unwrap()).unwrap();
@@ -432,12 +435,13 @@ mod tests {
             "chrome-extension://cggibhoaigdeemmdlfcncfkmoknndbfd/"
         );
         assert!(
-            !browsers
-                .iter()
-                .find(|b| b.name == "Firefox")
-                .unwrap()
-                .root
-                .exists()
+            firefox_app
+                || !browsers
+                    .iter()
+                    .find(|b| b.name == "Firefox")
+                    .unwrap()
+                    .root
+                    .exists()
         );
     }
 
