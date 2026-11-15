@@ -460,6 +460,13 @@ try {
   }
   await review.getByLabel('Assign to').selectOption({ label: 'Ana' });
   await review.getByLabel('Then put Sirvant to work').check();
+  const handoff = review.getByRole('region', { name: 'Hand off' });
+  if (summaries) {
+    // File, then hand off to T3 Code at once: the agent's prompt links the new VibeQ task.
+    await handoff.getByLabel('App').selectOption({ label: 'T3 Code' });
+    await handoff.getByLabel('Project folder').fill(handoffProject);
+    await review.getByLabel('Then hand off to T3 Code').check();
+  }
   await review.getByRole('button', { name: 'File to VibeQ' }).click();
   await review.getByRole('alert').filter({ hasText: /Filing again is safe/ }).waitFor({ timeout: 30_000 });
   await review.getByRole('button', { name: 'File to VibeQ' }).click();
@@ -470,11 +477,7 @@ try {
     throw new Error(`Sirvant was asked: ${JSON.stringify(vibeq.sirvant)}`);
   }
   if (summaries) {
-    // Hand off to T3 Code: an unknown folder becomes a project, then a thread starts with the task.
-    const handoff = review.getByRole('region', { name: 'Hand off' });
-    await handoff.getByLabel('App').selectOption({ label: 'T3 Code' });
-    await handoff.getByLabel('Project folder').fill(handoffProject);
-    await handoff.getByRole('button', { name: 'Hand off to T3 Code' }).click();
+    // Handed off after filing: an unknown folder becomes a project, then a thread starts with the task.
     await handoff.getByRole('status', { name: 'Hand-off' }).filter({ hasText: 'T3 Code works on it now.' }).waitFor({ timeout: 30_000 });
     const t3Log = join(fakeBin, 't3.log');
     for (let i = 0; i < 50 && !readFileSync(t3Log, 'utf8').includes(`ARGS app ${handoffProject}`); i++) await new Promise((done) => setTimeout(done, 100));

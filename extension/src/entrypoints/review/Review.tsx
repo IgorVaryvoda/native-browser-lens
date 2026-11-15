@@ -15,7 +15,7 @@ import type { VoiceNote } from '@/protocol/VoiceNote';
 import type { ReviewVoice } from '@/protocol/ReviewVoice';
 import { AlertIcon, DoneIcon, DraftIcon, ExportIcon, FileIcon, MaskIcon } from '@/ui/icons';
 import { RecordingEditor } from './RecordingEditor';
-import { Handoff } from './Handoff';
+import { Handoff, handoffName, useHandoff } from './Handoff';
 import { Notes } from '../sidepanel/Notes';
 import { useStored } from '../sidepanel/Record';
 import type { SirvantRun } from '@/protocol/SirvantRun';
@@ -49,6 +49,7 @@ export function Review({ observation: id }: { observation: number }) {
   const [problem, setProblem] = useState<string | null>(null);
   /** The task of an earlier filing of this observation, when the page opens again. */
   const [filedTask, setFiledTask] = useState<string | null>(null);
+  const handoff = useHandoff(client, siteOf(review?.items[0]?.pageUrl ?? captures[0]?.pageUrl));
 
   useEffect(() => {
     Promise.all([
@@ -168,6 +169,8 @@ export function Review({ observation: id }: { observation: number }) {
       setFiling(done);
       setProblem(done.missingFiles ? `${done.missingFiles} files did not reach VibeQ; file again to send them.` : null);
       if (done.taskUrl && sirvantNext && !sirvant) await startSirvant();
+      // The agent's prompt then links the VibeQ task.
+      if (done.taskUrl && handoff.afterFiling && handoff.ready && !handoff.done) await handoff.handOff(review.id);
     } catch (error) {
       setProblem(`Not filed: ${(error as Error).message}. Filing again is safe: it never creates a second task.`);
     } finally {
@@ -387,7 +390,7 @@ export function Review({ observation: id }: { observation: number }) {
             </div>
           )}
           {!filing && <Duplicates client={client} id={id} />}
-          <Handoff client={client} review={review.id} site={siteOf(review.items[0]?.pageUrl)} />
+          <Handoff state={handoff} review={review.id} />
 
           <footer className="action-bar">
             {readyAgents.map((a) => (
@@ -435,6 +438,20 @@ export function Review({ observation: id }: { observation: number }) {
               <label className="check" title="VibeQ's agent takes the task and starts on it. VibeQ operators only.">
                 <input type="checkbox" checked={sirvantNext} onChange={(e) => setSirvantNext(e.target.checked)} />
                 <span>Then put Sirvant to work</span>
+              </label>
+            )}
+            {!filing?.taskUrl && handoff.app && (
+              <label
+                className="check"
+                title={handoff.ready ? 'Files the task, then hands it off with its VibeQ link.' : 'Choose the project folder under Hand off first.'}
+              >
+                <input
+                  type="checkbox"
+                  checked={handoff.afterFiling && handoff.ready}
+                  disabled={!handoff.ready}
+                  onChange={(e) => handoff.setAfterFiling(e.target.checked)}
+                />
+                <span>Then hand off to {handoffName(handoff.app)}</span>
               </label>
             )}
             <button

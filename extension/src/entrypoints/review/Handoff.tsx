@@ -20,13 +20,16 @@ const NEXT: Record<HandoffApp, string> = {
 };
 
 /**
- * Hands the review to a coding agent app on this computer. The project folder is remembered for
- * each site, so the next recording of the same site goes to the same project.
+ * The hand-off state: the apps installed here, the chosen one, and the project folder, remembered
+ * for each site so the next recording of the same site goes to the same project. The review page
+ * also uses it to hand off right after filing.
  */
-export function Handoff({ client, review, site }: { client: LensClient; review: number; site: string }) {
+export function useHandoff(client: LensClient, site: string) {
   const [apps, setApps] = useState<HandoffApp[]>([]);
   const [chosen, setChosen] = useStored<HandoffApp | ''>('lens.handoff.app', '');
   const [folders, setFolders] = useStored<Record<string, string>>('lens.handoff.folders', {});
+  /** Hand off as soon as the review is filed to VibeQ; remembered for the next review. */
+  const [afterFiling, setAfterFiling] = useStored('lens.handoff.afterFiling', false);
   const [folder, setFolder] = useState('');
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState<{ app: HandoffApp; report: string } | null>(null);
@@ -44,12 +47,10 @@ export function Handoff({ client, review, site }: { client: LensClient; review: 
   }, [folders, site]);
 
   const first = apps[0];
-  if (!first) return null;
   const app = chosen && apps.includes(chosen) ? chosen : first;
-  const recent = [...new Set(Object.values(folders))];
 
-  async function handOff(event: React.FormEvent) {
-    event.preventDefault();
+  async function handOff(review: number) {
+    if (!app) return;
     setBusy(true);
     setProblem(null);
     try {
@@ -65,14 +66,41 @@ export function Handoff({ client, review, site }: { client: LensClient; review: 
     }
   }
 
+  return {
+    apps,
+    app,
+    choose: setChosen,
+    folder,
+    setFolder,
+    recent: [...new Set(Object.values(folders))],
+    /** An app and a folder are there: a hand-off can start. */
+    ready: Boolean(app && folder.trim()),
+    afterFiling,
+    setAfterFiling,
+    busy,
+    done,
+    problem,
+    handOff,
+  };
+}
+
+export type HandoffState = ReturnType<typeof useHandoff>;
+
+export const handoffName = (app: HandoffApp) => NAMES[app];
+
+/** Hands the review to a coding agent app on this computer. */
+export function Handoff({ state, review }: { state: HandoffState; review: number }) {
+  const { apps, app, folder, busy, done, problem } = state;
+  if (!app) return null;
+
   return (
     <section className="card handoff" aria-label="Hand off">
       <h2>Hand off to a coding agent</h2>
       <p className="small muted">
         Lens saves the report on this computer and opens the app with the task, in your project's folder.
       </p>
-      <form className="handoff-form" onSubmit={(e) => void handOff(e)}>
-        <select className="select" aria-label="App" value={app} onChange={(e) => setChosen(e.target.value as HandoffApp)}>
+      <form className="handoff-form" onSubmit={(e) => (e.preventDefault(), void state.handOff(review))}>
+        <select className="select" aria-label="App" value={app} onChange={(e) => state.choose(e.target.value as HandoffApp)}>
           {apps.map((a) => (
             <option key={a} value={a}>
               {NAMES[a]}
@@ -85,11 +113,11 @@ export function Handoff({ client, review, site }: { client: LensClient; review: 
           placeholder="Project folder, such as /home/you/projects/site"
           list="handoff-folders"
           value={folder}
-          onChange={(e) => setFolder(e.target.value)}
+          onChange={(e) => state.setFolder(e.target.value)}
           spellCheck={false}
         />
         <datalist id="handoff-folders">
-          {recent.map((f) => (
+          {state.recent.map((f) => (
             <option key={f} value={f} />
           ))}
         </datalist>
