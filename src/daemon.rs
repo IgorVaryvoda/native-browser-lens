@@ -780,10 +780,9 @@ impl Daemon {
                     .get_review(review)
                     .map_err(storage)?
                     .ok_or_else(|| not_found("no such review"))?;
-                let task_url = store
-                    .filing(review.id)
-                    .map_err(storage)?
-                    .and_then(|a| a.receipt.map(|r| r.task_url));
+                // The recording's newest filing, from this review or an earlier one: the agent
+                // then works from that VibeQ task.
+                let task = store.filed_task(review.observation).map_err(storage)?;
                 drop(store);
                 let project = std::path::PathBuf::from(folder.trim());
                 if !project.is_absolute() || !project.is_dir() {
@@ -794,8 +793,13 @@ impl Daemon {
                         .map_err(storage)?;
                 let report =
                     std::fs::read_to_string(exported.join("report.md")).map_err(storage)?;
-                let prompt =
-                    handoff::prompt(app, &review.title, task_url.as_deref(), &exported, &report);
+                let prompt = handoff::prompt(
+                    app,
+                    &review.title,
+                    task.as_ref().map(|(id, url)| (id.as_str(), url.as_str())),
+                    &exported,
+                    &report,
+                );
                 handoff::start(app, &review.title, &prompt, &project).map_err(bad)?;
                 Reply::HandedOff(Exported {
                     folder: exported.display().to_string(),
@@ -969,7 +973,10 @@ impl Daemon {
                     .map_err(storage)?
                     .ok_or_else(|| not_found("no such observation"))?;
                 // This observation's own task, from an earlier filing, is not a duplicate of it.
-                let own_task = store.filed_task(observation).map_err(storage)?;
+                let own_task = store
+                    .filed_task(observation)
+                    .map_err(storage)?
+                    .map(|(id, _)| id);
                 drop(store);
                 Reply::Duplicates(self.duplicates(&found, own_task.as_deref())?)
             }

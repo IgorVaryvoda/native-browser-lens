@@ -610,18 +610,22 @@ impl Store {
         Ok(())
     }
 
-    /// The VibeQ task of this observation's newest confirmed filing, if any.
-    pub fn filed_task(&self, observation: i64) -> rusqlite::Result<Option<String>> {
+    /// The VibeQ task (id and URL) of this observation's newest confirmed filing, if any.
+    pub fn filed_task(&self, observation: i64) -> rusqlite::Result<Option<(String, String)>> {
         self.db
             .query_row(
-                "SELECT json_extract(body, '$.receipt.taskId') FROM filings
+                "SELECT json_extract(body, '$.receipt.taskId'), json_extract(body, '$.receipt.taskUrl')
+                 FROM filings
                  WHERE observation_id = ?1 AND json_extract(body, '$.receipt') IS NOT NULL
                  ORDER BY review_id DESC LIMIT 1",
                 [observation],
-                |row| row.get(0),
+                |row| Ok((row.get::<_, Option<String>>(0)?, row.get::<_, Option<String>>(1)?)),
             )
             .optional()
-            .map(Option::flatten)
+            .map(|found| match found {
+                Some((Some(id), Some(url))) => Some((id, url)),
+                _ => None,
+            })
     }
 
     pub fn filing(&self, review: i64) -> rusqlite::Result<Option<Attempt>> {

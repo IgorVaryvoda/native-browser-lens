@@ -485,10 +485,10 @@ try {
     for (const expected of [
       `ARGS project add ${handoffProject}`,
       `ARGS thread start ${handoffProject} - --title`,
-      'Fix this defect that Sirv Lens recorded',
-      'VibeQ task: http://vibeq.test/?task=task-1',
+      'Work on VibeQ task task-1: http://vibeq.test/?task=task-1',
+      'get_task in the VibeQ MCP',
       '/report.md',
-      'HTTP 500 from',
+      'record what you did on the VibeQ task',
       `ARGS app ${handoffProject}`,
     ]) {
       if (!asked.includes(expected)) throw new Error(`T3 Code was not asked ${expected}:\n${asked}`);
