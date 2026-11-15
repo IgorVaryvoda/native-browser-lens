@@ -35,6 +35,8 @@ type ReplyTo = {
   getReview: 'review';
   createReview: 'review';
   exportReview: 'exported';
+  listHandoffApps: 'handoffApps';
+  handOff: 'handedOff';
   getVibeQ: 'vibeQ';
   setVibeQ: 'vibeQ';
   listMembers: 'members';

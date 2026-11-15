@@ -371,7 +371,7 @@ fn welcome(paths: &Paths, problem: Option<&str>, connected: bool) -> String {
         )
 }
 
-fn open_url(url: &str) -> io::Result<()> {
+pub fn open_url(url: &str) -> io::Result<()> {
     let (program, arguments): (&str, Vec<&str>) = if cfg!(target_os = "macos") {
         ("open", vec![url])
     } else if cfg!(windows) {

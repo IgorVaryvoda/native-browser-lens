@@ -148,6 +148,15 @@ pub enum Request {
         #[ts(type = "number")]
         review: i64,
     },
+    /// The coding agent apps installed on this computer that a review can be handed to.
+    ListHandoffApps,
+    /// Exports the review and opens the app on it, working in `folder` (the project's folder).
+    HandOff {
+        #[ts(type = "number")]
+        review: i64,
+        app: crate::handoff::HandoffApp,
+        folder: String,
+    },
     GetVibeQ,
     /// Saves the VibeQ address; a token, when given, goes to the OS secret store (empty removes it).
     SetVibeQ(VibeQInput),
@@ -354,6 +363,9 @@ pub enum Reply {
     Review(Review),
     Reviews(Vec<ReviewSummary>),
     Exported(Exported),
+    HandoffApps(Vec<crate::handoff::HandoffApp>),
+    /// The review was handed off; `folder` holds the exported report.
+    HandedOff(Exported),
     VibeQ(VibeQSettings),
     Members(Vec<crate::vibeq::Member>),
     Filing(Filing),

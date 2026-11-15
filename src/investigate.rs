@@ -681,6 +681,12 @@ fn find(agent: Agent) -> Option<PathBuf> {
     if let Some(path) = std::env::var_os(variable).map(PathBuf::from) {
         return path.is_file().then_some(path);
     }
+    program(name)
+}
+
+/// A program on PATH or in the usual folders that installers put CLIs in. A daemon started by the
+/// system may have a short PATH, so the folders are searched as well.
+pub fn program(name: &str) -> Option<PathBuf> {
     let home = directories::BaseDirs::new().map(|b| b.home_dir().to_path_buf());
     let mut folders: Vec<PathBuf> = std::env::var_os("PATH")
         .map(|p| std::env::split_paths(&p).collect())
@@ -690,6 +696,7 @@ fn find(agent: Agent) -> Option<PathBuf> {
             home.join(".local/bin"),
             home.join(".claude/local"),
             home.join(".codex/packages/standalone/current/bin"),
+            home.join(".t3/bin"),
         ]);
     }
     folders.extend(["/usr/local/bin", "/opt/homebrew/bin"].map(PathBuf::from));

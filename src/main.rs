@@ -6,6 +6,7 @@ mod digest;
 mod export;
 mod filing;
 mod framing;
+mod handoff;
 mod investigate;
 mod ipc;
 mod mcp;

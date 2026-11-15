@@ -191,12 +191,14 @@ fieldset.split legend {
 
 /* Separate problems: one task each. */
 .issues,
+.handoff,
 .duplicates {
   display: grid;
   gap: 10px;
   padding: 14px;
 }
 .issues h2,
+.handoff h2,
 .duplicates h2 {
   margin: 0;
   font-size: 15px;
@@ -237,4 +239,21 @@ fieldset.split legend {
   display: grid;
   gap: 2px;
   min-width: 0;
+}
+
+/* Hand off: the app, the project folder, the button on one line when there is room. */
+.handoff-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.handoff-form .select {
+  width: auto;
+}
+.handoff-form .input {
+  flex: 1 1 280px;
+  min-width: 0;
+  font-family: var(--font-code);
+  font-size: 13px;
 }

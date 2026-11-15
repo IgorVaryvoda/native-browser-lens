@@ -99,6 +99,27 @@ process.stdin.on('end', () => {
   { mode: 0o755 },
 );
 const summaries = process.platform !== 'win32';
+// T3 Code's CLI, faked on PATH: it logs what Lens asks and knows the project only once it is added.
+const fakeBin = join(work, 'bin');
+const handoffProject = join(work, 'project');
+if (summaries) {
+  mkdirSync(handoffProject, { recursive: true });
+  mkdirSync(fakeBin, { recursive: true });
+  writeFileSync(
+    join(fakeBin, 't3'),
+    `#!/bin/sh
+dir=$(dirname "$0")
+echo "ARGS $*" >> "$dir/t3.log"
+case "$1 $2" in
+  "thread start")
+    if [ -f "$dir/added" ]; then cat >> "$dir/t3.log"; echo thread-1
+    else echo "No T3 Code project matches '$3'. Pass a project id or a path inside a project."; fi ;;
+  "project add") touch "$dir/added" ;;
+esac
+`,
+    { mode: 0o755 },
+  );
+}
 const env = {
   ...process.env,
   LENS_HOME: join(work, 'lens'),
@@ -106,6 +127,7 @@ const env = {
   LENS_CLAUDE_BINARY: summaries ? fakeClaude : join(work, 'no-claude'),
   LENS_CODEX_BINARY: join(work, 'no-codex'),
   ...(isolated ? { HOME: join(work, 'home'), XDG_CONFIG_HOME: join(work, 'config') } : {}),
+  ...(summaries ? { PATH: `${fakeBin}:${process.env.PATH}` } : {}),
 };
 const profile = {
   linux: () => join(env.XDG_CONFIG_HOME, 'chromium'),
@@ -446,6 +468,28 @@ try {
   await review.getByRole('status', { name: 'Filing' }).filter({ hasText: 'Sirvant works on it now.' }).waitFor({ timeout: 15_000 });
   if (vibeq.sirvant.length !== 1 || vibeq.sirvant[0].mode !== 'work' || vibeq.sirvant[0].invoked_from !== 'lens') {
     throw new Error(`Sirvant was asked: ${JSON.stringify(vibeq.sirvant)}`);
+  }
+  if (summaries) {
+    // Hand off to T3 Code: an unknown folder becomes a project, then a thread starts with the task.
+    const handoff = review.getByRole('region', { name: 'Hand off' });
+    await handoff.getByLabel('App').selectOption({ label: 'T3 Code' });
+    await handoff.getByLabel('Project folder').fill(handoffProject);
+    await handoff.getByRole('button', { name: 'Hand off to T3 Code' }).click();
+    await handoff.getByRole('status', { name: 'Hand-off' }).filter({ hasText: 'T3 Code works on it now.' }).waitFor({ timeout: 30_000 });
+    const t3Log = join(fakeBin, 't3.log');
+    for (let i = 0; i < 50 && !readFileSync(t3Log, 'utf8').includes(`ARGS app ${handoffProject}`); i++) await new Promise((done) => setTimeout(done, 100));
+    const asked = readFileSync(t3Log, 'utf8');
+    for (const expected of [
+      `ARGS project add ${handoffProject}`,
+      `ARGS thread start ${handoffProject} - --title`,
+      'Fix this defect that Sirv Lens recorded',
+      'VibeQ task: http://vibeq.test/?task=task-1',
+      '/report.md',
+      'HTTP 500 from',
+      `ARGS app ${handoffProject}`,
+    ]) {
+      if (!asked.includes(expected)) throw new Error(`T3 Code was not asked ${expected}:\n${asked}`);
+    }
   }
   const [submitted] = [...vibeq.submissions.values()];
   if (vibeq.submits !== 1 || vibeq.submissions.size !== 1) throw new Error(`VibeQ got ${vibeq.submits} submits`);

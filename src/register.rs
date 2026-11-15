@@ -12,8 +12,10 @@ use std::path::PathBuf;
 pub const HOST_NAME: &str = "studio.sirv.lens";
 /// The unpacked development ID (from the `key` in the extension manifest), then the Chrome Web
 /// Store ID.
-pub const CHROMIUM_EXTENSION_IDS: &[&str] =
-    &["cggibhoaigdeemmdlfcncfkmoknndbfd", "lihjnfpbomppjmdlnchkookggmefanbg"];
+pub const CHROMIUM_EXTENSION_IDS: &[&str] = &[
+    "cggibhoaigdeemmdlfcncfkmoknndbfd",
+    "lihjnfpbomppjmdlnchkookggmefanbg",
+];
 pub const FIREFOX_EXTENSION_ID: &str = "lens@sirv.studio";
 
 #[derive(Clone, Copy, Debug, PartialEq)]

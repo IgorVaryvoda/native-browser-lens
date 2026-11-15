@@ -15,6 +15,7 @@ import type { VoiceNote } from '@/protocol/VoiceNote';
 import type { ReviewVoice } from '@/protocol/ReviewVoice';
 import { AlertIcon, DoneIcon, DraftIcon, ExportIcon, FileIcon, MaskIcon } from '@/ui/icons';
 import { RecordingEditor } from './RecordingEditor';
+import { Handoff } from './Handoff';
 import { Notes } from '../sidepanel/Notes';
 import { useStored } from '../sidepanel/Record';
 import type { SirvantRun } from '@/protocol/SirvantRun';
@@ -386,6 +387,7 @@ export function Review({ observation: id }: { observation: number }) {
             </div>
           )}
           {!filing && <Duplicates client={client} id={id} />}
+          <Handoff client={client} review={review.id} site={siteOf(review.items[0]?.pageUrl)} />
 
           <footer className="action-bar">
             {readyAgents.map((a) => (
@@ -788,6 +790,15 @@ function Duplicates({ client, id }: { client: LensClient; id: number }) {
       </ul>
     </section>
   );
+}
+
+/** The site a page belongs to, for settings remembered per site. */
+function siteOf(url: string | undefined): string {
+  try {
+    return new URL(url ?? '').origin;
+  } catch {
+    return '';
+  }
 }
 
 /** The findings lines at the top of the notes, as the person reads them. */

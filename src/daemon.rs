@@ -6,7 +6,7 @@ use crate::paths::Paths;
 use crate::protocol::*;
 use crate::store::{CaptureRow, Store, Updated};
 use crate::vibeq::{self, Client};
-use crate::{export, filing, investigate, ipc, render, repro, secrets, speech};
+use crate::{export, filing, handoff, investigate, ipc, render, repro, secrets, speech};
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use interprocess::local_socket::{Stream, prelude::*};
@@ -764,6 +764,40 @@ impl Daemon {
                     export::export(&review, &self.blobs, &self.downloads).map_err(storage)?;
                 Reply::Exported(Exported {
                     folder: folder.display().to_string(),
+                })
+            }
+            Request::ListHandoffApps => {
+                drop(store);
+                Reply::HandoffApps(handoff::installed())
+            }
+            Request::HandOff {
+                review,
+                app,
+                folder,
+            } => {
+                let review = store
+                    .get_review(review)
+                    .map_err(storage)?
+                    .ok_or_else(|| not_found("no such review"))?;
+                let task_url = store
+                    .filing(review.id)
+                    .map_err(storage)?
+                    .and_then(|a| a.receipt.map(|r| r.task_url));
+                drop(store);
+                let project = std::path::PathBuf::from(folder.trim());
+                if !project.is_absolute() || !project.is_dir() {
+                    return Err(bad("choose an existing project folder, as a full path"));
+                }
+                let exported =
+                    export::export(&review, &self.blobs, &self.paths.data.join("handoffs"))
+                        .map_err(storage)?;
+                let report =
+                    std::fs::read_to_string(exported.join("report.md")).map_err(storage)?;
+                let prompt =
+                    handoff::prompt(app, &review.title, task_url.as_deref(), &exported, &report);
+                handoff::start(app, &review.title, &prompt, &project).map_err(bad)?;
+                Reply::HandedOff(Exported {
+                    folder: exported.display().to_string(),
                 })
             }
             Request::GetVibeQ => Reply::VibeQ(vibeq_settings(&store)?),
