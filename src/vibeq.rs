@@ -127,6 +127,11 @@ impl Client {
                 name: field("name").unwrap_or_else(|| id.clone()),
                 id,
             }),
+            // Lens files with its own saved sign-in, not the browser's VibeQ session.
+            (401 | 403, _) => Err(format!(
+                "VibeQ refused Lens's sign-in (HTTP {status}). Sign in again in Lens Settings, \
+                 under VibeQ"
+            )),
             _ => Err(format!(
                 "VibeQ did not confirm the token's member (HTTP {status})"
             )),
