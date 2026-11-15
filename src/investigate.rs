@@ -233,7 +233,10 @@ Title: at most 80 characters, says what is wrong and where, like \"GLB asset: ca
 tools poor after Enhance\". Never just the page title.\n\
 Findings: 1 to 6 short lines, one per distinct problem the person found, in their words made \
 clear; fix obvious transcription errors only when the context makes the meaning certain. Mark \
-praise or positive feedback with \"Works well:\". Add a failed request or console error only when \
+praise or positive feedback with \"Works well:\". When the person says this, that, here or \
+these, the timeline's \"pointing at\" names the element under their pointer at that moment: name \
+that element in the finding instead of \"this\" (\"The Export button is not needed\", not \"This is \
+not needed\"). Add a failed request or console error only when \
 it relates to what the person said. No speculation about causes.\n\
 Tags: 1 to 4 lowercase labels: the product area from the page path or the screen (like assets, \
 ai-tools, comments, checkout, settings) and the kind (bug, ux, performance, praise). No names, \
@@ -833,6 +836,7 @@ mod tests {
                 kept: vec![],
                 annotations: vec![],
                 screen: vec![],
+                pointing: vec![],
                 shots: vec![],
                 cut: 0,
                 shots_dropped: 0,

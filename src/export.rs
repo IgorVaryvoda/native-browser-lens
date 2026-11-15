@@ -119,6 +119,7 @@ fn context<'a>(item: &'a ReviewItem, voice: &'a [ReviewVoice]) -> repro::Context
         voice,
         notes: &item.annotations,
         screen: &item.screen,
+        pointing: &item.pointing,
         kept: &item.kept,
     }
 }

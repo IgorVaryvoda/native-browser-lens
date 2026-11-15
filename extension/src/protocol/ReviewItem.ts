@@ -4,6 +4,7 @@ import type { BlobRef } from "./BlobRef";
 import type { CaptureKind } from "./CaptureKind";
 import type { CaptureMode } from "./CaptureMode";
 import type { MarkTarget } from "./MarkTarget";
+import type { Pointing } from "./Pointing";
 import type { ScreenNote } from "./ScreenNote";
 import type { Shot } from "./Shot";
 import type { TimeRange } from "./TimeRange";
@@ -33,6 +34,10 @@ annotations: Array<Annotation>,
  * What the screen showed, read from the DOM recording: page loads and the result of clicks.
  */
 screen: Array<ScreenNote>, 
+/**
+ * Where the pointer rested, inside the kept time.
+ */
+pointing: Array<Pointing>, 
 /**
  * The shots that leave: inside the kept time, not removed by the person.
  */

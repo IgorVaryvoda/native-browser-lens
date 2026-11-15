@@ -581,7 +581,7 @@ impl Daemon {
                         .filter(|a| inside(a.at))
                         .cloned()
                         .collect();
-                    let screen = self.screen_notes(&capture, &kept);
+                    let (screen, pointing) = self.recording_notes(&capture, &kept);
                     let before = parsed.actions.len() + parsed.events.len();
                     let shared = repro::for_review(parsed, request.typed_values, &kept);
                     let cut =
@@ -620,6 +620,7 @@ impl Daemon {
                         kept,
                         annotations,
                         screen,
+                        pointing,
                         shots,
                         cut,
                         shots_dropped: 0,
@@ -1208,9 +1209,15 @@ impl Daemon {
             .map_err(storage)
     }
 
-    fn screen_notes(&self, capture: &Capture, kept: &[TimeRange]) -> Vec<ScreenNote> {
+    /// What the recording shows, inside the kept time: the screen changes, and where the pointer
+    /// rested (what "this" meant while the person spoke).
+    fn recording_notes(
+        &self,
+        capture: &Capture,
+        kept: &[TimeRange],
+    ) -> (Vec<ScreenNote>, Vec<Pointing>) {
         let Some(recording) = &capture.recording else {
-            return Vec::new();
+            return (Vec::new(), Vec::new());
         };
         let Some(events) = self
             .blobs
@@ -1218,15 +1225,21 @@ impl Daemon {
             .ok()
             .and_then(|b| serde_json::from_slice::<Vec<serde_json::Value>>(&b).ok())
         else {
-            return Vec::new();
+            return (Vec::new(), Vec::new());
         };
-        crate::digest::digest(&events)
+        let inside = |from: i64, to: i64| {
+            to >= capture.started_at - 2000
+                && (kept.is_empty() || kept.iter().any(|r| from <= r.to && to >= r.from))
+        };
+        let screen = crate::digest::digest(&events)
             .into_iter()
-            .filter(|n| {
-                n.at >= capture.started_at - 2000
-                    && (kept.is_empty() || kept.iter().any(|r| n.at >= r.from && n.at <= r.to))
-            })
-            .collect()
+            .filter(|n| inside(n.at, n.at))
+            .collect();
+        let pointing = crate::digest::pointing(&events)
+            .into_iter()
+            .filter(|p| inside(p.from, p.to))
+            .collect();
+        (screen, pointing)
     }
 
     /// A title and findings for an observation from a small model. Nothing is saved.
@@ -1265,11 +1278,12 @@ impl Daemon {
             } else {
                 capture.edits.kept(capture.started_at, capture.created_at)
             };
-            let screen = self.screen_notes(capture, &kept);
+            let (screen, pointing) = self.recording_notes(capture, &kept);
             let context = repro::Context {
                 voice: &voice,
                 notes: &capture.edits.annotations,
                 screen: &screen,
+                pointing: &pointing,
                 kept: &kept,
             };
             let shared = repro::for_review(evidence, false, &kept);

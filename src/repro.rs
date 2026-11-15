@@ -43,6 +43,8 @@ pub struct Context<'a> {
     pub notes: &'a [Annotation],
     /// What the screen showed after clicks and page loads.
     pub screen: &'a [ScreenNote],
+    /// Where the pointer rested: names what "this" meant in the person's words.
+    pub pointing: &'a [crate::protocol::Pointing],
     /// Empty: everything stays.
     pub kept: &'a [TimeRange],
 }
@@ -363,9 +365,20 @@ fn entries(evidence: &Evidence, context: &Context) -> Vec<Entry> {
                 _ => true,
             };
             if near {
+                let pointed = crate::protocol::pointed_at(
+                    context.pointing,
+                    at - 500,
+                    note.started_at + segment.end_ms.max(segment.start_ms) + 300,
+                    2,
+                );
+                let text = segment.text.trim();
                 entries.push(Entry {
                     timestamp: at,
-                    text: segment.text.trim().into(),
+                    text: if pointed.is_empty() {
+                        text.into()
+                    } else {
+                        format!("{text} (pointing at {})", pointed.join(", then "))
+                    },
                     action: None,
                     source: Source::Said,
                 });
@@ -935,6 +948,24 @@ mod tests {
             "{text}"
         );
         assert!(!text.contains("much later"));
+        // Words like "this" come with what the pointer rested on while they were said.
+        let pointing = [crate::protocol::Pointing {
+            from: 1000,
+            to: 2500,
+            label: "button \"Export\"".into(),
+        }];
+        let pointed = timeline(
+            &checkout(),
+            &Context {
+                voice,
+                pointing: &pointing,
+                ..Default::default()
+            },
+        );
+        assert!(
+            pointed.contains("the person said: now I pay (pointing at button \"Export\")"),
+            "{pointed}"
+        );
         let script = playwright(
             &checkout(),
             &Context {

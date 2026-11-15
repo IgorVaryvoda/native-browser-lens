@@ -1,7 +1,7 @@
 //! What a DOM recording showed, as text an agent can read without a player. The rrweb events are
 //! applied to a map of serialized nodes (no browser): after each click, what appeared on the
 //! screen and what went away; after each page load, what the page showed.
-use crate::protocol::{ScreenNote, TimeRange};
+use crate::protocol::{Pointing, ScreenNote, TimeRange};
 use serde_json::{Map, Value, json};
 use std::collections::{HashMap, HashSet};
 
@@ -30,6 +30,8 @@ struct Node {
 struct Dom {
     nodes: HashMap<i64, Node>,
     root: Option<i64>,
+    /// Each node's parent, to name what the pointer is over from the node under it.
+    parents: HashMap<i64, i64>,
 }
 
 impl Dom {
@@ -60,6 +62,7 @@ impl Dom {
         {
             if let Some(child) = self.add(child) {
                 node.children.push(child);
+                self.parents.insert(child, id);
             }
         }
         if node.kind == 0 {
@@ -100,6 +103,7 @@ impl Dom {
                 continue;
             };
             let next = a["nextId"].as_i64();
+            self.parents.insert(id, parent);
             let p = self.nodes.get_mut(&parent).expect("checked above");
             match next.and_then(|n| p.children.iter().position(|c| *c == n)) {
                 Some(i) => p.children.insert(i, id),
@@ -194,6 +198,88 @@ impl Dom {
         Some(Value::Object(out))
     }
 
+    /// The text inside a node, flattened, at most `max` characters; None when there is none.
+    fn text_of(&self, id: i64, max: usize) -> Option<String> {
+        let mut out = String::new();
+        let mut stack = vec![id];
+        let mut seen = 0;
+        while let Some(id) = stack.pop() {
+            seen += 1;
+            if seen > 400 || out.len() > max * 2 {
+                break;
+            }
+            let Some(n) = self.nodes.get(&id) else {
+                continue;
+            };
+            if n.kind == 3 {
+                if let Some(t) = &n.text {
+                    out.push(' ');
+                    out.push_str(t);
+                }
+                continue;
+            }
+            if n.kind == 2 && (SKIP.contains(&n.tag.as_str()) || hidden(n)) {
+                continue;
+            }
+            stack.extend(n.children.iter().rev());
+        }
+        let flat = out.split_whitespace().collect::<Vec<_>>().join(" ");
+        if flat.is_empty() {
+            return None;
+        }
+        Some(if flat.chars().count() > max {
+            flat.chars().take(max).collect::<String>() + "…"
+        } else {
+            flat
+        })
+    }
+
+    /// What the pointer is over, as a person names it: the nearest meaningful element up from
+    /// the node under it, like `button "Export"` or `heading "Hotspots"`.
+    fn pointer_label(&self, id: i64) -> Option<String> {
+        let mut current = Some(id);
+        for _ in 0..10 {
+            let id = current?;
+            current = self.parents.get(&id).copied();
+            let Some(n) = self.nodes.get(&id).filter(|n| n.kind == 2) else {
+                continue;
+            };
+            let attr = |k: &str| {
+                n.attributes
+                    .get(k)
+                    .and_then(Value::as_str)
+                    .map(clean)
+                    .filter(|s| !s.is_empty())
+            };
+            let role = attr("role");
+            let kind = match (n.tag.as_str(), role.as_deref()) {
+                (_, Some(r)) if !matches!(r, "presentation" | "none" | "generic") => r.to_string(),
+                ("a", _) => "link".into(),
+                ("button" | "summary", _) => "button".into(),
+                ("input" | "textarea" | "select", _) => "field".into(),
+                ("img" | "picture" | "canvas" | "video" | "model-viewer", _) => "image".into(),
+                ("h1" | "h2" | "h3" | "h4" | "h5" | "h6", _) => "heading".into(),
+                ("label", _) => "label".into(),
+                ("li" | "option", _) => "item".into(),
+                ("td" | "th", _) => "cell".into(),
+                ("html" | "body" | "main", _) => return None,
+                _ if attr("aria-label").is_some() || attr("data-testid").is_some() => n.tag.clone(),
+                _ => continue,
+            };
+            let name = ["aria-label", "alt", "title", "placeholder"]
+                .iter()
+                .find_map(|k| attr(k))
+                .or_else(|| self.text_of(id, 60))
+                .or_else(|| attr("data-testid"));
+            return Some(match name {
+                Some(name) => format!("{kind} \"{name}\""),
+                None => kind,
+            });
+        }
+        // No control or heading near: short text under the pointer still says what it was.
+        self.text_of(id, 60).map(|t| format!("text \"{t}\""))
+    }
+
     fn describe(&self, id: i64) -> String {
         self.nodes
             .get(&id)
@@ -264,6 +350,73 @@ fn restyle(old: &str, changes: &Map<String, Value>) -> String {
         .map(|(k, v)| format!("{k}: {v};"))
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+/// Where the pointer rested over the recording: one entry per element it stayed on, from the
+/// first move onto it until the next move away. Clicks count as a move.
+pub fn pointing(events: &[Value]) -> Vec<Pointing> {
+    const MAX: usize = 3000;
+    let mut dom = Dom::default();
+    let mut out: Vec<Pointing> = Vec::new();
+    let mut at_end = 0;
+    for event in events {
+        let at = event["timestamp"].as_i64().unwrap_or(0);
+        at_end = at_end.max(at);
+        let data = &event["data"];
+        let moves: Vec<(i64, i64)> = match (event["type"].as_u64(), data["source"].as_u64()) {
+            (Some(2), _) => {
+                dom = Dom::default();
+                dom.add(&data["node"]);
+                Vec::new()
+            }
+            (Some(3), Some(0)) => {
+                dom.mutate(data);
+                Vec::new()
+            }
+            // Mouse and touch moves: positions with the node under the pointer.
+            (Some(3), Some(1 | 6)) => data["positions"]
+                .as_array()
+                .map(Vec::as_slice)
+                .unwrap_or_default()
+                .iter()
+                .filter_map(|p| {
+                    Some((
+                        at + p["timeOffset"].as_i64().unwrap_or(0),
+                        p["id"].as_i64()?,
+                    ))
+                })
+                .collect(),
+            (Some(3), Some(2)) => data["id"]
+                .as_i64()
+                .map(|id| vec![(at, id)])
+                .unwrap_or_default(),
+            _ => Vec::new(),
+        };
+        for (when, id) in moves {
+            let label = dom.pointer_label(id);
+            if let Some(last) = out.last_mut() {
+                last.to = last.to.max(when);
+                if Some(&last.label) == label.as_ref() {
+                    continue;
+                }
+            }
+            if let Some(label) = label {
+                if out.len() >= MAX {
+                    return out;
+                }
+                out.push(Pointing {
+                    from: when,
+                    to: when,
+                    label,
+                });
+            }
+        }
+    }
+    // The pointer stays on the last element until the recording ends.
+    if let Some(last) = out.last_mut() {
+        last.to = last.to.max(at_end);
+    }
+    out
 }
 
 /// The recording with only the kept time ranges. Each range starts with a fresh full snapshot of
@@ -595,6 +748,47 @@ mod tests {
             "no snapshot from a node under two parents"
         );
         let _ = digest(&doubled);
+    }
+
+    #[test]
+    fn the_pointer_names_the_element_it_rests_on() {
+        let page = json!({ "type": 2, "timestamp": 1000, "data": { "node": { "type": 0, "id": 1, "childNodes": [
+            { "type": 2, "id": 2, "tagName": "html", "attributes": {}, "childNodes": [
+                { "type": 2, "id": 3, "tagName": "body", "attributes": {}, "childNodes": [
+                    { "type": 2, "id": 4, "tagName": "button", "attributes": {}, "childNodes": [
+                        { "type": 2, "id": 5, "tagName": "span", "attributes": {}, "childNodes": [{ "type": 3, "id": 6, "textContent": " Export   all " }] } ] },
+                    { "type": 2, "id": 7, "tagName": "div", "attributes": { "class": "card" }, "childNodes": [
+                        { "type": 2, "id": 8, "tagName": "h3", "attributes": {}, "childNodes": [{ "type": 3, "id": 9, "textContent": "Hotspots" }] },
+                        { "type": 2, "id": 10, "tagName": "img", "attributes": { "alt": "Spin of a shoe" }, "childNodes": [] } ] } ] } ] } ] } } });
+        let moves = |at: i64, ids: &[(i64, i64)]| {
+            json!({ "type": 3, "timestamp": at, "data": { "source": 1,
+                "positions": ids.iter().map(|(id, offset)| json!({ "x": 1, "y": 1, "id": id, "timeOffset": offset })).collect::<Vec<_>>() } })
+        };
+        let events = vec![
+            page,
+            moves(2000, &[(6, -400), (5, -200), (6, 0)]),
+            moves(3500, &[(9, 0)]),
+            moves(5000, &[(10, 0)]),
+            json!({ "type": 3, "timestamp": 6000, "data": { "source": 3 } }),
+        ];
+        let track = pointing(&events);
+        let labels: Vec<(&str, i64, i64)> = track
+            .iter()
+            .map(|p| (p.label.as_str(), p.from, p.to))
+            .collect();
+        assert_eq!(
+            labels,
+            [
+                ("button \"Export all\"", 1600, 3500),
+                ("heading \"Hotspots\"", 3500, 5000),
+                ("image \"Spin of a shoe\"", 5000, 6000),
+            ]
+        );
+        // While the person spoke from 3.0 to 4.6 s, the pointer was mostly on the heading.
+        assert_eq!(
+            crate::protocol::pointed_at(&track, 3000, 4600, 2),
+            ["heading \"Hotspots\"", "button \"Export all\""]
+        );
     }
 
     #[test]

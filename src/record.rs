@@ -295,6 +295,16 @@ fn assemble(review: &Review, item: &ReviewItem, n: usize, evidence: &Evidence) -
             if segment.corrected {
                 step["corrected"] = json!(true);
             }
+            // What "this" and "here" meant: the elements under the pointer while the person spoke.
+            let pointed = crate::protocol::pointed_at(
+                &item.pointing,
+                t - 500,
+                note.started_at + segment.end_ms.max(segment.start_ms) + 300,
+                2,
+            );
+            if !pointed.is_empty() {
+                step["pointing"] = json!(pointed);
+            }
             drafts.push(Draft {
                 at: t,
                 value: step,
@@ -738,6 +748,7 @@ mod tests {
                 ]],
                 elements: vec![],
             }],
+            pointing: vec![],
             screen: vec![
                 ScreenNote {
                     at: 1000,

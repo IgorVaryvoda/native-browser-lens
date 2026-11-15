@@ -419,6 +419,7 @@ mod tests {
                 kept: vec![],
                 annotations: vec![],
                 screen: vec![],
+                pointing: vec![],
                 shots: vec![],
                 cut: 0,
                 shots_dropped: 0,

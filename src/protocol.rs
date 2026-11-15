@@ -461,6 +461,9 @@ pub struct ReviewItem {
     /// What the screen showed, read from the DOM recording: page loads and the result of clicks.
     #[serde(default)]
     pub screen: Vec<ScreenNote>,
+    /// Where the pointer rested, inside the kept time.
+    #[serde(default)]
+    pub pointing: Vec<Pointing>,
     /// The shots that leave: inside the kept time, not removed by the person.
     #[serde(default)]
     pub shots: Vec<Shot>,
@@ -477,6 +480,40 @@ pub struct ReviewItem {
     #[serde(default)]
     #[ts(type = "number")]
     pub started_at: i64,
+}
+
+/// Where the pointer rested, from the DOM recording: what "this" meant while the person spoke.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct Pointing {
+    #[ts(type = "number")]
+    pub from: i64,
+    #[ts(type = "number")]
+    pub to: i64,
+    /// The element as a person names it, like `button "Export"`.
+    pub label: String,
+}
+
+/// The elements the pointer was on between `from` and `to`, longest first, at most `max`.
+pub fn pointed_at(track: &[Pointing], from: i64, to: i64, max: usize) -> Vec<String> {
+    let mut found: Vec<(i64, &str)> = Vec::new();
+    for p in track {
+        let overlap = p.to.min(to) - p.from.max(from);
+        if overlap <= 0 {
+            continue;
+        }
+        match found.iter_mut().find(|(_, l)| *l == p.label) {
+            Some(seen) => seen.0 += overlap,
+            None => found.push((overlap, &p.label)),
+        }
+    }
+    found.sort_by_key(|f| std::cmp::Reverse(f.0));
+    found
+        .into_iter()
+        .take(max)
+        .map(|(_, l)| l.to_string())
+        .collect()
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
