@@ -232,6 +232,8 @@ fn main() -> ExitCode {
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,
+        // The reader stopped early, as `lens reviews | head` does: not an error.
+        Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("lens: {e}");
             ExitCode::FAILURE
