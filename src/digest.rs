@@ -202,11 +202,14 @@ impl Dom {
     fn text_of(&self, id: i64, max: usize) -> Option<String> {
         let mut out = String::new();
         let mut stack = vec![id];
-        let mut seen = 0;
+        // A page-made tree can repeat or nest nodes: visit each once, and only so many.
+        let mut visited = HashSet::new();
         while let Some(id) = stack.pop() {
-            seen += 1;
-            if seen > 400 || out.len() > max * 2 {
-                break;
+            if visited.len() >= 400 || out.len() > max * 2 || !visited.insert(id) {
+                if visited.len() >= 400 || out.len() > max * 2 {
+                    break;
+                }
+                continue;
             }
             let Some(n) = self.nodes.get(&id) else {
                 continue;
@@ -356,8 +359,13 @@ fn restyle(old: &str, changes: &Map<String, Value>) -> String {
 /// first move onto it until the next move away. Clicks count as a move.
 pub fn pointing(events: &[Value]) -> Vec<Pointing> {
     const MAX: usize = 3000;
+    // A bound on the pointer positions read, whatever the page sends.
+    const BUDGET: usize = 200_000;
     let mut dom = Dom::default();
     let mut out: Vec<Pointing> = Vec::new();
+    // Labels per node until the page changes: a pointer resting on one node costs one walk.
+    let mut labels: HashMap<i64, Option<String>> = HashMap::new();
+    let mut work = 0;
     let mut at_end = 0;
     for event in events {
         let at = event["timestamp"].as_i64().unwrap_or(0);
@@ -365,12 +373,23 @@ pub fn pointing(events: &[Value]) -> Vec<Pointing> {
         let data = &event["data"];
         let moves: Vec<(i64, i64)> = match (event["type"].as_u64(), data["source"].as_u64()) {
             (Some(2), _) => {
+                // A new page: nothing on the old one is under the pointer any more.
+                if let Some(last) = out.last_mut() {
+                    last.to = last.to.max(at);
+                }
+                out.push(Pointing {
+                    from: at,
+                    to: at,
+                    label: String::new(),
+                });
                 dom = Dom::default();
                 dom.add(&data["node"]);
+                labels.clear();
                 Vec::new()
             }
             (Some(3), Some(0)) => {
                 dom.mutate(data);
+                labels.clear();
                 Vec::new()
             }
             // Mouse and touch moves: positions with the node under the pointer.
@@ -393,7 +412,14 @@ pub fn pointing(events: &[Value]) -> Vec<Pointing> {
             _ => Vec::new(),
         };
         for (when, id) in moves {
-            let label = dom.pointer_label(id);
+            work += 1;
+            if work > BUDGET {
+                return finish(out, at_end);
+            }
+            let label = labels
+                .entry(id)
+                .or_insert_with(|| dom.pointer_label(id))
+                .clone();
             if let Some(last) = out.last_mut() {
                 last.to = last.to.max(when);
                 if Some(&last.label) == label.as_ref() {
@@ -412,10 +438,16 @@ pub fn pointing(events: &[Value]) -> Vec<Pointing> {
             }
         }
     }
-    // The pointer stays on the last element until the recording ends.
+    finish(out, at_end)
+}
+
+/// The pointer stays on the last element until the recording ends; the empty markers that end
+/// an element at a page load go.
+fn finish(mut out: Vec<Pointing>, at_end: i64) -> Vec<Pointing> {
     if let Some(last) = out.last_mut() {
         last.to = last.to.max(at_end);
     }
+    out.retain(|p| !p.label.is_empty());
     out
 }
 
@@ -789,6 +821,29 @@ mod tests {
             crate::protocol::pointed_at(&track, 3000, 4600, 2),
             ["heading \"Hotspots\"", "button \"Export all\""]
         );
+    }
+
+    #[test]
+    fn a_page_load_ends_the_element_and_a_cycle_does_not_hang() {
+        let move_to = |at: i64, id: i64| json!({ "type": 3, "timestamp": at, "data": { "source": 1, "positions": [{ "x": 1, "y": 1, "id": id, "timeOffset": 0 }] } });
+        let mut second = page();
+        second["timestamp"] = json!(3000);
+        let track = pointing(&[
+            page(),
+            move_to(2000, 7),
+            second,
+            json!({ "type": 3, "timestamp": 5000, "data": { "source": 3 } }),
+        ]);
+        assert_eq!(track.len(), 1);
+        assert_eq!(
+            (track[0].label.as_str(), track[0].from, track[0].to),
+            ("button \"Enhance\"", 2000, 3000)
+        );
+        // Body (6) under its own button (7): naming the button must still end.
+        let cycle = json!({ "type": 3, "timestamp": 1500, "data": { "source": 0, "removes": [], "texts": [], "attributes": [],
+            "adds": [{ "parentId": 7, "nextId": null, "node": { "type": 2, "id": 6, "tagName": "body", "attributes": {}, "childNodes": [
+                { "type": 2, "id": 7, "tagName": "button", "attributes": {}, "childNodes": [] } ] } }] } });
+        let _ = pointing(&[page(), cycle, move_to(2000, 7), move_to(2100, 6)]);
     }
 
     #[test]

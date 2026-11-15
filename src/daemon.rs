@@ -1235,9 +1235,19 @@ impl Daemon {
             .into_iter()
             .filter(|n| inside(n.at, n.at))
             .collect();
+        // A label was read when the pointer arrived: it must have arrived inside a kept part,
+        // and it ends where that part ends, so nothing from a cut part leaves.
         let pointing = crate::digest::pointing(&events)
             .into_iter()
             .filter(|p| inside(p.from, p.to))
+            .filter_map(|mut p| {
+                if kept.is_empty() {
+                    return Some(p);
+                }
+                let r = kept.iter().find(|r| p.from >= r.from && p.from <= r.to)?;
+                p.to = p.to.min(r.to);
+                Some(p)
+            })
             .collect();
         (screen, pointing)
     }

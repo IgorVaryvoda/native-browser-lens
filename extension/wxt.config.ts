@@ -42,7 +42,10 @@ export default defineConfig({
               },
             },
           }
-        : { key: DEV_KEY }),
+        : // The Chrome Web Store refuses a manifest with a key; it gives the store build its own ID.
+          process.env.LENS_STORE
+          ? {}
+          : { key: DEV_KEY }),
     };
   },
 });
