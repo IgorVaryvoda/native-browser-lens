@@ -38,18 +38,20 @@ pub fn reviews(paths: &Paths, json: bool) -> io::Result<()> {
             "No reviews yet. Record a defect and create a review in Lens."
         );
     }
+    // Titles come from web pages: no control characters reach the terminal.
+    let plain = |text: &str| text.chars().filter(|c| !c.is_control()).collect::<String>();
     for r in reviews {
         let when = crate::repro::iso_time(r.created_at);
         let task = r
             .vibeq_task_url
-            .map(|u| format!("  {u}"))
+            .map(|u| format!("  {}", plain(&u)))
             .unwrap_or_default();
         writeln!(
             out,
             "{:>5}  {}  {}{task}",
             r.id,
             &when[..16.min(when.len())],
-            r.title
+            plain(&r.title)
         )?;
     }
     Ok(())

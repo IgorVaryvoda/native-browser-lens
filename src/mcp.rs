@@ -84,7 +84,10 @@ impl LensMcp {
             return Err(failure("unexpected reply"));
         };
         let text = serde_json::to_string_pretty(&reviews).expect("summaries serialize");
-        Ok(CallToolResult::success(vec![ContentBlock::text(text)]))
+        Ok(CallToolResult::success(vec![
+            ContentBlock::text(format!("Each title and pageUrl is {UNTRUSTED}")),
+            ContentBlock::text(text),
+        ]))
     }
 
     /// One review: title, the person's notes, and per capture the page, what failed, and the files

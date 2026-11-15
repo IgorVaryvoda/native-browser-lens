@@ -191,10 +191,32 @@ fn edit_json(
         .ok_or_else(|| format!("mcpServers in {} is not an object", shown(file)))?;
     change(servers);
     let text = serde_json::to_string_pretty(&settings).expect("JSON serializes") + "\n";
-    let fresh = file.with_extension("lens-new");
+    // A linked settings file is changed where it lives, and keeps its permissions: settings can
+    // hold API keys.
+    let target = std::fs::canonicalize(file).unwrap_or_else(|_| file.to_path_buf());
+    let fresh = target.with_extension("lens-new");
+    let permissions = std::fs::metadata(&target).map(|m| m.permissions()).ok();
     std::fs::write(&fresh, text)
-        .and_then(|()| std::fs::rename(&fresh, file))
+        .and_then(|()| match permissions {
+            Some(permissions) => std::fs::set_permissions(&fresh, permissions),
+            None => restrict(&fresh),
+        })
+        .and_then(|()| std::fs::rename(&fresh, &target))
         .map_err(|e| format!("cannot write {}: {e}", shown(file)))
+}
+
+/// A new settings file is readable by its owner only.
+fn restrict(file: &Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(file, std::fs::Permissions::from_mode(0o600))
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = file;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -228,6 +250,28 @@ mod tests {
         let saved: Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
         assert!(saved["mcpServers"].get(NAME).is_none());
         assert_eq!(saved["mcpServers"]["other"]["command"], "x");
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o600)).unwrap();
+            edit_json(&file, |_| {}).unwrap();
+            let mode = std::fs::metadata(&file).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o600);
+            let link = folder.path().join("linked.json");
+            std::os::unix::fs::symlink(&file, &link).unwrap();
+            edit_json(&link, |servers| {
+                servers.insert("via-link".into(), json!({}));
+            })
+            .unwrap();
+            assert!(
+                std::fs::symlink_metadata(&link)
+                    .unwrap()
+                    .file_type()
+                    .is_symlink()
+            );
+            assert!(std::fs::read_to_string(&file).unwrap().contains("via-link"));
+        }
 
         std::fs::write(&file, "{ not json").unwrap();
         assert!(edit_json(&file, |_| {}).is_err());

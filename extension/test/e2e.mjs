@@ -535,7 +535,9 @@ try {
     mcp.stdin.write(JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }) + '\n');
     const tools = (await rpc('tools/list', {})).tools.map((t) => t.name).sort().join(',');
     if (tools !== 'get_review,list_reviews,read_review_file') throw new Error(`MCP tools: ${tools}`);
-    const listed = JSON.parse((await rpc('tools/call', { name: 'list_reviews', arguments: {} })).content[0].text);
+    const listing = (await rpc('tools/call', { name: 'list_reviews', arguments: {} })).content;
+    if (!listing[0].text.includes('UNTRUSTED DATA')) throw new Error('MCP: review titles are not marked untrusted');
+    const listed = JSON.parse(listing[1].text);
     const latest = listed[0];
     // An agent working on the VibeQ task finds the review by the task.
     if (latest.vibeqTaskId !== 'task-1' || latest.vibeqTaskUrl !== 'http://vibeq.test/?task=task-1' || !latest.pageUrl?.startsWith('http')) {
