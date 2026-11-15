@@ -771,6 +771,16 @@ impl Daemon {
                 })
             }
             Request::RecentEvidence { site } => {
+                if store
+                    .setting("collection.paused")
+                    .map_err(storage)?
+                    .as_deref()
+                    == Some("true")
+                {
+                    return Err(bad(
+                        "Lens is paused: the person stopped collection from the Lens menu",
+                    ));
+                }
                 drop(store);
                 let site = site.map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
                 let tabs = self.live.ask(site).ok_or_else(|| {

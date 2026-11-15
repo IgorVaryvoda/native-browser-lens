@@ -72,6 +72,11 @@ pub fn verify(
         .map_err(|e| format!("cannot use the project folder {}: {e}", project.display()))?;
     let name = format!("lens-verify-{}-capture-{n}", review.id);
     let (spec, _) = crate::export::project_test(review, item, n, evidence, Some(base_url), &name);
+    // Everything the run writes stays in the scratch folder.
+    let spec = spec.replace(
+        &format!("{{ path: '{name}-reproduced.png' }}"),
+        "{ path: test.info().outputPath('reproduced.png') }",
+    );
     if !spec.contains("async ({ page }) => {") {
         return Err("Lens recorded no steps to repeat for this capture".into());
     }
@@ -85,7 +90,7 @@ pub fn verify(
                 &config,
                 format!(
                     "const browser = process.env.LENS_VERIFY_BROWSER;\n\
-                     export default {{ testDir: '.', timeout: 120000, reporter: 'json', \
+                     export default {{ testDir: '.', outputDir: './results', timeout: 120000, reporter: 'json', \
                      use: {{ baseURL: {}, ...(browser ? {{ launchOptions: {{ executablePath: browser }} }} : {{}}) }} }};\n",
                     serde_json::to_string(base_url).expect("strings serialize")
                 ),

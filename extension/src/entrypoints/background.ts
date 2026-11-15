@@ -398,8 +398,14 @@ export default defineBackground(() => {
           continue;
         }
         const ask = await poller.request({ method: 'waitForAsk', params: { after } });
-        if (!ask || !agentsLive) continue;
+        if (!ask) continue;
         after = ask.id;
+        // The person may have paused Lens or turned this off while the question waited.
+        paused = (await poller.request({ method: 'hello' })).paused;
+        if (!agentsLive || paused) {
+          await poller.request({ method: 'provideEvidence', params: { ask: ask.id, tabs: [] } });
+          continue;
+        }
         const from = Date.now() - WINDOW_MS;
         const tabs = [];
         for (const tab of await browser.tabs.query({})) {

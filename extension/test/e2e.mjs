@@ -591,7 +591,9 @@ try {
     if (!verified.stepsRan || !verified.stillFailing.some((f) => f.startsWith('HTTP 500'))) {
       throw new Error(`MCP verify_fix: ${JSON.stringify(verified).slice(0, 600)}`);
     }
-    if (existsSync(resolve(import.meta.dirname, '..', '.lens'))) throw new Error('verify_fix left its scratch folder');
+    for (const left of ['.lens', 'test-results', `lens-verify-${latest.id}-capture-1-reproduced.png`]) {
+      if (existsSync(resolve(import.meta.dirname, '..', left))) throw new Error(`verify_fix left ${left} in the project`);
+    }
     const image = (await rpc('tools/call', { name: 'read_review_file', arguments: { review: latest.id, file: 'capture-1.png' } })).content[0];
     if (image.type !== 'image' || image.mimeType !== 'image/png' || !image.data.startsWith('iVBORw0KGgo')) {
       throw new Error(`MCP image: ${JSON.stringify(image).slice(0, 200)}`);

@@ -225,11 +225,21 @@ fn for_project(
         .ok()
         .map(|u| u.origin().ascii_serialization())
         .filter(|o| o != "null");
+    // The base goes into JavaScript strings that verify_fix runs: only an http(s) origin and
+    // path, as the URL parser writes them (quotes and backslashes cannot survive it).
+    let base = base_url
+        .and_then(|b| url::Url::parse(b.trim()).ok())
+        .filter(|u| matches!(u.scheme(), "http" | "https") && u.host().is_some());
+    let base = base.map(|u| {
+        format!(
+            "{}{}",
+            u.origin().ascii_serialization(),
+            u.path().trim_end_matches('/')
+        )
+    });
     if let Some(origin) = &origin {
-        out = match base_url.map(|b| b.trim().trim_end_matches('/')) {
-            Some(base) if !base.is_empty() => {
-                out.replace(&format!("\"{origin}"), &format!("\"{base}"))
-            }
+        out = match base.as_deref() {
+            Some(base) => out.replace(&format!("\"{origin}"), &format!("\"{base}")),
             _ => out
                 .replace(&format!("\"{origin}/"), "\"/")
                 .replace(&format!("\"{origin}\""), "\"/\""),
@@ -263,8 +273,8 @@ fn for_project(
         })
         .collect();
     let recorded = origin.as_deref().unwrap_or("the recorded site");
-    let target = match base_url.filter(|b| !b.trim().is_empty()) {
-        Some(base) => format!("runs against {}", base.trim()),
+    let target = match &base {
+        Some(base) => format!("runs against {base}"),
         None => "uses the baseURL in playwright.config".to_string(),
     };
     format!(
@@ -449,5 +459,24 @@ mod project_tests {
         let relative = super::for_project(spec, "https://app.example.com/cart", None, 1, "t", 7);
         assert!(relative.contains("page.goto(\"/cart\")"));
         assert!(relative.contains("uses the baseURL in playwright.config"));
+        let hostile = super::for_project(
+            spec,
+            "https://app.example.com/cart",
+            Some("http://evil.test/\"+alert(1)+\""),
+            1,
+            "t",
+            7,
+        );
+        assert!(!hostile.contains("\"+alert(1)+\""));
+        assert!(hostile.contains("page.goto(\"http://evil.test/%22+alert(1)+%22/cart\")"));
+        let not_web = super::for_project(
+            spec,
+            "https://app.example.com/cart",
+            Some("javascript:alert(1)"),
+            1,
+            "t",
+            7,
+        );
+        assert!(not_web.contains("page.goto(\"/cart\")"));
     }
 }
