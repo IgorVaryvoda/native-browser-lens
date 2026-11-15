@@ -90,7 +90,7 @@ p { margin: 0; }
 .top .wrap { display: flex; align-items: center; gap: 24px; height: 64px; }
 .brand { display: flex; align-items: center; gap: 10px; color: var(--text); text-decoration: none; font: 600 18px var(--display); }
 .brand img { width: 28px; height: 28px; }
-.top nav { display: flex; gap: 22px; margin-left: auto; font-size: 14px; }
+.top nav { display: flex; align-items: center; gap: 22px; margin-left: auto; font-size: 14px; line-height: 1; }
 .top nav a { color: var(--muted); text-decoration: none; }
 .top nav a:hover { color: var(--text); }
 .top nav a.btn-primary, .top nav a.btn-primary:hover { color: #fff; }
@@ -188,7 +188,6 @@ section.block { padding: 96px 0; }
   box-shadow: 0 1px 2px rgb(0 0 0 / 8%), 0 20px 50px -30px rgb(20 30 80 / 40%);
 }
 .shot img { width: 100%; height: auto; }
-.shot-narrow { justify-self: center; width: min(400px, 100%); }
 @media (min-width: 900px) {
   .step { grid-template-columns: 5fr 7fr; gap: 56px; }
   .step:nth-child(even) { grid-template-columns: 7fr 5fr; }

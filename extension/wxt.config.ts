@@ -9,7 +9,7 @@ export default defineConfig({
     const firefox = browser === 'firefox';
     return {
       name: 'Sirv Lens',
-      description: 'Capture browser defects with their evidence, review them, and file them.',
+      description: 'Record a bug with your voice: get a task with the steps, network errors and a replay. Works with the free Sirv Lens app.',
       permissions: [
         'nativeMessaging',
         'storage',
@@ -23,7 +23,8 @@ export default defineConfig({
       // there, and still collects only on the sites the person adds.
       optional_host_permissions: ['http://*/*', 'https://*/*', ...(firefox ? ['<all_urls>'] : [])],
       // The end-to-end build pre-grants the local fixture origin: a test cannot click Chrome's prompt.
-      ...(process.env.LENS_E2E ? { host_permissions: ['http://127.0.0.1/*'] } : {}),
+      // .test is reserved for testing: the product screenshots serve their demo site there.
+      ...(process.env.LENS_E2E ? { host_permissions: ['http://127.0.0.1/*', 'http://*.test/*'] } : {}),
       action: { default_title: 'Open Lens' },
       commands: {
         capture: {
