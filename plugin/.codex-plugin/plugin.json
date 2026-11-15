@@ -1,0 +1,22 @@
+{
+  "name": "sirv-lens",
+  "version": "0.12.0",
+  "description": "Read the browser defects you recorded with Sirv Lens: steps, network and console evidence, your voice, screenshots and a Playwright test. Reproduce them, fix them, and prove the fix on your dev server.",
+  "author": { "name": "Igor Varyvoda" },
+  "homepage": "https://lens.sirv.studio",
+  "keywords": ["bug report", "browser", "playwright", "mcp", "vibeq"],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Sirv Lens",
+    "shortDescription": "Fix the browser bugs you recorded with Sirv Lens",
+    "longDescription": "Sirv Lens records a browser session with your voice. This plugin lets Codex read the reviewed recordings, reproduce them with a Playwright test against your dev server, and prove the fix.",
+    "developerName": "Igor Varyvoda",
+    "category": "Engineering",
+    "capabilities": ["Read"],
+    "websiteURL": "https://lens.sirv.studio",
+    "privacyPolicyURL": "https://lens.sirv.studio/privacy",
+    "termsOfServiceURL": "https://lens.sirv.studio/terms",
+    "defaultPrompt": ["Fix the bug I just recorded with Lens"]
+  }
+}

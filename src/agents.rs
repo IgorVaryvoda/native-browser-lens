@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use ts_rs::TS;
 
-pub const SKILL: &str = include_str!("../skills/sirv-lens/SKILL.md");
+pub const SKILL: &str = include_str!("../plugin/skills/sirv-lens/SKILL.md");
 const NAME: &str = "sirv-lens";
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]

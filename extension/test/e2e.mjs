@@ -515,7 +515,10 @@ try {
   }
 
   // MCP: an agent sees the reviewed defect and its rendered screenshot, nothing else.
-  const mcp = spawn(bin, ['mcp'], { env, stdio: ['pipe', 'pipe', 'inherit'] });
+  const mcp = spawn(bin, ['mcp'], {
+    env: { ...env, ...(executablePath ? { LENS_VERIFY_BROWSER: executablePath } : {}) },
+    stdio: ['pipe', 'pipe', 'inherit'],
+  });
   const lines = createInterface({ input: mcp.stdout });
   const pending = new Map();
   lines.on('line', (line) => {
@@ -523,10 +526,10 @@ try {
     pending.get(message.id)?.(message);
   });
   let nextId = 1;
-  const rpc = (method, params) =>
+  const rpc = (method, params, wait = 15_000) =>
     new Promise((resolve, reject) => {
       const id = nextId++;
-      const timer = setTimeout(() => reject(new Error(`MCP ${method} timed out`)), 15_000);
+      const timer = setTimeout(() => reject(new Error(`MCP ${method} timed out`)), wait);
       pending.set(id, (message) => (clearTimeout(timer), message.error ? reject(new Error(JSON.stringify(message.error))) : resolve(message.result)));
       mcp.stdin.write(JSON.stringify({ jsonrpc: '2.0', id, method, params }) + '\n');
     });
@@ -534,7 +537,9 @@ try {
     await rpc('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'e2e', version: '1' } });
     mcp.stdin.write(JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }) + '\n');
     const tools = (await rpc('tools/list', {})).tools.map((t) => t.name).sort().join(',');
-    if (tools !== 'get_review,list_reviews,read_review_file') throw new Error(`MCP tools: ${tools}`);
+    if (tools !== 'get_review,list_reviews,playwright_test,read_review_file,recent_evidence,search_reviews,verify_fix') {
+      throw new Error(`MCP tools: ${tools}`);
+    }
     const listing = (await rpc('tools/call', { name: 'list_reviews', arguments: {} })).content;
     if (!listing[0].text.includes('UNTRUSTED DATA')) throw new Error('MCP: review titles are not marked untrusted');
     const listed = JSON.parse(listing[1].text);
@@ -559,6 +564,34 @@ try {
     if (record.version !== 1 || !record.steps.some((s) => s.kind === 'click' && s.target?.name === 'Pay')) {
       throw new Error(`MCP record: ${JSON.stringify(record).slice(0, 300)}`);
     }
+    // The fix prompt, named by the VibeQ task the review was filed as.
+    const prompt = await rpc('prompts/get', { name: 'fix', arguments: { review: 'task-1' } });
+    if (!prompt.messages[0].content.text.startsWith(`Fix the defect in Sirv Lens review ${latest.id}.`)) {
+      throw new Error(`MCP fix prompt: ${prompt.messages[0].content.text.slice(0, 200)}`);
+    }
+    const resource = await rpc('resources/read', { uri: `lens://review/${latest.id}` });
+    if (JSON.parse(resource.contents[0].text).review !== latest.id) throw new Error('MCP resource: wrong review');
+    const searched = JSON.parse((await rpc('tools/call', { name: 'search_reviews', arguments: { text: 'task-1', site: '127.0.0.1' } })).content[1].text);
+    if (searched.length !== 1 || searched[0].id !== latest.id) throw new Error(`MCP search: ${JSON.stringify(searched)}`);
+    const test = (await rpc('tools/call', { name: 'playwright_test', arguments: { review: latest.id, base_url: 'http://localhost:4321' } })).content[1].text;
+    if (!test.includes('page.goto("http://localhost:4321/')) throw new Error(`MCP playwright_test: ${test.slice(0, 400)}`);
+    // Live evidence, once the person allows it: the last ten minutes of the shop, without a recording.
+    await panel.evaluate(() => chrome.storage.local.set({ 'lens.agentsLive': true }));
+    let live = [];
+    for (let i = 0; i < 3 && !live.length; i++) {
+      const answer = (await rpc('tools/call', { name: 'recent_evidence', arguments: { site: site } }, 20_000)).content[1].text;
+      live = answer.startsWith('[') ? JSON.parse(answer) : [];
+    }
+    if (!live[0]?.findings.some((f) => f.startsWith('HTTP 500'))) throw new Error(`MCP recent_evidence: ${JSON.stringify(live).slice(0, 300)}`);
+    await panel.evaluate(() => chrome.storage.local.set({ 'lens.agentsLive': false }));
+    // Proof of a fix: the shop still answers 500, so verify_fix finds the recorded failure again.
+    const verified = JSON.parse(
+      (await rpc('tools/call', { name: 'verify_fix', arguments: { review: latest.id, base_url: site, project: resolve(import.meta.dirname, '..') } }, 180_000)).content[1].text,
+    );
+    if (!verified.stepsRan || !verified.stillFailing.some((f) => f.startsWith('HTTP 500'))) {
+      throw new Error(`MCP verify_fix: ${JSON.stringify(verified).slice(0, 600)}`);
+    }
+    if (existsSync(resolve(import.meta.dirname, '..', '.lens'))) throw new Error('verify_fix left its scratch folder');
     const image = (await rpc('tools/call', { name: 'read_review_file', arguments: { review: latest.id, file: 'capture-1.png' } })).content[0];
     if (image.type !== 'image' || image.mimeType !== 'image/png' || !image.data.startsWith('iVBORw0KGgo')) {
       throw new Error(`MCP image: ${JSON.stringify(image).slice(0, 200)}`);

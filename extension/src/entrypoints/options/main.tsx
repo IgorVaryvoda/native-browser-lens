@@ -8,6 +8,7 @@ import type { Agent } from '@/protocol/Agent';
 import type { AgentInfo } from '@/protocol/AgentInfo';
 import type { AgentSetup } from '@/protocol/AgentSetup';
 import { ModelNotice } from '../sidepanel/Voice';
+import { useStored } from '../sidepanel/Record';
 import { AlertIcon, DoneIcon, LensMark, LinkIcon } from '@/ui/icons';
 import '@/ui/base.css';
 import { followSystemTheme } from '@/ui/theme';
@@ -361,6 +362,7 @@ function Models({ client }: { client: LensClient }) {
 
 /** Connects the coding agents here to Lens: the sirv-lens skill and MCP server. */
 function CodingAgents({ client }: { client: LensClient }) {
+  const [live, setLive] = useStored('lens.agentsLive', false);
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState<AgentSetup[] | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
@@ -393,6 +395,16 @@ function CodingAgents({ client }: { client: LensClient }) {
           Disconnect
         </button>
       </div>
+      <label className="check">
+        <input type="checkbox" checked={live} onChange={(e) => setLive(e.target.checked)} />
+        <span>
+          Let coding agents read the last ten minutes
+          <span className="small muted" style={{ display: 'block' }}>
+            On the sites Lens collects on, while the browser is open: failed requests, console errors and steps, without a
+            recording. Screenshots, the replay and your voice are not included.
+          </span>
+        </span>
+      </label>
       {done && (
         <ul className="small agent-setup" role="status" aria-label="Coding agents result">
           {done.map((a) => (

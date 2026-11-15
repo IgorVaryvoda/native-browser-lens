@@ -1,0 +1,14 @@
+{
+  "name": "sirv-lens",
+  "description": "Sirv Lens for coding agents: read, reproduce and fix the browser defects people record, and prove the fix.",
+  "owner": {
+    "name": "Igor Varyvoda"
+  },
+  "plugins": [
+    {
+      "name": "sirv-lens",
+      "source": "./plugin",
+      "description": "Read, reproduce and fix the browser defects you recorded with Sirv Lens, and prove the fix."
+    }
+  ]
+}

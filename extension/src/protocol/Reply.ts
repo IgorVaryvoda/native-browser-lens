@@ -2,6 +2,7 @@
 import type { Agent } from "./Agent";
 import type { AgentInfo } from "./AgentInfo";
 import type { AgentSetup } from "./AgentSetup";
+import type { Ask } from "./Ask";
 import type { BlobChunk } from "./BlobChunk";
 import type { BlobRef } from "./BlobRef";
 import type { Capture } from "./Capture";
@@ -11,6 +12,7 @@ import type { Filing } from "./Filing";
 import type { HandoffApp } from "./HandoffApp";
 import type { Hello } from "./Hello";
 import type { Issue } from "./Issue";
+import type { LiveDigest } from "./LiveDigest";
 import type { Member } from "./Member";
 import type { Observation } from "./Observation";
 import type { ObservationSummary } from "./ObservationSummary";
@@ -26,4 +28,4 @@ import type { UpdateState } from "./UpdateState";
 import type { VibeQSettings } from "./VibeQSettings";
 import type { VoiceNote } from "./VoiceNote";
 
-export type Reply = { "type": "hello", "data": Hello } | { "type": "observation", "data": Observation } | { "type": "observations", "data": Array<ObservationSummary> } | { "type": "project", "data": Project } | { "type": "projects", "data": Array<Project> } | { "type": "deleted" } | { "type": "capture", "data": Capture } | { "type": "captures", "data": Array<Capture> } | { "type": "blob", "data": BlobChunk } | { "type": "review", "data": Review } | { "type": "reviews", "data": Array<ReviewSummary> } | { "type": "exported", "data": Exported } | { "type": "handoffApps", "data": Array<HandoffApp> } | { "type": "agentSetup", "data": Array<AgentSetup> } | { "type": "handedOff", "data": Exported } | { "type": "vibeQ", "data": VibeQSettings } | { "type": "members", "data": Array<Member> } | { "type": "filing", "data": Filing } | { "type": "sirvant", "data": SirvantRun } | { "type": "issues", "data": Array<Issue> } | { "type": "split", "data": Array<Observation> } | { "type": "duplicates", "data": Array<Duplicate> } | { "type": "summaryAgent", "data": Agent | null } | { "type": "agents", "data": Array<AgentInfo> } | { "type": "done" } | { "type": "setup", "data": SetupStatus } | { "type": "updates", "data": UpdateState } | { "type": "uploaded", "data": BlobRef | null } | { "type": "voiceNote", "data": VoiceNote } | { "type": "voiceNotes", "data": Array<VoiceNote> } | { "type": "speech", "data": SpeechStatus } | { "type": "suggestion", "data": Suggestion } | { "type": "summary", "data": Summary } | { "type": "stopping" };
+export type Reply = { "type": "hello", "data": Hello } | { "type": "observation", "data": Observation } | { "type": "observations", "data": Array<ObservationSummary> } | { "type": "project", "data": Project } | { "type": "projects", "data": Array<Project> } | { "type": "deleted" } | { "type": "capture", "data": Capture } | { "type": "captures", "data": Array<Capture> } | { "type": "blob", "data": BlobChunk } | { "type": "review", "data": Review } | { "type": "reviews", "data": Array<ReviewSummary> } | { "type": "exported", "data": Exported } | { "type": "handoffApps", "data": Array<HandoffApp> } | { "type": "agentSetup", "data": Array<AgentSetup> } | { "type": "ask", "data": Ask | null } | { "type": "liveEvidence", "data": Array<LiveDigest> } | { "type": "handedOff", "data": Exported } | { "type": "vibeQ", "data": VibeQSettings } | { "type": "members", "data": Array<Member> } | { "type": "filing", "data": Filing } | { "type": "sirvant", "data": SirvantRun } | { "type": "issues", "data": Array<Issue> } | { "type": "split", "data": Array<Observation> } | { "type": "duplicates", "data": Array<Duplicate> } | { "type": "summaryAgent", "data": Agent | null } | { "type": "agents", "data": Array<AgentInfo> } | { "type": "done" } | { "type": "setup", "data": SetupStatus } | { "type": "updates", "data": UpdateState } | { "type": "uploaded", "data": BlobRef | null } | { "type": "voiceNote", "data": VoiceNote } | { "type": "voiceNotes", "data": Array<VoiceNote> } | { "type": "speech", "data": SpeechStatus } | { "type": "suggestion", "data": Suggestion } | { "type": "summary", "data": Summary } | { "type": "stopping" };

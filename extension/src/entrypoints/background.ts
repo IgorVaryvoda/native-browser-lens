@@ -377,6 +377,68 @@ export default defineBackground(() => {
     });
   }
 
+  /**
+   * Live evidence for coding agents, when the person turned it on in Settings: one request waits
+   * for an agent's question, on a connection of its own, while Lens collects on a tab. The answer
+   * is the same buffer a capture takes, without the screenshot, the shots and the replay.
+   */
+  let agentsLive = false;
+  let serving = false;
+  const LIVE_KEY = 'lens.agentsLive';
+  async function serveAgents() {
+    if (serving) return;
+    serving = true;
+    const poller = new LensClient();
+    let after = 0;
+    try {
+      while (agentsLive) {
+        const collecting = (await browser.tabs.query({})).filter((t) => t.id !== undefined && buffer.mode(t.id) !== undefined);
+        if (collecting.length === 0 || paused) {
+          await new Promise((done) => setTimeout(done, 5000));
+          continue;
+        }
+        const ask = await poller.request({ method: 'waitForAsk', params: { after } });
+        if (!ask || !agentsLive) continue;
+        after = ask.id;
+        const from = Date.now() - WINDOW_MS;
+        const tabs = [];
+        for (const tab of await browser.tabs.query({})) {
+          if (tab.id === undefined || buffer.mode(tab.id) === undefined) continue;
+          let host = '';
+          try {
+            host = new URL(tab.url ?? '').hostname;
+          } catch {
+            continue;
+          }
+          if (ask.site && host !== ask.site && !host.endsWith(`.${ask.site}`)) continue;
+          const snapshot = buffer.snapshot(tab.id, from);
+          if (!snapshot) continue;
+          tabs.push({
+            url: sanitizeUrl(tab.url ?? ''),
+            title: tab.title ?? '',
+            evidence: { ...snapshot, page: null, actions: actions.snapshot(tab.id, from), elements: [] } as unknown as JsonValue,
+          });
+        }
+        await poller.request({ method: 'provideEvidence', params: { ask: ask.id, tabs } });
+      }
+    } catch {
+      // Lens stopped or restarted: try again soon.
+      setTimeout(() => void serveAgents(), 10_000);
+    } finally {
+      poller.disconnect();
+      serving = false;
+    }
+  }
+  void browser.storage.local.get(LIVE_KEY).then((found) => {
+    agentsLive = found[LIVE_KEY] === true;
+    if (agentsLive) void serveAgents();
+  });
+  browser.storage.onChanged.addListener((changes, area) => {
+    if (area !== 'local' || !(LIVE_KEY in changes)) return;
+    agentsLive = changes[LIVE_KEY]?.newValue === true;
+    if (agentsLive) void serveAgents();
+  });
+
   void loadProjects();
   // Pause and resume come from the Lens menu, outside the browser: check for them regularly.
   setInterval(() => {

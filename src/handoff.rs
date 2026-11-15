@@ -216,8 +216,25 @@ fn open(url: String) -> Result<(), String> {
 /// Runs a CLI with an optional stdin, bounded in time. Returns whether it succeeded and what it
 /// printed.
 fn exec(binary: &Path, args: &[&str], input: Option<&str>) -> Result<(bool, String), String> {
-    let mut child = Command::new(binary)
-        .args(args)
+    let (ok, out, err) = bounded(
+        Command::new(binary).args(args),
+        input,
+        Duration::from_secs(60),
+        64 * 1024,
+    )?;
+    Ok((ok, format!("{out}\n{err}")))
+}
+
+/// Runs a prepared command with an optional stdin, bounded in time and in output (`limit` bytes
+/// per stream). Returns whether it succeeded, its stdout and its stderr.
+pub fn bounded(
+    command: &mut Command,
+    input: Option<&str>,
+    timeout: Duration,
+    limit: u64,
+) -> Result<(bool, String, String), String> {
+    let program = command.get_program().to_string_lossy().into_owned();
+    let mut child = command
         .stdin(if input.is_some() {
             Stdio::piped()
         } else {
@@ -226,34 +243,35 @@ fn exec(binary: &Path, args: &[&str], input: Option<&str>) -> Result<(bool, Stri
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|e| format!("cannot start {}: {e}", binary.display()))?;
+        .map_err(|e| format!("cannot start {program}: {e}"))?;
     if let (Some(input), Some(mut stdin)) = (input, child.stdin.take()) {
         let input = input.to_owned();
         std::thread::spawn(move || {
             let _ = stdin.write_all(input.as_bytes());
         });
     }
-    let readers: Vec<_> = [
+    let read = |stream: Option<Box<dyn Read + Send>>| {
+        std::thread::spawn(move || {
+            let mut text = String::new();
+            if let Some(stream) = stream {
+                let _ = stream.take(limit).read_to_string(&mut text);
+            }
+            text
+        })
+    };
+    let out = read(
         child
             .stdout
             .take()
             .map(|s| Box::new(s) as Box<dyn Read + Send>),
+    );
+    let err = read(
         child
             .stderr
             .take()
             .map(|s| Box::new(s) as Box<dyn Read + Send>),
-    ]
-    .into_iter()
-    .flatten()
-    .map(|stream| {
-        std::thread::spawn(move || {
-            let mut text = String::new();
-            let _ = stream.take(64 * 1024).read_to_string(&mut text);
-            text
-        })
-    })
-    .collect();
-    let deadline = Instant::now() + Duration::from_secs(60);
+    );
+    let deadline = Instant::now() + timeout;
     let status = loop {
         if let Some(status) = child.try_wait().map_err(|e| e.to_string())? {
             break status;
@@ -262,18 +280,17 @@ fn exec(binary: &Path, args: &[&str], input: Option<&str>) -> Result<(bool, Stri
             let _ = child.kill();
             let _ = child.wait();
             return Err(format!(
-                "{} did not answer within a minute",
-                binary.display()
+                "{program} did not finish within {} seconds",
+                timeout.as_secs()
             ));
         }
         std::thread::sleep(Duration::from_millis(100));
     };
-    let said = readers
-        .into_iter()
-        .filter_map(|r| r.join().ok())
-        .collect::<Vec<_>>()
-        .join("\n");
-    Ok((status.success(), said))
+    Ok((
+        status.success(),
+        out.join().unwrap_or_default(),
+        err.join().unwrap_or_default(),
+    ))
 }
 
 /// Creates a Zeron chat through its MCP server: in the folder's Zeron project when there is one,

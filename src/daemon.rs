@@ -30,6 +30,8 @@ pub struct Daemon {
     filings: std::path::PathBuf,
     notebook: std::path::PathBuf,
     paths: Paths,
+    /// Agents' questions for live evidence, and the browsers' answers.
+    live: crate::live::Asks,
 }
 
 const TOKEN_ACCOUNT: &str = "vibeq-token";
@@ -218,6 +220,7 @@ impl Daemon {
             filings: paths.filings(),
             notebook: paths.data.clone(),
             paths: paths.clone(),
+            live: crate::live::Asks::default(),
         }
     }
 
@@ -766,6 +769,27 @@ impl Daemon {
                 Reply::Exported(Exported {
                     folder: folder.display().to_string(),
                 })
+            }
+            Request::RecentEvidence { site } => {
+                drop(store);
+                let site = site.map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+                let tabs = self.live.ask(site).ok_or_else(|| {
+                    bad(
+                        "no browser answered: open Chrome or Firefox where Lens collects on the \
+                         site, and turn on \"Let coding agents read the last ten minutes\" in Lens \
+                         Settings",
+                    )
+                })?;
+                Reply::LiveEvidence(tabs.into_iter().map(crate::live::digest).collect())
+            }
+            Request::WaitForAsk { after } => {
+                drop(store);
+                Reply::Ask(self.live.wait_for_ask(after))
+            }
+            Request::ProvideEvidence { ask, tabs } => {
+                drop(store);
+                self.live.answer(ask, tabs);
+                Reply::Done
             }
             Request::ConnectAgents => {
                 drop(store);
@@ -2016,7 +2040,7 @@ pub fn normalize_origin(input: &str) -> Result<String, ProtocolError> {
     Ok(url.origin().ascii_serialization())
 }
 
-fn now_ms() -> i64 {
+pub fn now_ms() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)

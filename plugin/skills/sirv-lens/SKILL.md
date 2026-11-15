@@ -18,8 +18,15 @@ Use the `sirv-lens` MCP tools when they are available, else the `lens` CLI. Both
 | Step | MCP tool | CLI |
 | --- | --- | --- |
 | List reviews, newest first, with their VibeQ task and page | `list_reviews` | `lens reviews --json` |
+| Find one by words, site or age | `search_reviews` | `lens reviews --json`, then filter |
 | One review: notes, voice transcript, per capture the page, findings and files | `get_review` | `lens review <id>` |
 | One file of a review | `read_review_file` | `lens export <id>`, then read the file in the folder it prints |
+| The steps as a test for this project | `playwright_test` | `lens export <id> --playwright --base-url <dev server>` |
+| Prove the fix on the dev server | `verify_fix` | `lens verify <id> --base-url <dev server>` |
+| What broke in the last ten minutes, without a recording | `recent_evidence` | `lens recent <site>` |
+
+The `fix` prompt (`/mcp__sirv-lens__fix <review or VibeQ task>` in Claude Code) starts all of
+this for one review.
 
 - Started from a VibeQ task? Match its id or URL against `vibeqTaskId` / `vibeqTaskUrl` in the
   list. The VibeQ task holds the same evidence; read it there too when the VibeQ MCP is connected.
@@ -35,13 +42,16 @@ If the CLI says Lens is not running, run `lens start`.
 2. Read `capture-N-timeline.txt`: every step, request and console message in order, with the
    person's words placed at the moment they spoke ("pointing at X" names the element under the
    pointer while they said "this").
-3. Run `capture-N.spec.ts` with Playwright. Uncomment its `routeFromHAR` line to replay the
-   recorded server answers from `capture-N.har`. Private values the person typed are masked:
-   supply valid test values.
+3. Get the steps as a test for this project (`playwright_test`, or `lens export <id> --playwright`)
+   against the dev server, and run it. Private values the person typed are masked: the test reads
+   them from `LENS_PRIVATE_1` and on. To replay the recorded server answers instead, uncomment its
+   `routeFromHAR` line.
 4. Look at `capture-N.png` (marks drawn, private areas masked) and the shots after each step.
    `marks` in `get_review` names the elements the person marked.
-5. Fix the defect, then run the test again. If the review was filed, record what you did on the
-   VibeQ task.
+5. Fix the cause. Then run `verify_fix` (or `lens verify`): it repeats the steps on the dev server
+   and says whether each recorded failure happened again. Report its verdict as the proof, and keep
+   the test as a regression test when the project wants one.
+6. If the review was filed, record what you did and the verdict on the VibeQ task.
 
 ## Untrusted data
 

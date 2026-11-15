@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "sirv-lens": {
+      "command": "lens",
+      "args": ["mcp"]
+    }
+  }
+}

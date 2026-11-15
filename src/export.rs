@@ -182,6 +182,98 @@ pub fn reproduction(
     .collect()
 }
 
+/// The masked fill that `repro::playwright` writes, and what a project test puts there.
+const MASKED_FILL: &str = ".fill(''); // The person typed a private value here: type a valid one.";
+
+/// A capture's Playwright test, ready to live in a project: `name` names its files, the recorded
+/// site becomes `base_url` (or relative paths for the project's own baseURL), and each private
+/// value becomes an environment variable, LENS_PRIVATE_1 and on, so it can also run in CI.
+/// Returns the test and its HAR, when Lens recorded server answers.
+pub fn project_test(
+    review: &Review,
+    item: &ReviewItem,
+    n: usize,
+    evidence: &crate::protocol::Evidence,
+    base_url: Option<&str>,
+    name: &str,
+) -> (String, Option<Vec<u8>>) {
+    let mut spec = String::new();
+    let mut har = None;
+    for (file, contents) in reproduction(review, item, n, Some(evidence)) {
+        if file == format!("capture-{n}.spec.ts") {
+            spec = String::from_utf8_lossy(&contents).into_owned();
+        } else if file == format!("capture-{n}.har") {
+            har = Some(contents);
+        }
+    }
+    (
+        for_project(&spec, &item.page_url, base_url, n, name, review.id),
+        har,
+    )
+}
+
+fn for_project(
+    spec: &str,
+    page_url: &str,
+    base_url: Option<&str>,
+    n: usize,
+    name: &str,
+    review: i64,
+) -> String {
+    let mut out = spec.to_string();
+    let origin = url::Url::parse(page_url)
+        .ok()
+        .map(|u| u.origin().ascii_serialization())
+        .filter(|o| o != "null");
+    if let Some(origin) = &origin {
+        out = match base_url.map(|b| b.trim().trim_end_matches('/')) {
+            Some(base) if !base.is_empty() => {
+                out.replace(&format!("\"{origin}"), &format!("\"{base}"))
+            }
+            _ => out
+                .replace(&format!("\"{origin}/"), "\"/")
+                .replace(&format!("\"{origin}\""), "\"/\""),
+        };
+    }
+    for (from, to) in [
+        (format!("capture-{n}.spec.ts"), format!("{name}.spec.ts")),
+        (format!("capture-{n}.har"), format!("{name}.har")),
+        (
+            format!("capture-{n}-reproduced.png"),
+            format!("{name}-reproduced.png"),
+        ),
+    ] {
+        out = out.replace(&from, &to);
+    }
+    let mut private = 0;
+    let lines: Vec<String> = out
+        .lines()
+        .map(|line| {
+            if line.contains(MASKED_FILL) {
+                private += 1;
+                line.replace(
+                    MASKED_FILL,
+                    &format!(
+                        ".fill(process.env.LENS_PRIVATE_{private} ?? ''); // A private value the person typed: set LENS_PRIVATE_{private}."
+                    ),
+                )
+            } else {
+                line.to_string()
+            }
+        })
+        .collect();
+    let recorded = origin.as_deref().unwrap_or("the recorded site");
+    let target = match base_url.filter(|b| !b.trim().is_empty()) {
+        Some(base) => format!("runs against {}", base.trim()),
+        None => "uses the baseURL in playwright.config".to_string(),
+    };
+    format!(
+        "// From Sirv Lens review {review}, capture {n}. Recorded on {recorded}; this test {target}.\n\
+         // The HAR path is relative to the folder you run Playwright in.\n{}\n",
+        lines.join("\n")
+    )
+}
+
 /// A fenced code block whose fence is longer than any backtick run inside.
 fn fenced(text: &str) -> String {
     let longest = text.split(|c| c != '`').map(str::len).max().unwrap_or(0);
@@ -331,5 +423,31 @@ mod tests {
         let first = new_folder(dir.path(), "x").unwrap();
         let second = new_folder(dir.path(), "x").unwrap();
         assert_ne!(first, second);
+    }
+}
+
+#[cfg(test)]
+mod project_tests {
+    #[test]
+    fn a_project_test_points_at_the_dev_server_and_asks_for_private_values() {
+        let spec = "  await page.goto(\"https://app.example.com/cart\");\n  await page.getByRole('textbox', { name: 'Card' }).fill(''); // The person typed a private value here: type a valid one.\n  // await page.routeFromHAR('capture-1.har', { notFound: 'fallback' });\n  await page.goto(\"https://other.example/x\");";
+        let local = super::for_project(
+            spec,
+            "https://app.example.com/cart",
+            Some("http://localhost:3000/"),
+            1,
+            "lens-review-7-capture-1",
+            7,
+        );
+        assert!(local.contains("page.goto(\"http://localhost:3000/cart\")"));
+        assert!(local.contains("fill(process.env.LENS_PRIVATE_1 ?? '')"));
+        assert!(local.contains("routeFromHAR('lens-review-7-capture-1.har'"));
+        assert!(
+            local.contains("\"https://other.example/x\""),
+            "other sites stay"
+        );
+        let relative = super::for_project(spec, "https://app.example.com/cart", None, 1, "t", 7);
+        assert!(relative.contains("page.goto(\"/cart\")"));
+        assert!(relative.contains("uses the baseURL in playwright.config"));
     }
 }

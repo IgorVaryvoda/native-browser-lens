@@ -52,16 +52,43 @@ LENS_E2E=1 pnpm build && pnpm test:e2e   # real Chromium, extension, shim, daemo
 Load `extension/.output/chrome-mv3` with **Load unpacked** in `chrome://extensions` and click the
 Lens button. `lens status` shows the data folder and the daemon; `lens stop` stops the daemon.
 
-## Agents (MCP)
+## Agents
 
-`lens mcp` serves reviewed defects over stdio: `list_reviews`, `get_review` and
-`read_review_file` (the rendered screenshots, redacted evidence and opted-in recordings). It reads
-only what a person reviewed and changes nothing.
+Coding agents read the defects a person reviewed, reproduce them and prove the fix. Three ways in:
 
-```sh
-claude mcp add lens -- lens mcp
-codex mcp add lens -- lens mcp
-```
+- **Connect the agents here:** Settings > Coding agents, or `lens agents connect`. It adds the
+  `sirv-lens` skill (`~/.claude/skills`, `~/.agents/skills`) and the `sirv-lens` MCP server to
+  Claude Code, Codex, Cursor and Gemini CLI, for those installed. `lens agents disconnect` takes
+  both back.
+- **The plugin** (`plugin/`, the same skill and server, for Claude Code and Codex). It starts `lens`
+  from PATH: the deb and pacman packages put it there; on macOS and with the AppImage, connect the
+  agents from Settings instead.
+
+  ```
+  /plugin install sirv-lens --marketplace VKrachun/native-browser-lens
+  ```
+
+- **The CLI**, for agents without MCP and for scripts:
+
+  | Command | What it does |
+  | --- | --- |
+  | `lens reviews [--json]` | Reviews, newest first, with their page and VibeQ task |
+  | `lens review <id>` | One review as JSON (what `get_review` returns) |
+  | `lens export <id> [--to DIR]` | The review as a folder: report, screenshots, evidence, test, HAR |
+  | `lens export <id> --playwright [--to DIR] [--base-url URL]` | Each capture's test for the project (default `tests/lens`), private values from `LENS_PRIVATE_1` and on |
+  | `lens verify <id> --base-url URL [--project DIR]` | Repeats the steps on the dev server with the project's Playwright; says whether the recorded failures happen again |
+  | `lens recent [site]` | The last ten minutes the browser holds for a site (when Settings allows it) |
+
+`lens mcp` serves the same over stdio:
+
+| | |
+| --- | --- |
+| Tools | `list_reviews`, `search_reviews`, `get_review`, `read_review_file`, `playwright_test`, `verify_fix`, `recent_evidence` |
+| Prompt | `fix` (a review id, or the VibeQ task it was filed as): `/mcp__sirv-lens__fix 12` in Claude Code |
+| Resources | `lens://review/{id}` |
+
+Every tool only reads, except `verify_fix`, which runs the project's Playwright in a scratch
+folder (`.lens/verify`) and removes it. Page text in every answer is marked as untrusted data.
 
 ## VibeQ
 

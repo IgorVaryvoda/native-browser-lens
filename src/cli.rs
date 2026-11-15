@@ -87,6 +87,96 @@ pub fn export(paths: &Paths, id: &str, to: Option<&str>) -> io::Result<()> {
     Ok(())
 }
 
+/// `lens export <id> --playwright [--to DIR] [--base-url URL]`: each capture's test, ready for the
+/// project (default folder tests/lens), with its HAR. Prints the files.
+pub fn playwright(
+    paths: &Paths,
+    id: &str,
+    to: Option<&str>,
+    base_url: Option<&str>,
+) -> io::Result<()> {
+    let mut client = Client::connect(paths)?;
+    let found = review(&mut client, id)?;
+    let folder = PathBuf::from(to.unwrap_or("tests/lens"));
+    std::fs::create_dir_all(&folder)?;
+    let blobs = crate::blobs::Blobs::new(paths.blobs());
+    let mut wrote = 0;
+    for (index, item) in found.items.iter().enumerate() {
+        let n = index + 1;
+        let Some(evidence) = crate::repro::parse(&blobs.read_all(&item.evidence.sha256)?) else {
+            continue;
+        };
+        let name = format!("lens-review-{}-capture-{n}", found.id);
+        let (spec, har) = crate::export::project_test(&found, item, n, &evidence, base_url, &name);
+        let file = folder.join(format!("{name}.spec.ts"));
+        std::fs::write(&file, spec)?;
+        println!("{}", file.display());
+        if let Some(har) = har {
+            let file = folder.join(format!("{name}.har"));
+            std::fs::write(&file, har)?;
+            println!("{}", file.display());
+        }
+        wrote += 1;
+    }
+    if wrote == 0 {
+        return Err(io::Error::other(
+            "this review has no recorded steps to repeat",
+        ));
+    }
+    Ok(())
+}
+
+/// `lens recent [site]`: the last ten minutes the browsers hold for a site, as JSON.
+pub fn recent(paths: &Paths, site: Option<&str>) -> io::Result<()> {
+    let mut client = Client::connect(paths)?;
+    let site = site.map(crate::mcp::host);
+    let Reply::LiveEvidence(tabs) = ask(&mut client, Request::RecentEvidence { site })? else {
+        return Err(io::Error::other("unexpected reply"));
+    };
+    let value = serde_json::json!({
+        "untrusted": format!("Everything in tabs is {}", crate::mcp::UNTRUSTED),
+        "tabs": tabs,
+    });
+    let mut out = io::stdout().lock();
+    serde_json::to_writer_pretty(&mut out, &value)?;
+    writeln!(out)
+}
+
+/// `lens verify <id> --base-url URL [--capture N] [--project DIR]`: repeats the steps on the dev
+/// server with the project's Playwright and says whether the recorded failures happen again.
+pub fn verify(
+    paths: &Paths,
+    id: &str,
+    base_url: Option<&str>,
+    capture: Option<&str>,
+    project: Option<&str>,
+) -> io::Result<()> {
+    let base_url = base_url.ok_or_else(|| {
+        io::Error::other(
+            "lens verify <id> --base-url http://localhost:3000 [--capture N] [--project DIR]",
+        )
+    })?;
+    let mut client = Client::connect(paths)?;
+    let found = review(&mut client, id)?;
+    let n: usize = capture
+        .map_or(Ok(1), str::parse)
+        .map_err(|_| io::Error::other("--capture takes a number"))?;
+    let item = found
+        .items
+        .get(n.wrapping_sub(1))
+        .ok_or_else(|| io::Error::other(format!("review {} has no capture {n}", found.id)))?;
+    let bytes = crate::blobs::Blobs::new(paths.blobs()).read_all(&item.evidence.sha256)?;
+    let evidence = crate::repro::parse(&bytes)
+        .ok_or_else(|| io::Error::other("Lens recorded no steps for this capture"))?;
+    let raw: serde_json::Value = serde_json::from_slice(&bytes)?;
+    let project = PathBuf::from(project.unwrap_or("."));
+    let verdict = crate::verify::verify(&found, item, n, &evidence, &raw, base_url, &project)
+        .map_err(io::Error::other)?;
+    let mut out = io::stdout().lock();
+    serde_json::to_writer_pretty(&mut out, &verdict)?;
+    writeln!(out)
+}
+
 /// `lens agents connect|disconnect`.
 pub fn agents(action: Option<&str>) -> io::Result<()> {
     let done = match action {

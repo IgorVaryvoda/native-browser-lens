@@ -148,6 +148,22 @@ pub enum Request {
         #[ts(type = "number")]
         review: i64,
     },
+    /// An agent asks for the last ten minutes on a site (host, such as app.example.com; every
+    /// collected tab when None). The browsers that allow it answer within a few seconds.
+    RecentEvidence {
+        site: Option<String>,
+    },
+    /// The extension waits here for an agent's question newer than `after`.
+    WaitForAsk {
+        #[ts(type = "number")]
+        after: u64,
+    },
+    /// The extension's answer to a question: its collected tabs on that site.
+    ProvideEvidence {
+        #[ts(type = "number")]
+        ask: u64,
+        tabs: Vec<crate::live::LiveTab>,
+    },
     /// Gives the coding agents here the sirv-lens skill and MCP server (`lens agents connect`).
     ConnectAgents,
     /// Takes them back (`lens agents disconnect`).
@@ -369,6 +385,8 @@ pub enum Reply {
     Exported(Exported),
     HandoffApps(Vec<crate::handoff::HandoffApp>),
     AgentSetup(Vec<crate::agents::AgentSetup>),
+    Ask(Option<crate::live::Ask>),
+    LiveEvidence(Vec<crate::live::LiveDigest>),
     /// The review was handed off; `folder` holds the exported report.
     HandedOff(Exported),
     VibeQ(VibeQSettings),

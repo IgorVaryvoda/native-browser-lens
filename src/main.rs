@@ -11,6 +11,7 @@ mod framing;
 mod handoff;
 mod investigate;
 mod ipc;
+mod live;
 mod mcp;
 mod paths;
 mod protocol;
@@ -26,6 +27,7 @@ mod speech;
 mod store;
 mod tray;
 mod update;
+mod verify;
 mod vibeq;
 
 use paths::Paths;
@@ -52,6 +54,14 @@ const USAGE: &str = "Usage: lens <command>
   export <id> [--to DIR]
                      Write a review to a folder: report, screenshots, evidence, a
                      Playwright test and a HAR; prints the folder
+  export <id> --playwright [--to DIR] [--base-url URL]
+                     Write each capture's Playwright test and HAR for the project
+                     (default tests/lens), against the dev server or the baseURL
+  verify <id> --base-url URL [--capture N] [--project DIR]
+                     Repeat the steps on the dev server with the project's
+                     Playwright; say whether the recorded failures happen again
+  recent [site]      The last ten minutes the browser holds for a site: failed
+                     requests, console errors, steps (turn it on in Settings)
   agents connect     Give the coding agents here the sirv-lens skill and MCP server
                      (Claude Code, Codex, Cursor, Gemini CLI)
   agents disconnect  Take them back
@@ -158,16 +168,50 @@ fn main() -> ExitCode {
         },
         Some("export") => match args.get(1) {
             Some(id) => {
-                let to = args
-                    .iter()
-                    .position(|a| a == "--to")
-                    .and_then(|i| args.get(i + 1))
-                    .map(String::as_str);
-                with_paths(|p| cli::export(p, id, to))
+                let flag = |name: &str| {
+                    args.iter()
+                        .position(|a| a == name)
+                        .and_then(|i| args.get(i + 1))
+                        .map(String::as_str)
+                };
+                let (to, base) = (flag("--to"), flag("--base-url"));
+                if args.iter().any(|a| a == "--playwright") {
+                    with_paths(|p| cli::playwright(p, id, to, base))
+                } else {
+                    with_paths(|p| cli::export(p, id, to))
+                }
             }
-            None => Err(std::io::Error::other("lens export <id> [--to DIR]")),
+            None => Err(std::io::Error::other(
+                "lens export <id> [--to DIR] | lens export <id> --playwright [--to DIR] [--base-url URL]",
+            )),
         },
         Some("agents") => cli::agents(args.get(1).map(String::as_str)),
+        Some("verify") => match args.get(1) {
+            Some(id) => {
+                let flag = |name: &str| {
+                    args.iter()
+                        .position(|a| a == name)
+                        .and_then(|i| args.get(i + 1))
+                        .map(String::as_str)
+                };
+                with_paths(|p| {
+                    cli::verify(
+                        p,
+                        id,
+                        flag("--base-url"),
+                        flag("--capture"),
+                        flag("--project"),
+                    )
+                })
+            }
+            None => Err(std::io::Error::other(
+                "lens verify <id> --base-url http://localhost:3000 [--capture N] [--project DIR]",
+            )),
+        },
+        Some("recent") => {
+            let site = args.get(1).map(String::as_str);
+            with_paths(|p| cli::recent(p, site))
+        }
         Some("tray") => {
             let wait = args.get(1).is_some_and(|a| a == "--wait");
             with_paths(|p| tray::run(p, wait))
