@@ -118,6 +118,7 @@ pub fn run(paths: &Paths, service: bool) -> std::io::Result<()> {
     let _ = std::fs::remove_dir_all(paths.data.join("uploads"));
     start_transcription(daemon.clone());
     if service {
+        SERVICE.store(true, std::sync::atomic::Ordering::SeqCst);
         schedule_updates(daemon.clone());
         crate::tray::spawn(paths);
         watch_program(paths);
@@ -1762,6 +1763,8 @@ fn project_for(store: &Store, page_url: Option<&str>) -> Result<String, Protocol
 
 /// Set once a restart is on its way, so two reasons never start two restarts.
 static RESTARTING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// This daemon runs under the service manager (`lens daemon --service`).
+static SERVICE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// An installer may replace Lens while it runs (a new DMG, setup program or package). The service
 /// then restarts on the new program instead of serving the old one until the next login.
@@ -1793,6 +1796,20 @@ fn watch_program(paths: &Paths) {
 /// and starts the new one through the service manager.
 fn restart_soon(paths: &Paths, executable: &std::path::Path) {
     if RESTARTING.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        return;
+    }
+    // A helper started by a service dies with it: systemd stops every process of the unit when
+    // this one exits. So the service exits as failed once the reply is out, and systemd
+    // (Restart=on-failure) or launchd (KeepAlive unless SuccessfulExit) starts the new program.
+    if cfg!(unix) && SERVICE.load(std::sync::atomic::Ordering::SeqCst) {
+        log(
+            paths,
+            "exiting so the service manager starts the new program",
+        );
+        std::thread::spawn(|| {
+            std::thread::sleep(std::time::Duration::from_secs(2));
+            std::process::exit(75);
+        });
         return;
     }
     let mut command = std::process::Command::new(executable);
