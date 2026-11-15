@@ -202,6 +202,12 @@ try {
 
   await studio.getByRole('button', { name: 'Create review' }).click();
   await studio.getByRole('region', { name: 'Duplicates' }).getByText('Same problem').waitFor({ timeout: 60_000 });
+  // The hand-off, set up as a person would before filing: the project folder and "Then hand off".
+  const handoff = studio.getByRole('region', { name: 'Hand off' });
+  if (await handoff.count()) {
+    await handoff.getByLabel('Project folder').fill('/home/ana/projects/northwind');
+    await studio.getByLabel(/^Then hand off to /).check();
+  }
   await wait(800);
   await studio.evaluate(() => scrollTo(0, document.body.scrollHeight));
   await studio.screenshot({ path: join(out, 'review-file.png') });
